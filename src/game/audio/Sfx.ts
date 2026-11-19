@@ -17,6 +17,7 @@ export class Sfx {
   private reverbSend!: GainNode;
   private noise!: AudioBuffer;
   private lastImpact = 0;
+  private lastShell = 0;
   private lastEnemyShot = 0;
   private enemyShotsThisWindow = 0;
   private lastWhizz = 0;
@@ -378,6 +379,26 @@ export class Sfx {
       default:
         this.noiseBurst(panner, now, { type: "bandpass", freq: surface === "sand" ? 500 : 1300, q: 1 }, 0.7, 0.0005, 0.06);
     }
+  }
+
+  /** Ejected brass / hull hitting the floor: short metallic tinkle (rate-limited). */
+  shellDrop(at: V3, kind: "rifle" | "pistol" | "shotgun" | "magnum" | "heavy", speed: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - this.lastShell < 0.045) return;
+    this.lastShell = now;
+    const v = Math.min(1, speed / 4) * 0.16;
+    const panner = this.panner(at, 1.5, 1.6);
+    if (kind === "shotgun") {
+      this.noiseBurst(panner, now, { type: "bandpass", freq: 900, q: 2 }, v * 1.4, 0.0005, 0.04);
+      this.tone(panner, now, "triangle", 420, 400, 0.05, v * 0.6, 0.0005, 0.05);
+      return;
+    }
+    const f = (kind === "pistol" ? 5200 : kind === "magnum" ? 3600 : 4300) * (0.92 + Math.random() * 0.16);
+    this.tone(panner, now, "sine", f, f * 0.995, 0.12, v, 0.0005, 0.09 + Math.random() * 0.05);
+    this.tone(panner, now, "sine", f * 1.52, f * 1.51, 0.08, v * 0.5, 0.0005, 0.06);
+    this.noiseBurst(panner, now, { type: "highpass", freq: 5000 }, v * 0.6, 0.0003, 0.012);
   }
 
   footstep(speed: number, crouched: boolean) {
