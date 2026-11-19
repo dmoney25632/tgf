@@ -75,8 +75,11 @@ export function CoopApp({
   const [played, setPlayed] = useState<string[]>([]);
   const [identity, setIdentity] = useState<{ id: string; name: string } | null>(null);
   const transportRef = useRef<NetTransport | null>(null);
-  const joinedAtRef = useRef(0);
+  const [joinedAt, setJoinedAt] = useState(0);
+  const [transport, setTransport] = useState<NetTransport | null>(null);
   const [useLocal, setUseLocal] = useState(kind === "local");
+  /** DEV harness (/coop/dev): auto host / join / ready / launch over the loopback. */
+  const [auto, setAuto] = useState<{ code: string; host: boolean; launchAt: number } | null>(null);
 
   useEffect(() => {
     // Restore loadout + dev transport flag after mount (no window during SSR).
@@ -94,6 +97,11 @@ export function CoopApp({
       setLoadout(saved);
       setUseLocal(local);
       if (room) setJoinInput(room);
+      if (local) {
+        const h = normalizeRoomCode(params.get("autohost") ?? "");
+        const j = normalizeRoomCode(params.get("autojoin") ?? "");
+        if (h || j) setAuto({ code: (h ?? j)!, host: !!h, launchAt: Number(params.get("autolaunch")) || 0 });
+      }
     });
   }, [kind, allowLocal]);
 
@@ -112,10 +120,10 @@ export function CoopApp({
       operator: loadout.operator,
       primary: loadout.primary,
       secondary: loadout.secondary,
-      joinedAt: joinedAtRef.current,
+      joinedAt,
       room: isHost ? { ...settings, ...matchStatus } : undefined,
     };
-  }, [identity, isHost, ready, loadout, settings, matchStatus]);
+  }, [identity, isHost, ready, loadout, settings, matchStatus, joinedAt]);
 
   useEffect(() => {
     if (meta && (stage === "lobby" || stage === "game")) transportRef.current?.track(meta);
@@ -132,6 +140,7 @@ export function CoopApp({
   const leaveRoom = useCallback((reason: string | null = null) => {
     transportRef.current?.close();
     transportRef.current = null;
+    setTransport(null);
     setPeers([]);
     setStage("menu");
     setLaunch(null);
@@ -169,7 +178,9 @@ export function CoopApp({
         if (l && Array.isArray(l.roster) && l.roster.some((r) => r.id === id)) setLaunch((cur) => cur ?? l);
       });
       await t.connect();
-      joinedAtRef.current = Date.now();
+      const joined = Date.now();
+      setJoinedAt(joined);
+      setTransport(t);
       setIdentity({ id, name });
       setIsHost(host);
       setCode(roomCode);
@@ -182,7 +193,7 @@ export function CoopApp({
           const list = tr.peers();
           const h = list.find((p) => p.host);
           if (!h) leaveRoom(`Room ${roomCode} not found. Check the code with your host.`);
-          else if (list.filter((p) => p.id !== id && p.joinedAt < joinedAtRef.current).length >= NET.MAX_PLAYERS && h.room?.status !== "playing")
+          else if (list.filter((p) => p.id !== id && p.joinedAt < joined).length >= NET.MAX_PLAYERS && h.room?.status !== "playing")
             leaveRoom(`Room ${roomCode} is full (${NET.MAX_PLAYERS} players).`);
         }, JOIN_TIMEOUT_MS);
       }
@@ -193,6 +204,14 @@ export function CoopApp({
       setError(e instanceof Error ? e.message : "Couldn't connect.");
     }
   };
+
+  // ---- DEV harness automation --------------------------------------------------------
+  useEffect(() => {
+    if (!auto) return;
+    if (stage === "menu" && !error) queueMicrotask(() => void connect(auto.code, auto.host));
+    else if (stage === "lobby" && !auto.host && !ready) queueMicrotask(() => setReady(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- connect is a plain handler
+  }, [auto, stage, error, ready]);
 
   // ---- Host disappears from the lobby ---------------------------------------------
   const hostSeenRef = useRef(false);
@@ -246,6 +265,14 @@ export function CoopApp({
     setStage("game");
   };
 
+  const autoLaunch = !!auto?.host && played.length === 0 && auto.launchAt > 0 && stage === "lobby" && matchStatus.status === "lobby" && peers.length >= auto.launchAt && everyoneReady;
+  useEffect(() => {
+    if (!autoLaunch) return;
+    const t = window.setTimeout(startMatch, 500);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once when the room is ready
+  }, [autoLaunch]);
+
   const backToLobby = () => {
     setLaunch(null);
     setReady(false);
@@ -261,8 +288,8 @@ export function CoopApp({
   };
 
   // ---------------------------------------------------------------------------
-  if (stage === "game" && launch && transportRef.current) {
-    return <CoopGame key={launch.matchId} launch={launch} transport={transportRef.current} loadout={loadout} callsign={identity?.name ?? callsign} onExit={backToLobby} />;
+  if (stage === "game" && launch && transport) {
+    return <CoopGame key={launch.matchId} launch={launch} transport={transport} loadout={loadout} callsign={identity?.name ?? callsign} onExit={backToLobby} />;
   }
 
   const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/coop?room=${code}${useLocal ? "&transport=local" : ""}` : "";
@@ -403,7 +430,7 @@ export function CoopApp({
                 <div>
                   <Label>Waves</Label>
                   <div className="flex flex-wrap gap-1.5">
-                    {([5, 10, 15, 0] as const).map((w) => (
+                    {([10, 20, 0] as const).map((w) => (
                       <Pill key={w} active={roomSettings.waveTarget === w} disabled={!isHost} onClick={() => setSettings((s) => ({ ...s, waveTarget: w }))}>
                         {w === 0 ? "Endless" : `${w} waves`}
                       </Pill>

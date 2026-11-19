@@ -1,11 +1,11 @@
-import type { OperatorId } from "../survival/config";
+import type { DifficultyId, OperatorId, WaveTarget } from "../survival/config";
 import type { WeaponId } from "../weapons/weapons";
 
 /** Host-picked match settings, published in the host's presence payload. */
 export type RoomSettings = {
   mapId: string;
-  difficulty: "recruit" | "regular" | "veteran";
-  waveTarget: 5 | 10 | 15 | 0;
+  difficulty: DifficultyId;
+  waveTarget: WaveTarget;
   startWave: number;
 };
 

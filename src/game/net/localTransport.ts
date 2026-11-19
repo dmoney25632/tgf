@@ -31,6 +31,7 @@ export class LocalTransport implements NetTransport {
   private readonly statusHub = new Emitter();
   private readonly others = new Map<string, { meta: PeerMeta; seen: number }>();
   private meta: PeerMeta | null = null;
+  private lastDelivery = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly onUnload = () => this.close();
 
@@ -63,8 +64,11 @@ export class LocalTransport implements NetTransport {
     } else if (w.t === "msg" && (NET_EVENTS as readonly string[]).includes(w.event)) {
       const { latencyMs = 0, jitterMs = 0, loss = 0 } = this.opts;
       if (loss > 0 && (w.event === "s" || w.event === "snap") && Math.random() < loss) return;
-      const delay = latencyMs + (Math.random() * 2 - 1) * jitterMs;
-      if (delay > 0) setTimeout(() => this.events.emit(w.event, w.payload), delay);
+      // Jitter, but in order: a WebSocket never reorders, so neither do we.
+      const now = performance.now();
+      const at = Math.max(this.lastDelivery, now + latencyMs + (Math.random() * 2 - 1) * jitterMs);
+      this.lastDelivery = at;
+      if (at > now) setTimeout(() => this.events.emit(w.event, w.payload), at - now);
       else this.events.emit(w.event, w.payload);
     }
   }
