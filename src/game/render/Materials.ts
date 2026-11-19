@@ -1,0 +1,272 @@
+import * as THREE from "three";
+import type { QualityPreset } from "../config";
+import { MATERIAL_TEXTURES, TEXTURE_SETS, type MaterialName } from "../assets/manifest";
+import { loadTextureSet, type TextureSetImages } from "../assets/AssetLoader";
+import { grimePixels, makeDataTexture, proceduralPixels, type ProceduralKind } from "./ProceduralTextures";
+
+export type { MaterialName };
+
+type MaterialDef = {
+  procedural: ProceduralKind;
+  /** Metres covered by one texture repeat (geometry UVs are in metres). */
+  tile: number;
+  roughness: number;
+  metalness: number;
+  normalScale: number;
+  /** Ground-splash / streak grime strength (0 = none). */
+  grime: number;
+  /** Colour shown while the photo texture streams in (sRGB). */
+  placeholder: number;
+};
+
+const DEFS: Record<MaterialName, MaterialDef> = {
+  concrete: { procedural: "concrete", tile: 3, roughness: 1, metalness: 0, normalScale: 1, grime: 0.55, placeholder: 0x8c8b84 },
+  concrete_dirty: { procedural: "concrete", tile: 3.5, roughness: 1, metalness: 0, normalScale: 1, grime: 0.6, placeholder: 0x7d7c75 },
+  brick: { procedural: "brick", tile: 2.2, roughness: 1, metalness: 0, normalScale: 1.2, grime: 0.55, placeholder: 0x7a4c3a },
+  metal_corrugated: { procedural: "corrugated", tile: 2.4, roughness: 1, metalness: 0.3, normalScale: 1.4, grime: 0.45, placeholder: 0x6c6f68 },
+  metal_painted: { procedural: "rust", tile: 2.2, roughness: 1, metalness: 0.25, normalScale: 0.8, grime: 0.45, placeholder: 0x8a8a84 },
+  metal_rust: { procedural: "rust", tile: 1.4, roughness: 1, metalness: 0.35, normalScale: 1, grime: 0.3, placeholder: 0x7a5a40 },
+  metal_dark: { procedural: "metal", tile: 1.5, roughness: 1, metalness: 0.55, normalScale: 0.6, grime: 0.35, placeholder: 0x505254 },
+  wood: { procedural: "wood", tile: 1.6, roughness: 1, metalness: 0, normalScale: 1, grime: 0.5, placeholder: 0x5a5046 },
+  sandbag: { procedural: "canvas", tile: 0.7, roughness: 1, metalness: 0, normalScale: 1, grime: 0.6, placeholder: 0x9a8d74 },
+  canvas: { procedural: "canvas", tile: 1.4, roughness: 1, metalness: 0, normalScale: 0.8, grime: 0.3, placeholder: 0x8a8670 },
+  gravel: { procedural: "gravel", tile: 3, roughness: 1, metalness: 0, normalScale: 1, grime: 0, placeholder: 0x7f7666 },
+  ground: { procedural: "ground", tile: 4, roughness: 1, metalness: 0, normalScale: 1, grime: 0, placeholder: 0x5c5236 },
+  rock: { procedural: "rock", tile: 3.2, roughness: 1, metalness: 0, normalScale: 1.2, grime: 0.3, placeholder: 0x77736a },
+  bark: { procedural: "bark", tile: 1.2, roughness: 1, metalness: 0, normalScale: 1.2, grime: 0.2, placeholder: 0x3e3428 },
+  plain: { procedural: "plain", tile: 2, roughness: 0.85, metalness: 0, normalScale: 0.3, grime: 0, placeholder: 0x808080 },
+};
+
+export type TextureSlot = {
+  albedo: THREE.Texture;
+  normal: THREE.Texture;
+  rough: THREE.Texture;
+  ao: THREE.Texture | null;
+  /** True once real files (not placeholder/procedural) are bound. */
+  photo: boolean;
+};
+
+const WHITE = new Uint8Array([255, 255, 255, 255]);
+
+/** 1×1 sRGB texture of a hex colour (hex values are already sRGB-encoded). */
+function solidTexture(hex: number) {
+  const data = new Uint8Array([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, 255]);
+  const t = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+function flatTexture(bytes: Uint8Array) {
+  const t = new THREE.DataTexture(bytes, 1, 1, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
+ * Shared world-space grime used by every structural material: macro albedo
+ * variation (breaks up tiling), dirt splash near the ground, and vertical
+ * rain streaks on walls. Needs only the world position, which it derives
+ * from the view-space position so instancing/skinning stay correct.
+ */
+function grimeHook(uniforms: { grimeMap: { value: THREE.Texture }; grimeAmount: { value: number }; grimeColor: { value: THREE.Color } }) {
+  return (shader: THREE.WebGLProgramParametersWithUniforms) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vGrimeWorld;")
+      .replace("#include <fog_vertex>", "#include <fog_vertex>\nvGrimeWorld = transpose(mat3(viewMatrix)) * mvPosition.xyz + cameraPosition;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform sampler2D grimeMap;\nuniform float grimeAmount;\nuniform vec3 grimeColor;\nvarying vec3 vGrimeWorld;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        /* glsl */ `#include <map_fragment>
+        vec3 gN = normalize(cross(dFdx(vGrimeWorld), dFdy(vGrimeWorld)));
+        float gVert = 1.0 - abs(gN.y);
+        vec4 gA = texture2D(grimeMap, vGrimeWorld.xz * 0.037 + vec2(vGrimeWorld.y * 0.021));
+        vec4 gB = texture2D(grimeMap, vec2((vGrimeWorld.x + vGrimeWorld.z) * 0.35, vGrimeWorld.y * 0.045));
+        diffuseColor.rgb *= mix(0.8, 1.12, gA.r);
+        float gSplash = clamp((1.0 - smoothstep(0.0, 0.8 + gA.b * 0.7, vGrimeWorld.y)) * grimeAmount * (0.45 + gB.g), 0.0, 0.85);
+        float gStreak = gVert * smoothstep(0.55, 0.85, gB.g) * grimeAmount * 0.35;
+        diffuseColor.rgb = mix(diffuseColor.rgb, grimeColor, gSplash);
+        diffuseColor.rgb *= 1.0 - gStreak;`,
+      )
+      .replace(
+        "#include <roughnessmap_fragment>",
+        "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 1.0, gSplash);",
+      );
+  };
+}
+
+/**
+ * Named PBR materials for the world. Each starts with either a procedural
+ * texture set or (when the manifest lists photo textures) a 1×1 placeholder,
+ * then swaps in the photo maps when they finish loading — without changing
+ * shader defines, so nothing recompiles. Geometry UVs are in metres; each
+ * material's texture repeat converts that to its tile size.
+ */
+export class MaterialLibrary {
+  private readonly slots = new Map<MaterialName, TextureSlot>();
+  private readonly materials = new Map<MaterialName, THREE.MeshStandardMaterial>();
+  private readonly listeners = new Set<() => void>();
+  private readonly sources = new Map<string, Promise<Partial<Record<string, THREE.Source<unknown>>> | null>>();
+  private readonly owned: { dispose(): void }[] = [];
+  readonly grimeTexture: THREE.DataTexture;
+  private disposed = false;
+
+  constructor(private readonly quality: QualityPreset) {
+    this.grimeTexture = makeDataTexture(grimePixels(256), 256, false, 2);
+    this.owned.push(this.grimeTexture);
+  }
+
+  tile(name: MaterialName) {
+    return DEFS[name].tile;
+  }
+
+  /** Called whenever photo textures replace placeholders. */
+  onChange(fn: () => void) {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private makeProcedural(name: MaterialName) {
+    const def = DEFS[name];
+    const size = this.quality.proceduralTextureSize;
+    const px = proceduralPixels(def.procedural, size);
+    const a = this.quality.anisotropy;
+    return {
+      albedo: makeDataTexture(px.albedo, size, true, a),
+      normal: makeDataTexture(px.normal, size, false, a),
+      rough: makeDataTexture(px.rough, size, false, a),
+    };
+  }
+
+  private setRepeat(slot: TextureSlot, tile: number) {
+    for (const t of [slot.albedo, slot.normal, slot.rough, slot.ao]) t?.repeat.set(1 / tile, 1 / tile);
+  }
+
+  /** Texture maps for a material (created + streamed on first use). */
+  textures(name: MaterialName): TextureSlot {
+    let slot = this.slots.get(name);
+    if (slot) return slot;
+    const def = DEFS[name];
+    const setId = MATERIAL_TEXTURES[name];
+    const entry = setId ? TEXTURE_SETS[setId] : undefined;
+    if (setId && entry && typeof window !== "undefined") {
+      slot = {
+        albedo: solidTexture(def.placeholder),
+        normal: flatTexture(new Uint8Array([128, 128, 255, 255])),
+        rough: flatTexture(new Uint8Array([255, 230, 0, 255])),
+        ao: entry.maps.includes("ao") ? flatTexture(WHITE) : null,
+        photo: false,
+      };
+      this.stream(name, setId);
+    } else {
+      slot = { ...this.makeProcedural(name), ao: null, photo: false };
+    }
+    this.setRepeat(slot, def.tile);
+    this.slots.set(name, slot);
+    return slot;
+  }
+
+  private loadSources(setId: string) {
+    let p = this.sources.get(setId);
+    if (!p) {
+      p = loadTextureSet(setId, this.quality.maxTextureSize).then((imgs: TextureSetImages | null) => {
+        if (!imgs) return null;
+        const out: Partial<Record<string, THREE.Source<unknown>>> = {};
+        for (const [k, img] of Object.entries(imgs)) if (img) out[k] = new THREE.Source(img);
+        return out;
+      });
+      this.sources.set(setId, p);
+    }
+    return p;
+  }
+
+  private stream(name: MaterialName, setId: string) {
+    void this.loadSources(setId).then((src) => {
+      if (this.disposed) return;
+      const slot = this.slots.get(name);
+      if (!slot) return;
+      const old = [slot.albedo, slot.normal, slot.rough, slot.ao];
+      const mk = (s: THREE.Source<unknown> | undefined, srgb: boolean) => {
+        if (!s) return null;
+        const t = new THREE.Texture();
+        t.source = s;
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        t.anisotropy = this.quality.anisotropy;
+        t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        t.needsUpdate = true;
+        return t;
+      };
+      if (!src || !src.albedo) {
+        // Photo set failed: fall back to the procedural maps.
+        const p = this.makeProcedural(name);
+        slot.albedo = p.albedo;
+        slot.normal = p.normal;
+        slot.rough = p.rough;
+      } else {
+        const fallback = !src.normal || !src.roughness ? this.makeProcedural(name) : null;
+        slot.albedo = mk(src.albedo, true)!;
+        slot.normal = mk(src.normal, false) ?? fallback!.normal;
+        slot.rough = mk(src.roughness, false) ?? fallback!.rough;
+        if (slot.ao) slot.ao = mk(src.ao, false) ?? slot.ao;
+        slot.photo = true;
+        if (fallback && fallback.albedo !== slot.albedo) fallback.albedo.dispose();
+      }
+      this.setRepeat(slot, DEFS[name].tile);
+      const m = this.materials.get(name);
+      if (m) this.bind(m, slot);
+      for (const t of old) if (t && t !== slot.ao) t.dispose();
+      for (const fn of this.listeners) fn();
+    });
+  }
+
+  private bind(m: THREE.MeshStandardMaterial, slot: TextureSlot) {
+    m.map = slot.albedo;
+    m.normalMap = slot.normal;
+    m.roughnessMap = slot.rough;
+    m.aoMap = slot.ao;
+  }
+
+  /** Shared material for a name (vertex colours carry per-object tint). */
+  get(name: MaterialName): THREE.MeshStandardMaterial {
+    let m = this.materials.get(name);
+    if (m) return m;
+    const def = DEFS[name];
+    const slot = this.textures(name);
+    m = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: def.roughness,
+      metalness: def.metalness,
+      normalScale: new THREE.Vector2(def.normalScale, def.normalScale),
+      aoMapIntensity: 0.9,
+    });
+    m.name = `ih-${name}`;
+    this.bind(m, slot);
+    if (def.grime > 0) {
+      m.onBeforeCompile = grimeHook({
+        grimeMap: { value: this.grimeTexture },
+        grimeAmount: { value: def.grime },
+        grimeColor: { value: new THREE.Color(0x3b3428) },
+      });
+      m.customProgramCacheKey = () => "ih-grime";
+    }
+    this.materials.set(name, m);
+    return m;
+  }
+
+  dispose() {
+    this.disposed = true;
+    for (const m of this.materials.values()) m.dispose();
+    for (const s of this.slots.values()) for (const t of [s.albedo, s.normal, s.rough, s.ao]) t?.dispose();
+    for (const d of this.owned) d.dispose();
+    this.materials.clear();
+    this.slots.clear();
+    this.listeners.clear();
+  }
+}

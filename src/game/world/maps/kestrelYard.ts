@@ -7,15 +7,15 @@ import type { MapBox, MapDef } from "../MapLoader";
  * and a steel-plate gantry at ~70 m.
  * Coordinates: x = east, z = south, y = up. Box = center (x, z), size (w, h, d).
  */
-const CONCRETE = 0x8f918b;
-const CONCRETE_DARK = 0x6f716b;
-const RUST = 0x8a3b24;
-const STEEL_BLUE = 0x2f4f6f;
-const OLIVE = 0x4a5a3a;
-const CRATE = 0x7a5a32;
-const SANDBAG = 0x9a8a62;
-const BARRIER = 0xb0aca0;
-const STEEL = 0x3a3c3e;
+const CONCRETE = 0xc8c6be;
+const CONCRETE_DARK = 0xa8a69e;
+const RUST = 0xc27c55;
+const STEEL_BLUE = 0x8299ae;
+const OLIVE = 0x949b6c;
+const CRATE = 0xd2c4ad;
+const SANDBAG = 0xc4b48e;
+const BARRIER = 0xd6d2c6;
+const STEEL = 0xa4a6a8;
 
 const stairs = (): MapBox[] => {
   // 5 steps of 0.3 m up to a 1.8 m platform (each within the 0.45 m step-up).
@@ -30,26 +30,32 @@ export const KESTREL_YARD: MapDef = {
   id: "kestrel-yard",
   name: "Kestrel Yard",
   size: 80,
-  groundColor: 0x8a8068,
-  skyTop: 0x5d86b5,
-  skyHorizon: 0xc9d3d6,
+  groundColor: 0x7a7060,
+  skyTop: 0x737d86,
+  skyHorizon: 0xb5b9b0,
   fogNear: 60,
   fogFar: 220,
   sunDirection: [0.45, 0.8, 0.35],
+  sunColor: 0xfff1de,
+  sunIntensity: 2.0,
+  hemiSky: 0xc3cacc,
+  hemiGround: 0x545040,
+  atmosphere: { fogDensity: 0.005, fogColor: 0xb3b7ae, cloudCover: 0.7, hemiIntensity: 1.05, envIntensity: 0.55, exposure: 1.08 },
+  dressing: "kestrel",
   spawns: [{ x: 0, z: 34, yaw: 0 }],
   boxes: [
     // Perimeter walls
-    { x: 0, z: -40.5, w: 82, h: 5, d: 1, color: CONCRETE },
-    { x: 0, z: 40.5, w: 82, h: 5, d: 1, color: CONCRETE },
-    { x: -40.5, z: 0, w: 1, h: 5, d: 82, color: CONCRETE },
-    { x: 40.5, z: 0, w: 1, h: 5, d: 82, color: CONCRETE },
+    { x: 0, z: -40.5, w: 82, h: 5, d: 1, color: CONCRETE, tag: "wall" },
+    { x: 0, z: 40.5, w: 82, h: 5, d: 1, color: CONCRETE, tag: "wall" },
+    { x: -40.5, z: 0, w: 1, h: 5, d: 82, color: CONCRETE, tag: "wall" },
+    { x: 40.5, z: 0, w: 1, h: 5, d: 82, color: CONCRETE, tag: "wall" },
 
     // Firing line: sandbags with gaps + benches
-    { x: -9, z: 28, w: 8, h: 1.0, d: 1, color: SANDBAG, surface: "sand" },
-    { x: 0, z: 28, w: 6, h: 1.0, d: 1, color: SANDBAG, surface: "sand" },
-    { x: 9, z: 28, w: 8, h: 1.0, d: 1, color: SANDBAG, surface: "sand" },
-    { x: -3.5, z: 29.6, w: 1.8, h: 0.85, d: 0.6, color: CRATE, surface: "wood" },
-    { x: 3.5, z: 29.6, w: 1.8, h: 0.85, d: 0.6, color: CRATE, surface: "wood" },
+    { x: -9, z: 28, w: 8, h: 1.0, d: 1, color: SANDBAG, surface: "sand", style: "sandbags" },
+    { x: 0, z: 28, w: 6, h: 1.0, d: 1, color: SANDBAG, surface: "sand", style: "sandbags" },
+    { x: 9, z: 28, w: 8, h: 1.0, d: 1, color: SANDBAG, surface: "sand", style: "sandbags" },
+    { x: -3.5, z: 29.6, w: 1.8, h: 0.85, d: 0.6, color: CRATE, surface: "wood", style: "crate" },
+    { x: 3.5, z: 29.6, w: 1.8, h: 0.85, d: 0.6, color: CRATE, surface: "wood", style: "crate" },
     // Curbs near spawn (walk over them: step-up)
     { x: -6, z: 32, w: 4, h: 0.2, d: 0.5, color: CONCRETE_DARK },
     { x: 6, z: 32, w: 4, h: 0.2, d: 0.5, color: CONCRETE_DARK },
@@ -57,33 +63,33 @@ export const KESTREL_YARD: MapDef = {
     // Lane dividers (low walls) down the range
     { x: -16, z: 14, w: 0.4, h: 1.2, d: 26, color: CONCRETE },
     { x: 16, z: 14, w: 0.4, h: 1.2, d: 26, color: CONCRETE },
-    { x: 0, z: 12, w: 3, h: 0.9, d: 0.8, color: BARRIER },
+    { x: 0, z: 12, w: 3, h: 0.9, d: 0.8, color: BARRIER, style: "barrier" },
 
     // Overlook platform (east) + stairs
     { x: 34, z: 31, w: 8, h: 1.8, d: 10, color: CONCRETE_DARK },
-    { x: 34, z: 26.2, w: 8, h: 1.0, d: 0.3, y: 1.8, color: STEEL, surface: "metal" }, // railing wall
+    { x: 34, z: 26.2, w: 8, h: 1.0, d: 0.3, y: 1.8, color: STEEL, surface: "metal", mat: "metal_dark" }, // railing wall
     ...stairs(),
 
     // Shipping containers (2.4 x 2.6 x 6)
-    { x: -24, z: 6, w: 6, h: 2.6, d: 2.4, color: RUST, surface: "metal" },
-    { x: -24, z: 6, w: 6, h: 2.6, d: 2.4, y: 2.6, color: STEEL_BLUE, surface: "metal" },
-    { x: 24, z: 2, w: 2.4, h: 2.6, d: 6, color: OLIVE, surface: "metal" },
-    { x: 26, z: -10, w: 6, h: 2.6, d: 2.4, color: RUST, surface: "metal" },
-    { x: -8, z: -8, w: 2.4, h: 2.6, d: 6, color: STEEL_BLUE, surface: "metal" },
-    { x: 10, z: -20, w: 6, h: 2.6, d: 2.4, color: OLIVE, surface: "metal" },
-    { x: 30, z: 14, w: 2.4, h: 2.6, d: 6, color: STEEL_BLUE, surface: "metal" },
-    { x: 30, z: -26, w: 2.4, h: 2.6, d: 6, color: RUST, surface: "metal" },
+    { x: -24, z: 6, w: 6, h: 2.6, d: 2.4, color: RUST, surface: "metal", style: "container" },
+    { x: -24, z: 6, w: 6, h: 2.6, d: 2.4, y: 2.6, color: STEEL_BLUE, surface: "metal", style: "container" },
+    { x: 24, z: 2, w: 2.4, h: 2.6, d: 6, color: OLIVE, surface: "metal", style: "container" },
+    { x: 26, z: -10, w: 6, h: 2.6, d: 2.4, color: RUST, surface: "metal", style: "container" },
+    { x: -8, z: -8, w: 2.4, h: 2.6, d: 6, color: STEEL_BLUE, surface: "metal", style: "container" },
+    { x: 10, z: -20, w: 6, h: 2.6, d: 2.4, color: OLIVE, surface: "metal", style: "container" },
+    { x: 30, z: 14, w: 2.4, h: 2.6, d: 6, color: STEEL_BLUE, surface: "metal", style: "container" },
+    { x: 30, z: -26, w: 2.4, h: 2.6, d: 6, color: RUST, surface: "metal", style: "container" },
 
     // Crate staircase onto the olive container (jump: 0.9 → 1.8 → 2.6)
-    { x: 21.6, z: 5.6, w: 0.9, h: 0.9, d: 0.9, color: CRATE, surface: "wood" },
-    { x: 22.3, z: 4.4, w: 0.9, h: 1.8, d: 0.9, color: CRATE, surface: "wood" },
+    { x: 21.6, z: 5.6, w: 0.9, h: 0.9, d: 0.9, color: CRATE, surface: "wood", style: "crate" },
+    { x: 22.3, z: 4.4, w: 0.9, h: 1.8, d: 0.9, color: CRATE, surface: "wood", style: "crate" },
 
     // Loose cover
-    { x: -4, z: 4, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood" },
-    { x: -2.8, z: 4.2, w: 1.0, h: 1.0, d: 1.0, color: CRATE, surface: "wood" },
-    { x: 20, z: 10, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood" },
-    { x: -28, z: 18, w: 1.4, h: 1.4, d: 1.4, color: CRATE, surface: "wood" },
-    { x: 18, z: -28, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood" },
+    { x: -4, z: 4, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood", style: "crate" },
+    { x: -2.8, z: 4.2, w: 1.0, h: 1.0, d: 1.0, color: CRATE, surface: "wood", style: "crate" },
+    { x: 20, z: 10, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood", style: "crate" },
+    { x: -28, z: 18, w: 1.4, h: 1.4, d: 1.4, color: CRATE, surface: "wood", style: "crate" },
+    { x: 18, z: -28, w: 1.2, h: 1.2, d: 1.2, color: CRATE, surface: "wood", style: "crate" },
 
     // Warehouse (roofless) NW: x -34..-18, z -34..-20
     { x: -26, z: -34, w: 16, h: 4, d: 0.5, color: CONCRETE },
@@ -93,15 +99,15 @@ export const KESTREL_YARD: MapDef = {
     { x: -24.5, z: -20, w: 5, h: 1.0, d: 0.5, y: 3, color: CONCRETE },
     { x: -18, z: -31, w: 0.5, h: 4, d: 6, color: CONCRETE },
     { x: -18, z: -22, w: 0.5, h: 4, d: 4, color: CONCRETE }, // door z -28..-24
-    { x: -29, z: -29, w: 4, h: 1.2, d: 1.2, color: CRATE, surface: "wood" },
+    { x: -29, z: -29, w: 4, h: 1.2, d: 1.2, color: CRATE, surface: "wood", style: "crate" },
     { x: -23, z: -26, w: 1.2, h: 1.0, d: 3, color: BARRIER },
 
     // Steel gantry at the far end (~70 m) for the plates
-    { x: -6, z: -37, w: 0.3, h: 4.6, d: 0.3, color: STEEL, surface: "metal" },
-    { x: 10, z: -37, w: 0.3, h: 4.6, d: 0.3, color: STEEL, surface: "metal" },
-    { x: 2, z: -37, w: 16.3, h: 0.3, d: 0.3, y: 4.6, color: STEEL, surface: "metal" },
+    { x: -6, z: -37, w: 0.3, h: 4.6, d: 0.3, color: STEEL, surface: "metal", mat: "metal_dark" },
+    { x: 10, z: -37, w: 0.3, h: 4.6, d: 0.3, color: STEEL, surface: "metal", mat: "metal_dark" },
+    { x: 2, z: -37, w: 16.3, h: 0.3, d: 0.3, y: 4.6, color: STEEL, surface: "metal", mat: "metal_dark" },
     // Berm behind the plates
-    { x: 2, z: -39.2, w: 22, h: 2.2, d: 1.6, color: SANDBAG, surface: "sand" },
+    { x: 2, z: -39.2, w: 22, h: 2.2, d: 1.6, color: 0xb0a890, surface: "sand", mat: "ground" },
   ],
   targets: [
     // Close lane (~14 m)
