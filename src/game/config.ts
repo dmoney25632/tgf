@@ -122,6 +122,21 @@ export type QualityPreset = {
   msaaSamples: number;
   maxDecals: number;
   maxParticles: number;
+  /** Largest texture edge uploaded (photo textures are downscaled above it). */
+  maxTextureSize: number;
+  /** Edge size of generated (procedural fallback) textures. */
+  proceduralTextureSize: number;
+  anisotropy: number;
+  /** 0..1 multiplier on grass/plant/tree instance counts. */
+  foliageDensity: number;
+  /** Grass fades out over the last 30% of this distance (m). */
+  grassDistance: number;
+  /** Half-size (m) of the camera-fitted sun shadow frustum. */
+  shadowExtent: number;
+  /** Load the HDRI sky for background + image-based lighting. */
+  hdri: boolean;
+  /** Floating dust motes near the camera. */
+  dustMotes: boolean;
 };
 
 export const QUALITY: Record<QualityName, QualityPreset> = {
@@ -137,6 +152,14 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     msaaSamples: 0,
     maxDecals: 48,
     maxParticles: 256,
+    maxTextureSize: 512,
+    proceduralTextureSize: 256,
+    anisotropy: 2,
+    foliageDensity: 0.3,
+    grassDistance: 32,
+    shadowExtent: 30,
+    hdri: false,
+    dustMotes: false,
   },
   medium: {
     label: "Medium",
@@ -150,6 +173,14 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     msaaSamples: 0,
     maxDecals: 96,
     maxParticles: 512,
+    maxTextureSize: 1024,
+    proceduralTextureSize: 512,
+    anisotropy: 4,
+    foliageDensity: 0.65,
+    grassDistance: 50,
+    shadowExtent: 36,
+    hdri: true,
+    dustMotes: true,
   },
   high: {
     label: "High",
@@ -163,6 +194,14 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     msaaSamples: 4,
     maxDecals: 160,
     maxParticles: 768,
+    maxTextureSize: 1024,
+    proceduralTextureSize: 512,
+    anisotropy: 8,
+    foliageDensity: 1,
+    grassDistance: 70,
+    shadowExtent: 46,
+    hdri: true,
+    dustMotes: true,
   },
 };
 

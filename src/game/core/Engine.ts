@@ -100,8 +100,8 @@ export class GameEngine {
     this.settings = { sensitivity: 1, adsSensitivity: 1, quality: "medium", volume: 0.8, ...opts.settings };
     const survival = opts.mode === "survival";
 
-    this.map = loadMap(this.scene, opts.map ?? (survival ? DUSTFALL_OUTPOST : KESTREL_YARD));
     const preset = QUALITY[this.settings.quality];
+    this.map = loadMap(this.scene, opts.map ?? (survival ? DUSTFALL_OUTPOST : KESTREL_YARD), preset);
     this.viewmodel = new WeaponViewmodel(null);
     this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
     this.viewmodel.scene.environment = this.pipeline.envMap;
@@ -246,6 +246,7 @@ export class GameEngine {
     if (next.quality && next.quality !== prevQuality) {
       const q = QUALITY[next.quality];
       this.pipeline.setQuality(q);
+      this.map.setQuality(q);
       this.effects.setLimits(q.maxDecals, q.maxParticles);
       this.resize();
     }

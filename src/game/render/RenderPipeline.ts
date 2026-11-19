@@ -8,15 +8,25 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { FXAAPass } from "three/addons/postprocessing/FXAAPass.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { QualityPreset } from "../config";
+import { analyzeHdri, getAtmosphere } from "./Atmosphere";
+import { loadHdri } from "../assets/AssetLoader";
 
-/** Subtle filmic grade applied after tone mapping (sRGB space). */
+/**
+ * Cinematic grade applied after tone mapping (sRGB space): desaturation,
+ * split toning (cool green-grey shadows, faintly warm highlights), a gentle
+ * S-curve with lifted blacks, vignette and fine animated film grain.
+ */
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
-    saturation: { value: 1.08 },
-    contrast: { value: 1.06 },
-    lift: { value: new THREE.Vector3(0.01, 0.012, 0.02) },
-    gain: { value: new THREE.Vector3(1.03, 1.0, 0.96) },
+    saturation: { value: 0.8 },
+    contrast: { value: 1.1 },
+    shadowTint: { value: new THREE.Vector3(0.95, 1.0, 0.975) },
+    highlightTint: { value: new THREE.Vector3(1.03, 1.0, 0.95) },
+    lift: { value: 0.018 },
+    vignette: { value: 0.55 },
+    grain: { value: 0.022 },
+    time: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -25,16 +35,25 @@ const GradeShader = {
     uniform sampler2D tDiffuse;
     uniform float saturation;
     uniform float contrast;
-    uniform vec3 lift;
-    uniform vec3 gain;
+    uniform vec3 shadowTint;
+    uniform vec3 highlightTint;
+    uniform float lift;
+    uniform float vignette;
+    uniform float grain;
+    uniform float time;
     varying vec2 vUv;
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
       vec3 col = c.rgb;
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(l), col, saturation);
-      col = (col - 0.5) * contrast + 0.5;
-      col = col * gain + lift * (1.0 - col);
+      col *= mix(shadowTint, highlightTint, smoothstep(0.05, 0.85, l));
+      col = (col - 0.45) * contrast + 0.45;
+      col = col * (1.0 - lift) + lift;
+      vec2 d = vUv - 0.5;
+      col *= 1.0 - dot(d, d) * vignette;
+      float n = fract(sin(dot(vUv * 1000.0 + fract(time * 7.13) * 100.0, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+      col += n * grain;
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
     }`,
 };
@@ -44,14 +63,23 @@ const GradeShader = {
  * Quality presets toggle resolution, shadows, and the post stack:
  *   world → [AO] → viewmodel (cleared depth) → [bloom] → tone map → grade → [FXAA]
  * Low skips post-processing entirely and renders straight to the canvas.
+ *
+ * Image-based lighting comes from the map's sky (procedural sky dome baked
+ * through PMREM), upgraded to the manifest HDRI when available and enabled
+ * by the preset. Fog colour, ambient tint and sun azimuth follow the HDRI.
  */
 export class RenderPipeline {
   readonly renderer: THREE.WebGLRenderer;
-  readonly envMap: THREE.Texture;
+  private env: THREE.Texture;
+  private hdriEnv: THREE.Texture | null = null;
+  private hdriRequested = false;
+  private disposed = false;
   private composer: EffectComposer | null = null;
+  private grade: ShaderPass | null = null;
   private quality!: QualityPreset;
   private width = 1;
   private height = 1;
+  private readonly envIntensity: number;
 
   constructor(
     container: HTMLElement,
@@ -64,7 +92,9 @@ export class RenderPipeline {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    const atmo = getAtmosphere(scene);
+    this.renderer.toneMappingExposure = atmo?.def.exposure ?? 1.05;
+    this.envIntensity = atmo?.def.envIntensity ?? 0.3;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.autoClear = false;
     // Count draw calls across all passes of a frame (reset in render()).
@@ -74,14 +104,26 @@ export class RenderPipeline {
     canvas.tabIndex = 0;
     container.appendChild(canvas);
 
-    // Image-based lighting so metals/polymers read well.
+    // Image-based lighting from the map's own sky (or a neutral room).
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const room = new RoomEnvironment();
-    this.envMap = pmrem.fromScene(room, 0.04).texture;
-    room.dispose();
+    if (atmo) {
+      const envScene = new THREE.Scene();
+      const sky = new THREE.Mesh(atmo.sky.geometry, atmo.sky.material);
+      envScene.add(sky);
+      this.env = pmrem.fromScene(envScene, 0.02, 0.1, 1000).texture;
+    } else {
+      const room = new RoomEnvironment();
+      this.env = pmrem.fromScene(room, 0.04).texture;
+      room.dispose();
+    }
     pmrem.dispose();
-    scene.environment = this.envMap;
-    scene.environmentIntensity = 0.3;
+    scene.environment = this.env;
+    scene.environmentIntensity = atmo ? this.envIntensity : 0.3;
+  }
+
+  /** Current environment map (procedural sky or HDRI). */
+  get envMap() {
+    return this.hdriEnv ?? this.env;
   }
 
   get canvas() {
@@ -92,9 +134,40 @@ export class RenderPipeline {
     return this.renderer.info;
   }
 
+  private requestHdri() {
+    if (this.hdriRequested) return;
+    this.hdriRequested = true;
+    void loadHdri().then((tex) => {
+      if (!tex || this.disposed) return;
+      const atmo = getAtmosphere(this.scene);
+      const info = analyzeHdri(tex);
+      const lum = (c: THREE.Color) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+      // Match the HDRI's horizon brightness to the map's fog so the seam vanishes.
+      const target = atmo ? lum(atmo.fog.color) : 0.45;
+      const scale = THREE.MathUtils.clamp(target / Math.max(1e-4, lum(info.horizon)), 0.02, 50);
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.hdriEnv = pmrem.fromEquirectangular(tex).texture;
+      pmrem.dispose();
+      const old = this.env;
+      this.scene.background = tex;
+      this.scene.backgroundIntensity = scale;
+      this.scene.environment = this.hdriEnv;
+      this.scene.environmentIntensity = this.envIntensity * scale;
+      if (this.viewScene.environment === old) {
+        this.viewScene.environment = this.hdriEnv;
+        this.viewScene.environmentIntensity *= scale;
+      }
+      if (atmo) {
+        atmo.applyHdri(info.horizon.clone().multiplyScalar(scale), info.sky.clone().multiplyScalar(scale));
+        if (info.hasSun) atmo.setSunAzimuth(info.sunAzimuth);
+      }
+    });
+  }
+
   setQuality(q: QualityPreset) {
     const shadowsChanged = !this.quality || this.quality.shadows !== q.shadows || this.quality.shadowMapSize !== q.shadowMapSize;
     this.quality = q;
+    if (q.hdri) this.requestHdri();
 
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.maxPixelRatio) * q.resolutionScale);
 
@@ -122,6 +195,7 @@ export class RenderPipeline {
     for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
     this.composer = null;
+    this.grade = null;
   }
 
   private buildComposer() {
@@ -139,17 +213,18 @@ export class RenderPipeline {
     composer.addPass(new RenderPass(this.scene, this.camera));
     if (q.ambientOcclusion) {
       const ao = new GTAOPass(this.scene, this.camera, this.width, this.height);
-      ao.blendIntensity = 0.75;
-      ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1, scale: 1 });
+      ao.blendIntensity = 0.8;
+      ao.updateGtaoMaterial({ radius: 0.7, distanceExponent: 1.5, thickness: 1, scale: 1 });
       composer.addPass(ao);
     }
     const view = new RenderPass(this.viewScene, this.viewCamera);
     view.clear = false;
     view.clearDepth = true;
     composer.addPass(view);
-    if (q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.4, 0.45, 0.92));
+    if (q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.22, 0.4, 0.95));
     composer.addPass(new OutputPass());
-    composer.addPass(new ShaderPass(GradeShader));
+    this.grade = new ShaderPass(GradeShader);
+    composer.addPass(this.grade);
     if (q.msaaSamples === 0) composer.addPass(new FXAAPass());
     this.composer = composer;
   }
@@ -168,6 +243,7 @@ export class RenderPipeline {
   render() {
     this.renderer.info.reset();
     if (this.composer) {
+      if (this.grade) this.grade.uniforms.time.value = (performance.now() / 1000) % 1000;
       this.composer.render();
       return;
     }
@@ -179,8 +255,13 @@ export class RenderPipeline {
   }
 
   dispose() {
+    this.disposed = true;
     this.disposeComposer();
-    this.envMap.dispose();
+    this.env.dispose();
+    this.hdriEnv?.dispose();
+    // The HDR source stays cached (AssetLoader); free only its GPU copy.
+    const bg = this.scene.background as THREE.Texture | null;
+    if (bg && (bg as THREE.Texture).isTexture) bg.dispose();
     this.renderer.dispose();
     // Release the GL context now instead of waiting for GC; otherwise repeated
     // remounts hit the browser's active-context cap.
