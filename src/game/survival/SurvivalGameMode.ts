@@ -17,6 +17,7 @@ import { PlayerState } from "./PlayerState";
 import { ShopSystem, Wallet, type ShopView } from "./ShopSystem";
 import { WaveManager } from "./WaveManager";
 import { EnemySpawner } from "./EnemySpawner";
+import type { SurvivalNet } from "../net/types";
 
 export type SurvivalConfig = {
   operator: OperatorId;
@@ -26,6 +27,8 @@ export type SurvivalConfig = {
   waveTarget: WaveTarget;
   squad: number;
   startWave?: number;
+  /** [coop] Online co-op session; absent for solo play. */
+  net?: SurvivalNet;
 };
 
 const STATION_RANGE = 2.6;
@@ -70,6 +73,7 @@ export class SurvivalGameMode implements GameMode {
   private prompt = "";
   private promptProgress = -1;
   private readonly teamRows: TeamRow[] = [];
+  private readonly net: SurvivalNet | undefined;
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -77,6 +81,7 @@ export class SurvivalGameMode implements GameMode {
 
   constructor(private readonly ctx: EngineContext, readonly config: SurvivalConfig) {
     const layout = ctx.map.def.survival!;
+    this.net = config.net;
     this.diff = DIFFICULTY[config.difficulty];
     this.crateUsed = layout.ammoCrates.map(() => false);
 
@@ -133,13 +138,16 @@ export class SurvivalGameMode implements GameMode {
         this.shud.showBanner(`${agent.name.toUpperCase()} IS DOWN`, "HOLD [F] NEXT TO THEM TO REVIVE", 2.4, "#ff8a6a");
       },
     });
-    this.agents.prewarm("rifleman", 12);
-    this.agents.prewarm("rusher", 4);
-    this.agents.prewarm("armored", 2);
-    this.agents.prewarm("sniper", 2);
+    if (this.net?.role !== "client") {
+      this.agents.prewarm("rifleman", 12);
+      this.agents.prewarm("rusher", 4);
+      this.agents.prewarm("armored", 2);
+      this.agents.prewarm("sniper", 2);
+    }
 
     const others = Object.values(OPERATORS).filter((o) => o.id !== op.id);
-    for (let i = 0; i < Math.min(2, config.squad); i++) {
+    // [coop] Humans replace the squad bots online.
+    for (let i = 0; i < (this.net ? 0 : Math.min(2, config.squad)); i++) {
       const c = others[i].colors;
       this.agents.addSquadmate(i, { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent });
     }
@@ -162,6 +170,16 @@ export class SurvivalGameMode implements GameMode {
     // Skipping ahead comes with the funds you'd have earned.
     if ((config.startWave ?? 1) > 1) this.wallet.money += 650 * ((config.startWave ?? 1) - 1);
     this.reset();
+    this.net?.attach(this, ctx, {
+      shud: this.shud,
+      crateUsed: this.crateUsed,
+      countKill: (type, part, source) => {
+        this.kills[type] = (this.kills[type] ?? 0) + 1;
+        if (source === "melee") this.meleeKills++;
+        else if (source === "grenade") this.grenadeKills++;
+        else if (part === "head") this.headshotKills++;
+      },
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -176,6 +194,7 @@ export class SurvivalGameMode implements GameMode {
 
   collectTargets(out: THREE.Object3D[]) {
     this.agents.hitboxes(out);
+    this.net?.collectTargets(out);
   }
 
   vitals(): Vitals {
@@ -185,7 +204,8 @@ export class SurvivalGameMode implements GameMode {
   update(dt: number, playing: boolean) {
     const ctx = this.ctx;
     ctx.camera.getWorldDirection(this.view);
-    if (!playing) {
+    // [coop] Online matches keep simulating behind menus.
+    if (!playing && !this.net) {
       this.drawHud(0);
       return;
     }
@@ -194,13 +214,15 @@ export class SurvivalGameMode implements GameMode {
     // ---- Player vitals / revive ---------------------------------------------------
     const holdingF = ctx.input.isDown("KeyF");
     this.selfReviving = this.state.downed && this.state.selfRevives > 0 && holdingF;
-    const reviving = this.selfReviving || this.agents.reviver !== null;
-    const res = this.state.update(dt, reviving, this.selfReviving ? PLAYER.selfReviveTime : PLAYER.reviveTime);
+    const reviving = this.selfReviving || this.agents.reviver !== null || (this.net?.revivingMe() ?? false);
+    // [coop] Clients mirror the host's vitals instead of simulating them.
+    const res = this.net?.role === "client" ? this.net.clientVitals() : this.state.update(dt, reviving, this.selfReviving ? PLAYER.selfReviveTime : PLAYER.reviveTime);
     if (res === "revived") this.onPlayerRevived();
-    else if (res === "bledout") this.end(false);
+    else if (res === "downed") this.onPlayerDowned();
+    else if (res === "bledout" && !this.net) this.end(false); // [coop] bled-out players sit out until the next wave
     ctx.player.downed = this.state.downed;
     ctx.player.speedMultiplier = this.loadout.speed * ctx.weapons.active.def.mobility;
-    ctx.weapons.disabled = this.ended || this.selfReviving || this.botReviveTarget !== null;
+    ctx.weapons.disabled = this.ended || this.selfReviving || this.botReviveTarget !== null || (this.net?.busy ?? false);
     ctx.grenades.disabled = this.state.downed || this.ended;
 
     // Low-health heartbeat.
@@ -213,13 +235,15 @@ export class SurvivalGameMode implements GameMode {
     }
 
     // ---- Waves ------------------------------------------------------------------
-    if (!this.ended) this.updateWaves(dt);
+    if (!this.ended && this.net?.role !== "client") this.updateWaves(dt);
 
     // ---- AI ---------------------------------------------------------------------
     this.agents.update(dt);
+    this.net?.update(dt);
 
     // ---- Team wipe ----------------------------------------------------------------
-    if (!this.ended && this.state.downed && !this.agents.squad.some((s) => s.alive) && this.state.selfRevives === 0) this.end(false);
+    const wiped = this.net ? this.net.teamWiped() : this.state.downed && !this.agents.squad.some((s) => s.alive) && this.state.selfRevives === 0;
+    if (!this.ended && wiped) this.end(false);
 
     if (this.ended && this.endTimer >= 0) {
       this.endTimer -= dt;
@@ -246,6 +270,7 @@ export class SurvivalGameMode implements GameMode {
   }
 
   onExplosion(at: THREE.Vector3) {
+    if (this.net?.onExplosion(at)) return; // [coop] clients: the host resolves grenade damage
     this.agents.explode(at, GRENADE.radius, GRENADE.maxDamage);
     // Self damage (with occlusion).
     const p = this.ctx.player;
@@ -275,7 +300,9 @@ export class SurvivalGameMode implements GameMode {
   }
 
   buy(id: string) {
+    const money = this.wallet.money;
     const r = this.shop.buy(id);
+    if (r.ok) this.net?.onBuy(id, money - this.wallet.money);
     if (r.ok) this.ctx.sfx.cash();
     else this.ctx.sfx.denied();
     return r;
@@ -289,7 +316,8 @@ export class SurvivalGameMode implements GameMode {
 
   readyUp() {
     this.closeShop();
-    this.waves.skip();
+    if (this.net) this.net.ready();
+    else this.waves.skip();
   }
 
   get canShop() {
@@ -304,7 +332,10 @@ export class SurvivalGameMode implements GameMode {
     const w = this.waves;
     const ctx = this.ctx;
     if (w.phase === "prematch" || w.phase === "intermission") {
-      if (ctx.input.pressed("KeyN")) w.skip();
+      if (ctx.input.pressed("KeyN")) {
+        if (this.net) this.net.ready();
+        else w.skip();
+      }
       w.timer -= dt;
       if (w.timer <= 0) {
         w.startNextWave();
@@ -380,6 +411,7 @@ export class SurvivalGameMode implements GameMode {
       this.perchOf.delete(k.agent);
     }
     this.waves.killed++;
+    if (this.net?.killCredit(k)) return; // [coop] a remote player's kill, already credited
     const base = def.reward * this.diff.reward * (k.agent.elite ? WAVES.elite.reward : 1);
     let money = 0;
     let weaponName: string = ctx.weapons.active.def.name;
@@ -491,6 +523,14 @@ export class SurvivalGameMode implements GameMode {
     }
     this.botReviveTarget = null;
 
+    // [coop] Revive a downed teammate.
+    const coop = this.net?.interact(dt, input.isDown("KeyF"));
+    if (coop) {
+      this.prompt = coop.prompt;
+      this.promptProgress = coop.progress;
+      return;
+    }
+
     for (const s of layout.buyStations) {
       if (Math.hypot(s.x - p.x, s.z - p.z) > STATION_RANGE) continue;
       if (!this.canShop) {
@@ -544,6 +584,7 @@ export class SurvivalGameMode implements GameMode {
         status: s.state === "downed" ? `DOWN ${Math.ceil(s.bleed)}s` : s.state === "dead" || s.state === "inactive" ? "KIA" : s.state === "revive" ? "REVIVING" : "",
       });
     }
+    this.net?.teamRows(rows);
     let boss: { name: string; frac: number } | null = null;
     for (const a of this.agents.active) {
       if (a.spec.role === "warden" && a.alive) boss = { name: a.name, frac: a.health / a.maxHealth };
@@ -570,7 +611,7 @@ export class SurvivalGameMode implements GameMode {
             ? `${this.agents.reviver.name.toUpperCase()} IS REVIVING YOU`
             : sw
               ? "HOLD [F] — SECOND WIND  ·  SIDEARM STILL WORKS"
-              : this.agents.squad.some((s) => s.alive)
+              : this.agents.squad.some((s) => s.alive) || this.net?.teammatesUp
                 ? "HOLD ON — YOUR SQUAD IS COMING  ·  SIDEARM STILL WORKS"
                 : "NO ONE LEFT TO REVIVE YOU",
         boss,
@@ -582,7 +623,8 @@ export class SurvivalGameMode implements GameMode {
     );
   }
 
-  private end(victory: boolean) {
+  /** Public for co-op: clients end when the host says so. */
+  end(victory: boolean) {
     if (this.ended) return;
     this.ended = true;
     this.victory = victory;
@@ -621,6 +663,7 @@ export class SurvivalGameMode implements GameMode {
   }
 
   dispose() {
+    this.net?.dispose();
     this.shud.dispose();
     this.agents.dispose();
     disposeHumanoidCache();
