@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { MaterialLibrary, MaterialName } from "../render/Materials";
+import type { WorldMat } from "./WorldMaterials";
 
 export type UvMode =
   /** Planar world projection per triangle (dominant axis) — no stretching, continuous across pieces. */
@@ -16,9 +16,36 @@ export type AddOptions = {
   rot90?: boolean;
   /** Extra UV offset in metres (de-syncs neighbouring pieces). */
   uvOffset?: [number, number];
+  /** Skip the baked ground-contact AO (default: on for opaque materials). */
+  noAo?: boolean;
 };
 
-type Bucket = { group: string; mat: MaterialName; pos: number[]; nor: number[]; uv: number[]; col: number[] };
+/** Materials that never get baked AO (overlays / alpha cards). */
+const NO_AO = new Set<WorldMat>(["decal", "chainlink", "frond", "cloth"]);
+
+/**
+ * Group naming: "solid" (raycast), "decor", "proxy:<surface>" (invisible
+ * raycast faces), "model:<id>" (fallbacks), "far" (backdrop, no shadows),
+ * "clutter@i,j" (small detail, distance-culled per cell, hidden on low).
+ */
+export const CLUTTER_CELL = 34;
+
+/**
+ * Backdrop ("far") geometry is never seen up close, so similar materials
+ * share one: fewer draw calls for the whole skyline.
+ */
+const FAR_REMAP: Partial<Record<WorldMat, WorldMat>> = {
+  concrete_dirty: "concrete",
+  concrete_broken: "concrete",
+  metal_rust: "metal_dark",
+  brick: "plaster_damaged",
+  wood: "metal_painted",
+  rubble: "concrete",
+  canvas: "cloth",
+};
+export const clutterGroup = (x: number, z: number) => `clutter@${Math.floor(x / CLUTTER_CELL)},${Math.floor(z / CLUTTER_CELL)}`;
+
+type Bucket = { group: string; mat: WorldMat; pos: number[]; nor: number[]; uv: number[]; col: number[]; ao: number[] };
 
 const _m3 = new THREE.Matrix3();
 const _a = new THREE.Vector3();
@@ -43,18 +70,19 @@ export class MeshBuilder {
   private readonly buckets = new Map<string, Bucket>();
   private readonly unit = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
 
-  private bucket(group: string, mat: MaterialName) {
+  private bucket(group: string, mat: WorldMat) {
+    if (group.startsWith("far")) mat = FAR_REMAP[mat] ?? mat;
     const key = `${group}|${mat}`;
     let b = this.buckets.get(key);
     if (!b) {
-      b = { group, mat, pos: [], nor: [], uv: [], col: [] };
+      b = { group, mat, pos: [], nor: [], uv: [], col: [], ao: [] };
       this.buckets.set(key, b);
     }
     return b;
   }
 
   /** Adds a geometry (indexed or not) transformed by `matrix`. */
-  add(geo: THREE.BufferGeometry, matrix: THREE.Matrix4 | null, mat: MaterialName, tint: THREE.ColorRepresentation, opts: AddOptions = {}) {
+  add(geo: THREE.BufferGeometry, matrix: THREE.Matrix4 | null, mat: WorldMat, tint: THREE.ColorRepresentation, opts: AddOptions = {}) {
     const g = geo.index ? geo.toNonIndexed() : geo;
     const P = g.attributes.position as THREE.BufferAttribute;
     const N = g.attributes.normal as THREE.BufferAttribute | undefined;
@@ -67,7 +95,9 @@ export class MeshBuilder {
     const [su, sv] = opts.uvScale ?? [1, 1];
     const [ou, ov] = opts.uvOffset ?? [0, 0];
     const rot = !!opts.rot90;
+    const ao = opts.noAo || NO_AO.has(mat) || b.group.startsWith("proxy") ? 0 : 1;
     for (let i = 0; i + 2 < P.count; i += 3) {
+      b.ao.push(ao, ao, ao);
       const base = b.pos.length;
       for (let k = 0; k < 3; k++) {
         const v = k === 0 ? _a : k === 1 ? _b : _c;
@@ -115,7 +145,7 @@ export class MeshBuilder {
   }
 
   /** Axis-aligned box by centre + size (optionally rotated about Y). */
-  box(mat: MaterialName, x: number, y: number, z: number, w: number, h: number, d: number, tint: THREE.ColorRepresentation, opts: AddOptions & { rotY?: number; rotX?: number; rotZ?: number } = {}) {
+  box(mat: WorldMat, x: number, y: number, z: number, w: number, h: number, d: number, tint: THREE.ColorRepresentation, opts: AddOptions & { rotY?: number; rotX?: number; rotZ?: number } = {}) {
     _e.set(opts.rotX ?? 0, opts.rotY ?? 0, opts.rotZ ?? 0);
     _q.setFromEuler(_e);
     _mat.compose(_p.set(x, y, z), _q, _s.set(w, h, d));
@@ -123,15 +153,47 @@ export class MeshBuilder {
   }
 
   /** Box given by min corner (feet) + size, like MapBox. */
-  boxFeet(mat: MaterialName, x: number, y: number, z: number, w: number, h: number, d: number, tint: THREE.ColorRepresentation, opts: AddOptions & { rotY?: number } = {}) {
+  boxFeet(mat: WorldMat, x: number, y: number, z: number, w: number, h: number, d: number, tint: THREE.ColorRepresentation, opts: AddOptions & { rotY?: number } = {}) {
     this.box(mat, x, y + h / 2, z, w, h, d, tint, opts);
   }
 
+  /** Ground height under a point, for the baked contact AO (flat by default). */
+  ground: (x: number, z: number) => number = () => 0;
+
+  /** Triangle count so far in groups matching a prefix (budgeting). */
+  triangles(prefix = "") {
+    let n = 0;
+    for (const b of this.buckets.values()) if (b.group.startsWith(prefix)) n += b.pos.length / 9;
+    return n;
+  }
+
+  /**
+   * Bakes ground-contact AO into vertex colours: wall bases, undersides of
+   * low props and the feet of everything darken toward the ground (upward
+   * faces are left alone so floors/slabs don't go muddy).
+   */
+  private bakeAo(b: Bucket) {
+    for (let v = 0; v < b.pos.length / 3; v++) {
+      if (!b.ao[v]) continue;
+      const ny = b.nor[v * 3 + 1];
+      if (ny > 0.7) continue;
+      const x = b.pos[v * 3], y = b.pos[v * 3 + 1], z = b.pos[v * 3 + 2];
+      const h = y - this.ground(x, z);
+      if (h > 1.6) continue;
+      const t = Math.min(1, Math.max(0, h / 1.6));
+      const k = 1 - (ny < -0.5 ? 0.5 : 0.4) * (1 - t * t * (3 - 2 * t));
+      b.col[v * 3] *= k;
+      b.col[v * 3 + 1] *= k;
+      b.col[v * 3 + 2] *= k;
+    }
+  }
+
   /** Builds one mesh per bucket. Returns them keyed by group. */
-  build(lib: MaterialLibrary): Map<string, THREE.Mesh[]> {
+  build(resolve: (name: WorldMat) => THREE.Material): Map<string, THREE.Mesh[]> {
     const out = new Map<string, THREE.Mesh[]>();
     for (const b of this.buckets.values()) {
       if (!b.pos.length) continue;
+      this.bakeAo(b);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
       geo.setAttribute("normal", new THREE.Float32BufferAttribute(b.nor, 3));
@@ -139,9 +201,10 @@ export class MeshBuilder {
       geo.setAttribute("color", new THREE.Float32BufferAttribute(b.col, 3));
       geo.computeBoundingSphere();
       geo.computeBoundingBox();
-      const mesh = new THREE.Mesh(geo, lib.get(b.mat));
+      const mesh = new THREE.Mesh(geo, resolve(b.mat));
       mesh.name = `${b.group}:${b.mat}`;
-      mesh.castShadow = true;
+      mesh.castShadow = !b.group.startsWith("far") && b.mat !== "decal";
+      if (b.mat === "decal") mesh.renderOrder = 1;
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       mesh.updateMatrix();
