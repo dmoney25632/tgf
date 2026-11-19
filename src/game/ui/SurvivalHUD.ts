@@ -60,6 +60,7 @@ export class SurvivalHUD {
   private nextNum = 0;
   private bannerTimer = 0;
   private readonly last: Record<string, unknown> = {};
+  private readonly teamCache: (string | number)[] = [];
   private readonly v = new THREE.Vector3();
   private pops: { el: HTMLDivElement; t: number }[] = [];
 
@@ -106,21 +107,30 @@ export class SurvivalHUD {
   }
 
   frame(f: SurvivalHudFrame, dt: number, camera: THREE.Camera, w: number, h: number) {
-    // ---- Header ---------------------------------------------------------------
-    const target = f.waveTarget ? ` / ${f.waveTarget}` : "";
-    const title = f.phase === "prematch" ? "STAND BY" : `WAVE ${f.wave}${target}`;
-    let sub = "";
-    if (f.phase === "combat") sub = `${f.remaining} HOSTILE${f.remaining === 1 ? "" : "S"} REMAINING`;
-    else if (f.phase === "intermission" || f.phase === "prematch") sub = `NEXT WAVE IN ${Math.ceil(f.timer)}s  ·  [N] READY UP`;
-    else if (f.phase === "victory") sub = "OUTPOST HELD";
-    else if (f.phase === "defeat") sub = "TEAM WIPED";
-    if (this.last.title !== title) this.waveTitle.textContent = (this.last.title = title) as string;
-    if (this.last.sub !== sub) this.waveSub.textContent = (this.last.sub = sub) as string;
+    // ---- Header (strings rebuilt only when an input changes) -------------------
+    const secs = Math.ceil(f.timer);
+    if (this.last.phase !== f.phase || this.last.wave !== f.wave || this.last.waveTarget !== f.waveTarget || this.last.remaining !== f.remaining || this.last.secs !== secs) {
+      this.last.phase = f.phase;
+      this.last.wave = f.wave;
+      this.last.waveTarget = f.waveTarget;
+      this.last.remaining = f.remaining;
+      this.last.secs = secs;
+      const target = f.waveTarget ? ` / ${f.waveTarget}` : "";
+      const title = f.phase === "prematch" ? "STAND BY" : `WAVE ${f.wave}${target}`;
+      let sub = "";
+      if (f.phase === "combat") sub = `${f.remaining} HOSTILE${f.remaining === 1 ? "" : "S"} REMAINING`;
+      else if (f.phase === "intermission" || f.phase === "prematch") sub = `NEXT WAVE IN ${secs}s  ·  [N] READY UP`;
+      else if (f.phase === "victory") sub = "OUTPOST HELD";
+      else if (f.phase === "defeat") sub = "TEAM WIPED";
+      if (this.last.title !== title) this.waveTitle.textContent = (this.last.title = title) as string;
+      if (this.last.sub !== sub) this.waveSub.textContent = (this.last.sub = sub) as string;
+    }
 
     // ---- Boss -----------------------------------------------------------------
-    const bossKey = f.boss ? `${f.boss.name}|${Math.round(f.boss.frac * 200)}` : "";
-    if (this.last.boss !== bossKey) {
-      this.last.boss = bossKey;
+    const bossFrac = f.boss ? Math.round(f.boss.frac * 200) : -1;
+    if (this.last.boss !== bossFrac || this.last.bossName !== f.boss?.name) {
+      this.last.boss = bossFrac;
+      this.last.bossName = f.boss?.name;
       this.boss.style.display = f.boss ? "block" : "none";
       if (f.boss) {
         this.bossName.textContent = f.boss.name.toUpperCase();
@@ -144,9 +154,16 @@ export class SurvivalHUD {
     }
 
     // ---- Team -----------------------------------------------------------------
-    const teamKey = f.team.map((t) => `${t.name}${Math.round(t.health)}${t.status}`).join("|");
-    if (this.last.team !== teamKey) {
-      this.last.team = teamKey;
+    // Compare in place (no per-frame key string).
+    const cache = this.teamCache;
+    let teamDirty = cache.length !== f.team.length * 3;
+    for (let i = 0; !teamDirty && i < f.team.length; i++) {
+      const t = f.team[i];
+      teamDirty = cache[i * 3] !== t.name || cache[i * 3 + 1] !== Math.round(t.health) || cache[i * 3 + 2] !== t.status;
+    }
+    if (teamDirty) {
+      cache.length = 0;
+      for (const t of f.team) cache.push(t.name, Math.round(t.health), t.status);
       this.team.innerHTML = f.team
         .map((t) => {
           const frac = Math.max(0, t.health / t.max);

@@ -14,7 +14,7 @@ import { getMap } from "../world/maps/registry";
 import { EffectsPool } from "../effects/EffectsPool";
 import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
-import { HUD, type HitKind } from "../ui/HUD";
+import { HUD, type HitKind, type HudFrame } from "../ui/HUD";
 import { Sfx } from "../audio/Sfx";
 import type { EngineContext, EngineEvent, GameMode } from "./GameMode";
 import { RangeMode } from "./RangeMode";
@@ -96,7 +96,17 @@ export class GameEngine {
   private readonly tmpA = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
+  private readonly bufSize = new THREE.Vector2();
   private readonly debugInfo: Record<string, string | number> = {};
+  private readonly hudFrame: HudFrame = {
+    spreadDeg: 0, fovDeg: 0, viewportH: 1, crosshairHide: 0, ammo: 0, reserve: 0, magSize: 1, weaponName: "", weaponKind: "",
+    slot: 0, slotNames: [], reload: -1, health: 0, maxHealth: 1, armor: 0, grenades: -1, scope: 0,
+  };
+  /** Cached container size (read only on resize, never per frame). */
+  private viewW = 1;
+  private viewH = 1;
+  private slotNamesFor: unknown = null;
+  private resolutionVersion = -1;
 
   constructor(private readonly container: HTMLElement, private readonly opts: EngineOptions = {}) {
     this.callsign = opts.callsign ?? "Recruit";
@@ -108,6 +118,7 @@ export class GameEngine {
     const mapDef = picked && (!survival || picked.survival) ? picked : survival ? DUSTFALL_OUTPOST : KESTREL_YARD;
     this.map = loadMap(this.scene, mapDef, preset);
     this.viewmodel = new WeaponViewmodel(null);
+    this.viewmodel.setSun(this.map.sun ?? null);
     this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
     this.viewmodel.scene.environment = this.pipeline.envMap;
 
@@ -335,7 +346,12 @@ export class GameEngine {
     this.updateHud(dt, playing);
     input.endFrame();
 
-    this.pipeline.render();
+    this.pipeline.render(dt);
+    // Dynamic resolution changed the drawing buffer: keep pixel-sized effects in step.
+    if (this.pipeline.resolutionVersion !== this.resolutionVersion) {
+      this.resolutionVersion = this.pipeline.resolutionVersion;
+      this.effects.setViewportHeight(this.viewH * this.pipeline.pixelRatio);
+    }
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   };
 
@@ -444,28 +460,29 @@ export class GameEngine {
     const w = this.weapons.active;
     const ads = this.weapons.adsAmount;
     const v = this.mode.vitals();
-    this.hud.frame(
-      {
-        spreadDeg: this.weapons.spread,
-        fovDeg: this.camera.fov,
-        viewportH: this.container.clientHeight,
-        crosshairHide: Math.max(ads, this.player.sprintBlend, this.weapons.lowered, this.weapons.meleeProgress >= 0 || this.grenades.throwProgress >= 0 ? 1 : 0),
-        ammo: w.ammo,
-        reserve: w.reserve,
-        magSize: w.def.magSize,
-        weaponName: w.def.name,
-        weaponKind: w.def.kind,
-        slot: this.weapons.current,
-        slotNames: this.weapons.slots.map((s) => s.def.name.split(" ")[0]),
-        reload: this.weapons.reloadProgress,
-        health: v.health,
-        maxHealth: v.maxHealth,
-        armor: v.armor,
-        grenades: this.grenades.count >= 50 ? -1 : this.grenades.count,
-        scope: w.def.scope ? ads : 0,
-      },
-      dt,
-    );
+    const f = this.hudFrame;
+    f.spreadDeg = this.weapons.spread;
+    f.fovDeg = this.camera.fov;
+    f.viewportH = this.viewH;
+    f.crosshairHide = Math.max(ads, this.player.sprintBlend, this.weapons.lowered, this.weapons.meleeProgress >= 0 || this.grenades.throwProgress >= 0 ? 1 : 0);
+    f.ammo = w.ammo;
+    f.reserve = w.reserve;
+    f.magSize = w.def.magSize;
+    f.weaponName = w.def.name;
+    f.weaponKind = w.def.kind;
+    f.slot = this.weapons.current;
+    // Slot labels only change with the loadout (the slots array is replaced).
+    if (this.slotNamesFor !== this.weapons.slots) {
+      this.slotNamesFor = this.weapons.slots;
+      f.slotNames = this.weapons.slots.map((s) => s.def.name.split(" ")[0]);
+    }
+    f.reload = this.weapons.reloadProgress;
+    f.health = v.health;
+    f.maxHealth = v.maxHealth;
+    f.armor = v.armor;
+    f.grenades = this.grenades.count >= 50 ? -1 : this.grenades.count;
+    f.scope = w.def.scope ? ads : 0;
+    this.hud.frame(f, dt);
     this.hud.setScoreboard(playing && this.input.isDown("Tab"), this.callsign, this.weapons.stats, this.sessionTime, this.map.def.name);
 
     this.fpsFrames++;
@@ -480,10 +497,16 @@ export class GameEngine {
     if (this.hud.debugVisible) {
       const p = this.player;
       const d = this.debugInfo;
-      const r = this.pipeline.info.render;
-      d.fps = `${this.fps}  (${this.frameMs.toFixed(2)} ms cpu)`;
+      const pl = this.pipeline;
+      const info = pl.info;
+      const r = info.render;
+      const gpu = pl.gpuMs;
+      d.fps = `${this.fps}  (${this.frameMs.toFixed(2)} ms cpu${gpu > 0 ? `, ${gpu.toFixed(2)} ms gpu` : ""})`;
       d.quality = this.settings.quality;
-      d["draw calls"] = `${r.calls}  tris ${r.triangles}`;
+      d["draw calls"] = `${r.calls}  tris ${(r.triangles / 1000).toFixed(0)}k  pts ${r.points}  lines ${r.lines}`;
+      const buf = pl.renderer.getDrawingBufferSize(this.bufSize);
+      d.resolution = `${buf.x}x${buf.y}  scale ${(pl.resolutionScale * 100).toFixed(0)}%  dpr ${pl.pixelRatio.toFixed(2)}`;
+      d["gpu memory"] = `geo ${info.memory.geometries}  tex ${info.memory.textures}  programs ${info.programs?.length ?? 0}`;
       d.position = `${p.position.x.toFixed(2)} ${p.position.y.toFixed(2)} ${p.position.z.toFixed(2)}`;
       d.velocity = `${p.velocity.x.toFixed(2)} ${p.velocity.y.toFixed(2)} ${p.velocity.z.toFixed(2)}`;
       d.speed = `${p.speed.toFixed(2)} m/s`;
@@ -512,7 +535,10 @@ export class GameEngine {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (!w || !h) return;
+    this.viewW = w;
+    this.viewH = h;
     this.pipeline.setSize(w, h);
+    this.hud.setVignette(!this.pipeline.postVignette);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.viewmodel.setAspect(w / h);

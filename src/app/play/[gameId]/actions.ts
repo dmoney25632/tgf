@@ -19,7 +19,9 @@ const clampInt = (n: unknown, max: number) => Math.max(0, Math.min(max, Math.flo
 
 /**
  * Records a finished match for the signed-in player via the record_match RPC.
- * Offline dev mode (no Supabase env) is a no-op.
+ * Offline/guest mode (no Supabase env) is a no-op: stats need an account.
+ * Writes go only through record_match (security definer), which takes the
+ * user id from the JWT, so a client can never write another player's stats.
  */
 export async function saveMatch(report: MatchReport): Promise<{ ok: boolean; error?: string }> {
   if (!isSupabaseConfigured) return { ok: false, error: "offline" };
@@ -42,5 +44,9 @@ export async function saveMatch(report: MatchReport): Promise<{ ok: boolean; err
     p_shots_hit: Math.min(shotsFired, clampInt(report.shotsHit, 100000)),
     p_won: Boolean(report.won),
   });
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (!error) return { ok: true };
+  // Don't echo raw database errors to the client.
+  if (error.code === "54000") return { ok: false, error: "rate limited" };
+  console.error("record_match failed", error.code);
+  return { ok: false, error: "could not save match" };
 }

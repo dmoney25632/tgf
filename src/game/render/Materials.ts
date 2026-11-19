@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import type { QualityPreset } from "../config";
 import { MATERIAL_TEXTURES, TEXTURE_SETS, type MaterialName } from "../assets/manifest";
-import { loadTextureSet, type TextureSetImages } from "../assets/AssetLoader";
+import { isPreFlipped, loadTextureSet, type TextureSetImages } from "../assets/AssetLoader";
+import { textureUploads } from "./GpuWarmup";
 import { grimePixels, makeDataTexture, proceduralPixels, type ProceduralKind } from "./ProceduralTextures";
 
 export type { MaterialName };
@@ -113,7 +114,7 @@ export class MaterialLibrary {
   private readonly slots = new Map<MaterialName, TextureSlot>();
   private readonly materials = new Map<MaterialName, THREE.MeshStandardMaterial>();
   private readonly listeners = new Set<() => void>();
-  private readonly sources = new Map<string, Promise<Partial<Record<string, THREE.Source<unknown>>> | null>>();
+  private readonly sources = new Map<string, Promise<Partial<Record<string, THREE.TextureSource<unknown>>> | null>>();
   private readonly owned: { dispose(): void }[] = [];
   readonly grimeTexture: THREE.DataTexture;
   private disposed = false;
@@ -178,8 +179,8 @@ export class MaterialLibrary {
     if (!p) {
       p = loadTextureSet(setId, this.quality.maxTextureSize).then((imgs: TextureSetImages | null) => {
         if (!imgs) return null;
-        const out: Partial<Record<string, THREE.Source<unknown>>> = {};
-        for (const [k, img] of Object.entries(imgs)) if (img) out[k] = new THREE.Source(img);
+        const out: Partial<Record<string, THREE.TextureSource<unknown>>> = {};
+        for (const [k, img] of Object.entries(imgs)) if (img) out[k] = new THREE.TextureSource(img);
         return out;
       });
       this.sources.set(setId, p);
@@ -192,37 +193,51 @@ export class MaterialLibrary {
       if (this.disposed) return;
       const slot = this.slots.get(name);
       if (!slot) return;
-      const old = [slot.albedo, slot.normal, slot.rough, slot.ao];
-      const mk = (s: THREE.Source<unknown> | undefined, srgb: boolean) => {
+      const mk = (s: THREE.TextureSource<unknown> | undefined, srgb: boolean) => {
         if (!s) return null;
         const t = new THREE.Texture();
         t.source = s;
+        // ImageBitmaps arrive pre-flipped; WebGL ignores UNPACK_FLIP_Y for them.
+        t.flipY = !isPreFlipped(s.data);
         t.wrapS = t.wrapT = THREE.RepeatWrapping;
         t.anisotropy = this.quality.anisotropy;
         t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
         t.needsUpdate = true;
         return t;
       };
+      let next: Omit<TextureSlot, "photo"> & { photo: boolean };
       if (!src || !src.albedo) {
         // Photo set failed: fall back to the procedural maps.
         const p = this.makeProcedural(name);
-        slot.albedo = p.albedo;
-        slot.normal = p.normal;
-        slot.rough = p.rough;
+        next = { albedo: p.albedo, normal: p.normal, rough: p.rough, ao: slot.ao, photo: false };
       } else {
         const fallback = !src.normal || !src.roughness ? this.makeProcedural(name) : null;
-        slot.albedo = mk(src.albedo, true)!;
-        slot.normal = mk(src.normal, false) ?? fallback!.normal;
-        slot.rough = mk(src.roughness, false) ?? fallback!.rough;
-        if (slot.ao) slot.ao = mk(src.ao, false) ?? slot.ao;
-        slot.photo = true;
-        if (fallback && fallback.albedo !== slot.albedo) fallback.albedo.dispose();
+        const albedo = mk(src.albedo, true)!;
+        next = {
+          albedo,
+          normal: mk(src.normal, false) ?? fallback!.normal,
+          rough: mk(src.roughness, false) ?? fallback!.rough,
+          ao: slot.ao ? (mk(src.ao, false) ?? slot.ao) : null,
+          photo: true,
+        };
+        if (fallback) fallback.albedo.dispose();
       }
-      this.setRepeat(slot, DEFS[name].tile);
-      const m = this.materials.get(name);
-      if (m) this.bind(m, slot);
-      for (const t of old) if (t && t !== slot.ao) t.dispose();
-      for (const fn of this.listeners) fn();
+      // Upload over the next frames (GpuWarmup drains the queue under a time
+      // budget), then swap them in: the placeholder stays bound until then,
+      // so a burst of arriving sets never stalls one frame.
+      textureUploads.enqueue([next.albedo, next.normal, next.rough, next.ao], () => {
+        if (this.disposed) {
+          for (const t of [next.albedo, next.normal, next.rough, next.ao]) if (t && t !== slot.ao) t.dispose();
+          return;
+        }
+        const old = [slot.albedo, slot.normal, slot.rough, slot.ao];
+        Object.assign(slot, next);
+        this.setRepeat(slot, DEFS[name].tile);
+        const m = this.materials.get(name);
+        if (m) this.bind(m, slot);
+        for (const t of old) if (t && t !== slot.ao) t.dispose();
+        for (const fn of this.listeners) fn();
+      });
     });
   }
 

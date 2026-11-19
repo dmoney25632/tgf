@@ -2,10 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { SUPABASE_KEY, SUPABASE_URL, isSupabaseConfigured } from "./config";
 
-/** Routes that require a signed-in user. */
-const PROTECTED_PREFIXES = ["/dashboard", "/play"];
+/**
+ * Routes that require a signed-in user (when Supabase is configured; in
+ * offline/guest mode nothing is gated here and pages decide for themselves).
+ */
+const PROTECTED_PREFIXES = ["/dashboard", "/play", "/account", "/coop"];
 /** Routes a signed-in user should skip. */
-const AUTH_ROUTES = ["/login", "/signup"];
+const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/check-email"];
+
+const matchesPrefix = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
 /**
  * Refreshes the Supabase session cookie on every request and does the
@@ -41,18 +46,27 @@ export async function updateSession(request: NextRequest) {
   const signedIn = Boolean(data?.claims);
   const path = request.nextUrl.pathname;
 
-  if (!signedIn && PROTECTED_PREFIXES.some((p) => path.startsWith(p))) {
+  // Redirects must carry any refreshed session cookies, or the user is
+  // silently signed out on the next request.
+  const redirect = (url: URL) => {
+    const res = NextResponse.redirect(url);
+    response.cookies.getAll().forEach((cookie) => res.cookies.set(cookie));
+    return res;
+  };
+
+  if (!signedIn && PROTECTED_PREFIXES.some((p) => matchesPrefix(path, p))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", path);
-    return NextResponse.redirect(url);
+    url.search = "";
+    url.searchParams.set("next", path + request.nextUrl.search);
+    return redirect(url);
   }
 
   if (signedIn && AUTH_ROUTES.includes(path)) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
-    return NextResponse.redirect(url);
+    return redirect(url);
   }
 
   return response;

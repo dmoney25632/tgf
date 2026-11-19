@@ -137,6 +137,18 @@ export type QualityPreset = {
   hdri: boolean;
   /** Floating dust motes near the camera. */
   dustMotes: boolean;
+  /** Screen-space AO taps per pixel (half resolution); 0 = AO off. */
+  aoSamples: number;
+  /** Screen-space sun shafts (radial blur from the sun). */
+  godRays: boolean;
+  /** Re-render the sun shadow map every N frames (1 = every frame). */
+  shadowInterval: number;
+  /** Lowest resolution scale dynamic resolution may drop to (= resolutionScale disables it). */
+  minResolutionScale: number;
+  /** Frame-time budget dynamic resolution aims for (ms). */
+  targetFrameMs: number;
+  /** Shadowless point lights shared by registered lamps (nearest win). */
+  maxLocalLights: number;
 };
 
 export const QUALITY: Record<QualityName, QualityPreset> = {
@@ -160,6 +172,12 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     shadowExtent: 30,
     hdri: false,
     dustMotes: false,
+    aoSamples: 0,
+    godRays: false,
+    shadowInterval: 1,
+    minResolutionScale: 0.6,
+    targetFrameMs: 16.7,
+    maxLocalLights: 2,
   },
   medium: {
     label: "Medium",
@@ -169,7 +187,7 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     shadowMapSize: 1024,
     postProcessing: true,
     bloom: true,
-    ambientOcclusion: false,
+    ambientOcclusion: true,
     msaaSamples: 0,
     maxDecals: 96,
     maxParticles: 512,
@@ -181,10 +199,16 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     shadowExtent: 36,
     hdri: true,
     dustMotes: true,
+    aoSamples: 8,
+    godRays: false,
+    shadowInterval: 2,
+    minResolutionScale: 0.7,
+    targetFrameMs: 16.7,
+    maxLocalLights: 4,
   },
   high: {
     label: "High",
-    maxPixelRatio: 2,
+    maxPixelRatio: 1.75,
     resolutionScale: 1,
     shadows: true,
     shadowMapSize: 2048,
@@ -202,6 +226,12 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     shadowExtent: 46,
     hdri: true,
     dustMotes: true,
+    aoSamples: 12,
+    godRays: true,
+    shadowInterval: 1,
+    minResolutionScale: 0.75,
+    targetFrameMs: 16.7,
+    maxLocalLights: 6,
   },
 };
 

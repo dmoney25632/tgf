@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Surface } from "../effects/EffectsPool";
-import type { MaterialName } from "../render/Materials";
+import type { WorldMat } from "./WorldMaterials";
 import type { MapBox } from "./MapLoader";
 import { makeSandbagGeometry, type MeshBuilder } from "./MeshBuilder";
 import type { ModelPlacer } from "./Props";
@@ -9,7 +9,7 @@ import { rng } from "./Foliage";
 /** Telephone pole top height (m) — wires hang from just below. */
 export const POLE_HEIGHT = 8.6;
 
-export const DEFAULT_MATERIAL: Record<Surface, MaterialName> = {
+export const DEFAULT_MATERIAL: Record<Surface, WorldMat> = {
   concrete: "concrete",
   metal: "metal_painted",
   wood: "wood",
@@ -23,18 +23,22 @@ export const DEFAULT_MATERIAL: Record<Surface, MaterialName> = {
 };
 
 /** Bullet-impact surface for a material (merged meshes carry it in userData). */
-export function surfaceOf(mat: MaterialName): Surface {
+export function surfaceOf(mat: WorldMat): Surface {
   switch (mat) {
     case "metal_corrugated":
     case "metal_painted":
     case "metal_rust":
     case "metal_dark":
+    case "corrugated_rust":
+    case "chainlink":
       return "metal";
     case "wood":
     case "bark":
+    case "frond":
       return "wood";
     case "sandbag":
     case "canvas":
+    case "cloth":
     case "gravel":
     case "ground":
       return "sand";
