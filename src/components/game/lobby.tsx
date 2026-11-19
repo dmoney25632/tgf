@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from "@/game/weapons/weapons";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId, type WaveTarget } from "@/game/survival/config";
 import { OperatorPreview } from "./operator-preview";
+import { PAD_FOCUS_CSS, useGamepadNav, useInputDevice } from "./gamepad";
+import { PadGlyph } from "./glyph";
 
 export type LobbyChoice = {
   mode: "survival" | "range";
@@ -102,10 +104,15 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
   const op = OPERATORS[c.operator];
   const survival = c.mode === "survival";
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dev = useInputDevice();
+  useGamepadNav(rootRef, { onStart: () => onDeploy(c) });
+
   const pickOperator = (id: OperatorId) => set({ operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary });
 
   return (
-    <div className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#3a3324_0%,#14130f_55%,#0a0a09_100%)] text-neutral-100">
+    <div ref={rootRef} className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#3a3324_0%,#14130f_55%,#0a0a09_100%)] text-neutral-100">
+      <style>{PAD_FOCUS_CSS}</style>
       <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -236,8 +243,8 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
               </div>
             )}
             <div className="flex gap-2 pt-1">
-              <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 text-base font-bold tracking-wide")}>
-                Deploy
+              <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 gap-2 text-base font-bold tracking-wide")}>
+                Deploy {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
               </button>
               <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
                 Dashboard

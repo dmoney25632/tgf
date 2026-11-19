@@ -161,7 +161,8 @@ export class PlayerController {
       if (this.slideTimer <= 0 || slideSpeed < SLIDE.endSpeed || !this.grounded) this.endSlide();
     }
     if (this.downed && this.sliding) this.endSlide();
-    const sprintRequested = intent.sprint && intent.forward > 0 && intent.ads < 0.3 && !intent.blockSprint && !this.downed;
+    // Analog sticks: sprint needs a mostly-forward push (keyboard forward is 1).
+    const sprintRequested = intent.sprint && intent.forward > 0.3 && intent.ads < 0.3 && !intent.blockSprint && !this.downed;
     if (!this.sliding) {
       if (intent.crouch) this.crouching = true;
       else if (this.crouching && headroomToStand) this.crouching = false;
@@ -171,9 +172,15 @@ export class PlayerController {
     this.sprinting = sprintRequested && !this.crouching && !this.sliding && this.grounded;
 
     // ---- Wish direction ---------------------------------------------------
+    // Keyboard diagonals normalise to 1; a partly-deflected stick keeps its
+    // magnitude so it walks proportionally slower (analog movement).
     this.wish.set(intent.strafe, 0, -intent.forward);
-    const hasInput = this.wish.lengthSq() > 0;
-    if (hasInput) this.wish.normalize().applyAxisAngle(UP, this.yaw);
+    const wishLenSq = this.wish.lengthSq();
+    const hasInput = wishLenSq > 1e-4;
+    if (hasInput) {
+      if (wishLenSq > 1) this.wish.normalize();
+      this.wish.applyAxisAngle(UP, this.yaw);
+    }
 
     let targetSpeed: number = this.downed ? 1.1 : this.crouching ? MOVEMENT.crouchSpeed : this.sprinting ? MOVEMENT.sprintSpeed : MOVEMENT.walkSpeed;
     targetSpeed *= THREE.MathUtils.lerp(1, MOVEMENT.adsSpeedMultiplier, intent.ads) * this.speedMultiplier;
