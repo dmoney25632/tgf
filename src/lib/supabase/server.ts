@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { SUPABASE_KEY, SUPABASE_URL } from "./config";
 
 /**
@@ -7,6 +8,9 @@ import { SUPABASE_KEY, SUPABASE_URL } from "./config";
  * Create a new one per request.
  */
 export async function createClient() {
+  // supabase-js reads Date.now() (session expiry checks); with Cache
+  // Components that must happen at request time, not during prerendering.
+  await connection();
   const cookieStore = await cookies();
 
   return createServerClient(SUPABASE_URL, SUPABASE_KEY, {

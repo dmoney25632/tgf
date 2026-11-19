@@ -85,6 +85,9 @@ const ASSET_TYPES: Record<string, string> = {
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  // Dev only: lets a second local player use http://127.0.0.1:3000 (its own
+  // cookie jar) alongside http://localhost:3000 when testing co-op.
+  allowedDevOrigins: ["127.0.0.1"],
   partialPrefetching: true,
   poweredByHeader: false,
   env: {
