@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { HitPart, HitResult, Hittable } from "../core/types";
-import type { AgentWeapon, EnemyDef } from "../survival/config";
+import type { AgentWeapon, EnemyDef, StaggerDef } from "../survival/config";
+import { registerHeavyHit, resetStagger, type StaggerState } from "./heavy/Juggernaut";
 import { Humanoid, type HumanoidLook } from "./Humanoid";
 import type { Combatant, Team } from "./types";
 import type { CoverPoint } from "./NavGrid";
@@ -21,6 +22,9 @@ export type AgentSpec = {
   coverBias: number;
   flinch: number;
   look: HumanoidLook;
+  /** Seconds of suppressive fire at the last-seen spot after losing sight (0/undefined = none). */
+  suppress?: number;
+  stagger?: StaggerDef;
 };
 
 export type DamageListener = (agent: Agent, amount: number, part: HitPart, killed: boolean, from: THREE.Vector3 | undefined) => void;
@@ -29,7 +33,7 @@ export type DamageListener = (agent: Agent, amount: number, part: HitPart, kille
  * One AI soldier (enemy or squadmate). Pure state + a Humanoid view; the
  * AgentManager drives perception, decisions and movement.
  */
-export class Agent implements Hittable, Combatant {
+export class Agent implements Hittable, Combatant, StaggerState {
   readonly model: Humanoid;
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
@@ -75,6 +79,12 @@ export class Agent implements Hittable, Combatant {
   aimCharge = -1;
   flinchTimer = 0;
   sinceHit = 99;
+
+  // Heavy stagger (see heavy/Juggernaut.ts).
+  staggerTimer = 0;
+  staggerCooldown = 0;
+  staggerAccum = 0;
+  staggerAge = 0;
 
   // Death / downed.
   deathTimer = 0;
@@ -140,6 +150,7 @@ export class Agent implements Hittable, Combatant {
     this.pauseTimer = 0.4 + Math.random() * 0.8;
     this.aimCharge = -1;
     this.flinchTimer = 0;
+    resetStagger(this);
     this.sinceHit = this.sinceDamage = 99;
     this.engageTime = 0;
     this.stateTime = 0;
@@ -153,7 +164,8 @@ export class Agent implements Hittable, Combatant {
   /** Player bullets / knife / grenades. */
   applyDamage(amount: number, part: HitPart, from?: THREE.Vector3, source = ""): HitResult {
     if (!this.alive) return { damage: 0, killed: false, counts: false };
-    const armor = part === "head" ? 1 : this.spec.bodyArmor;
+    // Head always takes full damage; a staggered heavy's plates soak less.
+    const armor = part === "head" ? 1 : this.staggerTimer > 0 ? Math.min(1, this.spec.bodyArmor * 1.5) : this.spec.bodyArmor;
     const dmg = Math.min(this.health, amount * armor);
     this.health -= amount * armor;
     this.lastHitPart = part;
@@ -179,7 +191,12 @@ export class Agent implements Hittable, Combatant {
         this.release();
       }
     } else {
-      this.model.flinch(part === "head", amount / 40, fromBehind);
+      const st = this.spec.stagger;
+      if (st && registerHeavyHit(this, st, amount)) {
+        // Knocked off balance: a big visible lurch, burst interrupted.
+        this.model.flinch(part === "head", 2.5, fromBehind);
+        this.burstLeft = 0;
+      } else this.model.flinch(part === "head", amount / 40, fromBehind);
       if (this.spec.flinch > 0) this.flinchTimer = Math.max(this.flinchTimer, this.spec.flinch);
     }
     this.onDamage?.(this, dmg, part, killed, from);

@@ -80,7 +80,10 @@ export function IronHorizonClient({ callsign }: { callsign: string }) {
 const MIN_LOADING_MS = 1300;
 const MAX_LOADING_MS = 20000;
 
-function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; choice: LobbyChoice; onAgain: () => void; onLobby: () => void }) {
+/** Mission runs pass a summary renderer and briefing (see components/missions). */
+export type GameViewExtras = { briefing?: string; renderSummary?: (s: MatchSummary, saved: string, onAgain: () => void, onLobby: () => void) => React.ReactNode };
+
+export function GameView({ callsign, choice, onAgain, onLobby, extras }: { callsign: string; choice: LobbyChoice; onAgain: () => void; onLobby: () => void; extras?: GameViewExtras }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const loadRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -100,7 +103,9 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
   const [survivalMode, setSurvivalMode] = useState<SurvivalGameMode | null>(null);
   const dev = useInputDevice();
   const survival = choice.mode === "survival";
-  const objective = survival
+  const objective = extras?.briefing
+    ? extras.briefing
+    : survival
     ? "Hold the compound against escalating waves. Armories and ammo crates open between waves; squadmates revive you if you go down."
     : `Operator ${callsign}. Zero your weapons on pop-up targets (they reset after 2.5 s) and steel plates out to 70 m.`;
 
@@ -112,7 +117,7 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
       const s = e.summary;
       saveMatch({
         gameId: "iron-horizon",
-        mode: "survival",
+        mode: s.mode,
         map: s.map,
         kills: s.kills,
         deaths: s.timesDowned,
@@ -177,7 +182,9 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
         engine = new GameEngine(hostRef.current, {
           callsign,
           settings: initial,
-          mode: choice.mode,
+          mode: choice.mission ? "mission" : choice.mode,
+          mapId: choice.map,
+          mission: choice.mission ? { missionId: choice.mission, operator: choice.operator, primary: choice.primary, secondary: choice.secondary, difficulty: choice.difficulty, squad: choice.squad } : undefined,
           loadout: [choice.primary, choice.secondary],
           survival: {
             operator: choice.operator,
@@ -275,7 +282,7 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
         <div ref={loadRef}>
           <LoadingScreen
             mapName={mapName}
-            modeLabel={survival ? "Survival" : "Training"}
+            modeLabel={choice.mission ? "Mission" : survival ? "Survival" : "Training"}
             objective={objective}
             progress={progress}
             ready={canDeploy}
@@ -291,7 +298,7 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
 
       {shopOpen && survivalMode && <ShopOverlay mode={survivalMode} dev={dev} onResume={resumeFromShop} />}
 
-      {summary && <MatchSummaryView s={summary} saved={saved} onAgain={onAgain} onLobby={onLobby} />}
+      {summary && (extras?.renderSummary?.(summary, saved, onAgain, onLobby) ?? <MatchSummaryView s={summary} saved={saved} onAgain={onAgain} onLobby={onLobby} />)}
 
       {showPause && settings && (
         <PauseMenu

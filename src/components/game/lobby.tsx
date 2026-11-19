@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from "@/game/weapons/weapons";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId, type WaveTarget } from "@/game/survival/config";
 import { OperatorPreview } from "./operator-preview";
+import { SURVIVAL_MAPS } from "@/game/world/maps/registry";
 import { PAD_FOCUS_CSS, useGamepadNav, useInputDevice } from "./gamepad";
 import { PadGlyph } from "./glyph";
 
@@ -19,6 +20,10 @@ export type LobbyChoice = {
   waveTarget: WaveTarget;
   squad: number;
   startWave: number;
+  /** Survival map id (world/maps/registry). */
+  map?: string;
+  /** Story mission id (game/missions/campaign); set by the missions screen. */
+  mission?: string;
 };
 
 export const DEFAULT_CHOICE: LobbyChoice = {
@@ -117,7 +122,7 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">Iron Horizon · Deployment</p>
-            <h1 className="mt-1 text-3xl font-black tracking-tight md:text-4xl">{survival ? "Survival — Dustfall Outpost" : "Firing Range — Kestrel Yard"}</h1>
+            <h1 className="mt-1 text-3xl font-black tracking-tight md:text-4xl">{survival ? `Survival — ${(SURVIVAL_MAPS.find((m) => m.id === c.map) ?? SURVIVAL_MAPS[0]).name}` : "Firing Range — Kestrel Yard"}</h1>
             <p className="mt-1 text-sm text-neutral-400">
               Operator <span className="text-sky-300">{callsign}</span>.{" "}
               {survival ? "Hold the outpost against escalating waves. Buy gear at the armories between waves." : "Zero your weapons on pop-up targets and steel."}
@@ -198,6 +203,17 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
             <WeaponPicker title="Secondary" ids={SECONDARY_IDS} value={c.secondary} onChange={(id) => set({ secondary: id })} />
             {survival && (
               <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <p className="mb-2 font-mono text-[11px] tracking-[0.25em] text-neutral-500 uppercase">Map</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SURVIVAL_MAPS.map((m) => (
+                      <Pill key={m.id} active={(c.map ?? SURVIVAL_MAPS[0].id) === m.id} onClick={() => set({ map: m.id })} title={m.blurb}>
+                        {m.name}
+                      </Pill>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-xs text-neutral-500">{(SURVIVAL_MAPS.find((m) => m.id === c.map) ?? SURVIVAL_MAPS[0]).blurb}</p>
+                </div>
                 <div>
                   <p className="mb-2 font-mono text-[11px] tracking-[0.25em] text-neutral-500 uppercase">Difficulty</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -246,6 +262,9 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
               <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 gap-2 text-base font-bold tracking-wide")}>
                 Deploy {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
               </button>
+              <Link href="/missions" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-12")}>
+                Missions
+              </Link>
               <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
                 Dashboard
               </Link>

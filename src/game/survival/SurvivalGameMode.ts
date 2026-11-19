@@ -18,6 +18,9 @@ import { ShopSystem, Wallet, type ShopView } from "./ShopSystem";
 import { WaveManager } from "./WaveManager";
 import { EnemySpawner } from "./EnemySpawner";
 import type { SurvivalNet } from "../net/types";
+import { HelicopterManager } from "../vehicles/HelicopterManager";
+import type { AttackHelicopter } from "../vehicles/AttackHelicopter";
+import { AIR, composeAir, sortiePlan, type AirSortie } from "./airSupport";
 
 export type SurvivalConfig = {
   operator: OperatorId;
@@ -74,6 +77,10 @@ export class SurvivalGameMode implements GameMode {
   private promptProgress = -1;
   private readonly teamRows: TeamRow[] = [];
   private readonly net: SurvivalNet | undefined;
+  readonly helis: HelicopterManager;
+  /** Sorties still to launch this wave (delay counts down). */
+  private readonly airQueue: AirSortie[] = [];
+  private readonly heliTargets: Combatant[] = [];
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -141,7 +148,7 @@ export class SurvivalGameMode implements GameMode {
     if (this.net?.role !== "client") {
       this.agents.prewarm("rifleman", 12);
       this.agents.prewarm("rusher", 4);
-      this.agents.prewarm("armored", 2);
+      this.agents.prewarm("armored", 3);
       this.agents.prewarm("sniper", 2);
     }
 
@@ -153,6 +160,12 @@ export class SurvivalGameMode implements GameMode {
     }
 
     this.spawner = new EnemySpawner(layout, this.nav);
+    this.helis = new HelicopterManager(ctx.scene, ctx.map.collision, ctx.effects, ctx.sfx, ctx.camera.position, {
+      onDeploy: (_h, at) => this.deployTrooper(at),
+      onDestroyed: (h, source) => this.onHeliDestroyed(h, source),
+      onCrash: (_h, at) => this.onHeliCrash(at),
+    });
+    this.agents.extraHostiles = this.helis.airborne;
     this.waves = new WaveManager(config.waveTarget, this.diff.count, Math.min(2, config.squad), config.startWave ?? 1);
     this.shop = new ShopSystem({
       wallet: this.wallet,
@@ -195,6 +208,7 @@ export class SurvivalGameMode implements GameMode {
   collectTargets(out: THREE.Object3D[]) {
     this.agents.hitboxes(out);
     this.net?.collectTargets(out);
+    this.helis.hitboxes(out);
   }
 
   vitals(): Vitals {
@@ -240,6 +254,13 @@ export class SurvivalGameMode implements GameMode {
     // ---- AI ---------------------------------------------------------------------
     this.agents.update(dt);
     this.net?.update(dt);
+    if (this.net?.role !== "client") {
+      const ht = this.heliTargets;
+      ht.length = 0;
+      if (this.combatant.targetable) ht.push(this.combatant);
+      for (const s of this.agents.squad) if (s.targetable) ht.push(s);
+      this.helis.update(dt, ht);
+    }
 
     // ---- Team wipe ----------------------------------------------------------------
     const wiped = this.net ? this.net.teamWiped() : this.state.downed && !this.agents.squad.some((s) => s.alive) && this.state.selfRevives === 0;
@@ -272,6 +293,7 @@ export class SurvivalGameMode implements GameMode {
   onExplosion(at: THREE.Vector3) {
     if (this.net?.onExplosion(at)) return; // [coop] clients: the host resolves grenade damage
     this.agents.explode(at, GRENADE.radius, GRENADE.maxDamage);
+    this.helis.explode(at, GRENADE.radius, GRENADE.maxDamage);
     // Self damage (with occlusion).
     const p = this.ctx.player;
     this.tmp.set(p.position.x, p.position.y + 0.9, p.position.z);
@@ -289,6 +311,7 @@ export class SurvivalGameMode implements GameMode {
     out.money = this.wallet.money;
     out.vitals = `${Math.round(this.state.health)}/${this.state.maxHealth} armor ${Math.round(this.state.armor)}`;
     out.nav = `${this.nav.cols}x${this.nav.rows} cover ${this.nav.cover.length}`;
+    out.air = `${this.helis.hostileAlive} helis · ${this.airQueue.length} queued`;
   }
 
   // ---------------------------------------------------------------------------
@@ -344,12 +367,17 @@ export class SurvivalGameMode implements GameMode {
         if (this.agents.squad.length) this.agents.restoreSquad(ctx.player.position);
         ctx.sfx.waveStart();
         const boss = w.queue.includes("warden");
-        this.shud.showBanner(`WAVE ${w.wave}`, boss ? "WARNING: THE WARDEN IS INBOUND" : `${w.total} HOSTILES INBOUND`, 3, boss ? "#ff6a4a" : "#f2efe6");
+        this.airQueue.length = 0;
+        for (const s of composeAir(w.wave)) this.airQueue.push(s);
+        const air = this.airQueue.length ? `  ·  ${this.airQueue.length > 1 ? "GUNSHIPS" : "GUNSHIP"} EXPECTED` : "";
+        this.shud.showBanner(`WAVE ${w.wave}`, (boss ? "WARNING: THE WARDEN IS INBOUND" : `${w.total} HOSTILES INBOUND`) + air, 3, boss ? "#ff6a4a" : "#f2efe6");
         ctx.emit({ type: "phase", phase: "combat", wave: w.wave });
       }
       return;
     }
     if (w.phase !== "combat") return;
+
+    this.updateAir(dt);
 
     // Spawn under the alive cap; faster trickle in later waves.
     const alive = this.agents.enemiesAlive;
@@ -374,6 +402,8 @@ export class SurvivalGameMode implements GameMode {
       const bonus = this.wallet.add((ECONOMY.waveBonusBase + ECONOMY.waveBonusPerWave * w.wave) * this.diff.reward);
       this.shud.moneyPop(bonus, "WAVE BONUS");
       ctx.sfx.waveClear();
+      this.helis.recallAll();
+      this.airQueue.length = 0;
       this.state.heal();
       if (this.agents.squad.length) this.agents.restoreSquad(ctx.player.position);
       if (w.final) {
@@ -385,6 +415,74 @@ export class SurvivalGameMode implements GameMode {
         ctx.emit({ type: "phase", phase: "intermission", wave: w.wave });
       }
     }
+  }
+
+  /** Launch due helicopter sorties. */
+  private updateAir(dt: number) {
+    const q = this.airQueue;
+    for (let i = q.length - 1; i >= 0; i--) {
+      q[i].delay -= dt;
+      if (q[i].delay > 0) continue;
+      const s = q[i];
+      // Rope in where enemies would enter (off-screen, far from the player).
+      const pick = this.spawner.pick("rifleman", this.ctx.player.position, this.view, this.tmp);
+      const lz = pick ? this.tmp : this.ctx.map.def.survival!.enemySpawns[0];
+      const wv = Math.max(0, this.waves.wave - AIR.fromWave);
+      const plan = sortiePlan(s, lz, { x: 0, z: 0 }, this.diff.enemyHealth * (1 + AIR.healthPerWave * wv), this.diff.enemyDamage * (1 + WAVES.damagePerWave * wv));
+      if (this.helis.launch(plan)) {
+        q.splice(i, 1);
+        this.shud.showBanner("GUNSHIP INBOUND", "SHOOT IT DOWN — AIM FOR THE COCKPIT", 2.6, "#ffb46a");
+      } else s.delay = 3;
+    }
+  }
+
+  /** A fast-rope trooper lands: take a foot soldier from the wave's queue. */
+  private deployTrooper(at: THREE.Vector3) {
+    const q = this.waves.queue;
+    if (this.ended || this.waves.phase !== "combat") return false;
+    let i = q.lastIndexOf("rifleman");
+    if (i < 0) i = q.lastIndexOf("rusher");
+    if (i < 0) return false;
+    const type = q[i];
+    q.splice(i, 1);
+    const cell = this.nav.nearestWalkable(at.x, at.z);
+    if (cell >= 0) at.set(this.nav.cx(cell), this.nav.floor[cell], this.nav.cz(cell));
+    this.spawn(type, at, Math.atan2(-at.x, -at.z), -1);
+    return true;
+  }
+
+  private onHeliDestroyed(h: AttackHelicopter, source: string) {
+    const got = this.wallet.add(AIR.reward * this.diff.reward * (source === "ai" ? ECONOMY.botKillShare : 1));
+    if (source !== "ai") this.kills.Gunship = (this.kills.Gunship ?? 0) + 1;
+    this.shud.moneyPop(got, "GUNSHIP");
+    this.ctx.hud.killfeed(source === "ai" ? "Squad" : this.ctx.callsign, source === "grenade" ? GRENADE.name : this.ctx.weapons.active.def.name, h.name, false);
+    this.shud.showBanner("GUNSHIP DOWN", `+$${got}`, 2.6, "#ffc845");
+  }
+
+  private onHeliCrash(at: THREE.Vector3) {
+    this.agents.explode(at, AIR.crashRadius, AIR.crashDamage);
+    const d = at.distanceTo(this.ctx.camera.position);
+    this.ctx.shake.add(Math.max(0, 0.7 * (1 - d / 45)));
+    const p = this.ctx.player.position;
+    const pd = Math.hypot(p.x - at.x, p.z - at.z);
+    if (pd < AIR.crashRadius) this.playerHit(AIR.crashDamage * 0.5 * (1 - pd / AIR.crashRadius), at);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dev helpers (window.__tgf.mode in development), used for perf captures.
+  // ---------------------------------------------------------------------------
+
+  /** Spawn `n` enemies of a type at regular spawn points (bypasses the wave queue). */
+  debugSpawn(type: EnemyType, n: number) {
+    for (let i = 0; i < n; i++) {
+      const pick = this.spawner.pick(type, this.ctx.player.position, this.view, this.tmp);
+      if (pick) this.spawn(type, this.tmp, pick.yaw, pick.perch);
+    }
+  }
+
+  /** Launch a gunship now (orbit seconds, troops). */
+  debugHeli(orbit = 60, troops = 0) {
+    this.airQueue.push({ delay: 0, troops, orbit });
   }
 
   private spawn(type: EnemyType, at: THREE.Vector3, yaw: number, perch: number) {
@@ -589,6 +687,9 @@ export class SurvivalGameMode implements GameMode {
     for (const a of this.agents.active) {
       if (a.spec.role === "warden" && a.alive) boss = { name: a.name, frac: a.health / a.maxHealth };
     }
+    if (!boss) {
+      for (const h of this.helis.helis) if (h.targetable) boss = { name: h.name.toUpperCase(), frac: h.health / h.maxHealth };
+    }
     const sw = this.state.selfRevives > 0;
     this.shud.frame(
       {
@@ -665,6 +766,7 @@ export class SurvivalGameMode implements GameMode {
   dispose() {
     this.net?.dispose();
     this.shud.dispose();
+    this.helis.dispose();
     this.agents.dispose();
     disposeHumanoidCache();
   }

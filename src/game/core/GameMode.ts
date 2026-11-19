@@ -11,6 +11,7 @@ import type { HUD } from "../ui/HUD";
 import type { Sfx } from "../audio/Sfx";
 import type { LoadedMap } from "../world/MapLoader";
 import type { QualityName } from "../config";
+import type { MissionResult } from "../missions/types";
 
 /** Engine → React notifications. */
 export type EngineEvent =
@@ -19,7 +20,7 @@ export type EngineEvent =
   | { type: "phase"; phase: string; wave: number };
 
 export type MatchSummary = {
-  mode: "survival" | "range";
+  mode: "survival" | "range" | "mission";
   victory: boolean;
   wavesSurvived: number;
   /** First wave of this run (>1 when the lobby skipped ahead). */
@@ -40,6 +41,8 @@ export type MatchSummary = {
   difficulty: string;
   killsByType: Record<string, number>;
   map: string;
+  /** Mission runs: score card. */
+  mission?: MissionResult;
 };
 
 /** Everything a mode can use. Built by the engine. */
