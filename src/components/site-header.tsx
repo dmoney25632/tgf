@@ -11,10 +11,14 @@ export function SiteHeader({ user, hideNav }: { user?: SessionUser | null; hideN
         </Link>
         {user ? (
           <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
+            <Link
+              href="/account"
+              className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"
+              title="Account"
+            >
               {user.callsign}
-              {user.offline && " · offline"}
-            </span>
+              {user.offline && " · guest"}
+            </Link>
             {!user.offline && (
               <form action="/auth/signout" method="post">
                 <Button type="submit" variant="ghost" size="sm">

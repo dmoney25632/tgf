@@ -1,8 +1,13 @@
 import { Suspense } from "react";
 import { AuthForm } from "@/components/auth/auth-form";
-import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { ENABLED_OAUTH_PROVIDERS, isSupabaseConfigured } from "@/lib/supabase/config";
+import { loginErrorMessage, safeNext } from "@/lib/supabase/validation";
 
 export const metadata = { title: "Log in · TGF" };
+
+const NOTICES: Record<string, string> = {
+  account: "Co-op and saved stats need an account. Log in or sign up to continue.",
+};
 
 export default function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
@@ -13,13 +18,15 @@ export default function LoginPage({ searchParams }: PageProps<"/login">) {
 }
 
 async function LoginContent({ searchParams }: Pick<PageProps<"/login">, "searchParams">) {
-  const { next, error } = await searchParams;
+  const { next, error, reason } = await searchParams;
   return (
     <AuthForm
       mode="login"
-      next={typeof next === "string" ? next : undefined}
-      initialError={typeof error === "string" ? error : undefined}
+      next={safeNext(next)}
+      initialError={loginErrorMessage(error)}
+      notice={typeof reason === "string" ? NOTICES[reason] : undefined}
       offline={!isSupabaseConfigured}
+      oauthProviders={ENABLED_OAUTH_PROVIDERS}
     />
   );
 }
