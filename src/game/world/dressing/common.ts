@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { QualityPreset } from "../../config";
+import type { QualityName, QualityPreset } from "../../config";
+import type { WorldMaterials } from "../WorldMaterials";
 import type { MapBox, MapDef } from "../MapLoader";
 import type { MeshBuilder } from "../MeshBuilder";
 import { makeWireGeometry } from "../MeshBuilder";
@@ -15,9 +16,22 @@ export type DressingKit = {
   props: ModelPlacer;
   style: StyleKit;
   quality: QualityPreset;
+  materials: WorldMaterials;
+  windTime: { value: number };
+  /** Real (pooled) light sources; register only the few that matter most. */
+  addLamp?: (position: THREE.Vector3, color?: THREE.ColorRepresentation, intensity?: number, distance?: number) => void;
 };
 
-export type DressingPlan = { terrain: TerrainSpec; foliage: FoliageSpec };
+/** A self-contained animated/instanced extra (smoke columns, palms...). */
+export type WorldExtra = {
+  object: THREE.Object3D;
+  update?(camera: THREE.Camera): void;
+  setQuality?(q: QualityName): void;
+  triangles?: number;
+  dispose(): void;
+};
+
+export type DressingPlan = { terrain: TerrainSpec; foliage: FoliageSpec; extras?: WorldExtra[] };
 export type Dressing = (kit: DressingKit) => DressingPlan;
 
 export const smoothstep = (a: number, b: number, x: number) => {

@@ -117,6 +117,7 @@ export class HUD {
   private readonly scopeEl: HTMLDivElement;
   private readonly hurtEl: HTMLDivElement;
   private readonly lowHpEl: HTMLDivElement;
+  private readonly vignetteEl: HTMLDivElement;
   private readonly compassStrip: HTMLDivElement;
   private readonly compassDeg: HTMLDivElement;
   private readonly indicators: { el: HTMLDivElement; t: number; bearing: number; shown: number }[] = [];
@@ -166,8 +167,8 @@ export class HUD {
     style.textContent = STYLE;
     this.root.appendChild(style);
 
-    // Edge vignette (cheap, every quality preset) + damage edges.
-    div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.32) 100%);", this.root);
+    // Edge vignette for presets without post-processing (the grade pass draws its own) + damage edges.
+    this.vignetteEl = div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.32) 100%);", this.root);
     this.lowHpEl = div("position:absolute;inset:0;opacity:0;transition:opacity 260ms ease-out;background:radial-gradient(ellipse 75% 70% at center,transparent 52%,rgba(110,6,4,.42) 82%,rgba(70,0,0,.72) 100%);", this.root);
     this.hurtEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse 80% 75% at center,transparent 60%,rgba(190,24,12,.5) 100%);", this.root);
 
@@ -254,6 +255,11 @@ export class HUD {
     this.debug = document.createElement("pre");
     css(this.debug, `position:absolute;left:12px;top:12px;margin:0;padding:10px 12px;background:rgba(0,0,0,.6);font:11px/1.45 ${HUD_MONO};display:none;text-shadow:none;border-radius:6px;`);
     this.root.appendChild(this.debug);
+  }
+
+  /** DOM vignette only when the post-process grade doesn't draw one. */
+  setVignette(on: boolean) {
+    this.vignetteEl.style.display = on ? "block" : "none";
   }
 
   frame(f: HudFrame, dt: number) {

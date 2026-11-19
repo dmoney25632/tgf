@@ -1,8 +1,48 @@
 import * as THREE from "three";
-import { cyl, dome, ellipsoid, GeoBuilder, loft, MIRROR_X, paint, rbox, seeded, shade, T, type ColorFn, type Paint } from "./geo";
+import { cyl, dome, ellipsoid, GeoBuilder, loft, MIRROR_X, paint, QUALITY, rbox, seeded, shade, T, type ColorFn, type Paint } from "./geo";
+import type { FaceCover } from "./head";
 import type { CamoStyle, Kit } from "./kit";
 import { SURF } from "./materials";
 import { BONES, RIG, type BoneName } from "./rig";
+
+/**
+ * Rifleman / squad looks ("standard" kit), cycled per instance. Most show
+ * the face; one in six is masked.
+ */
+type StdLook = {
+  hat: "helmet" | "cap" | "none";
+  eyes: "glasses" | "shades" | "none";
+  goggles: boolean; // goggles strapped round the helmet
+  sleeves: "long" | "rolled" | "tank";
+  rig: "plates" | "chest";
+  pack: "hydration" | "assault" | "none";
+  cover: FaceCover;
+  shemagh: boolean; // scarf round the neck
+  headset: boolean;
+  beard: number; // 0 clean, 1 stubble, 2 short beard
+};
+export const STD_LOOKS: readonly StdLook[] = [
+  { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "long", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 1 },
+  { hat: "cap", eyes: "shades", goggles: false, sleeves: "rolled", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 2 },
+  { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "assault", cover: "none", shemagh: true, headset: true, beard: 0 },
+  { hat: "none", eyes: "shades", goggles: false, sleeves: "tank", rig: "chest", pack: "none", cover: "none", shemagh: false, headset: false, beard: 2 },
+  { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "hydration", cover: "balaclava", shemagh: false, headset: true, beard: 1 },
+  { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "rolled", rig: "chest", pack: "assault", cover: "none", shemagh: false, headset: true, beard: 1 },
+];
+
+/** What the scanned head should look like (null: the kit hides the face entirely). */
+export type FaceSpec = { cover: FaceCover; beard: number; hair: number; brim: number };
+
+/** Runs a build at a given LOD quality (see geo.QUALITY). */
+export function withQuality<T>(lod: number, fn: () => T): T {
+  const prev = QUALITY.lod;
+  QUALITY.lod = lod;
+  try {
+    return fn();
+  } finally {
+    QUALITY.lod = prev;
+  }
+}
 
 export type LookDef = {
   uniform: number;
@@ -14,7 +54,7 @@ export type LookDef = {
   scale: number;
   /** Optional camo pattern; derived from the uniform colour when omitted. */
   camo?: CamoStyle;
-  /** Optional headgear / pack variant (0..2); cycles per instance when omitted. */
+  /** Optional look variant (headgear, sleeves, rig, facial hair; standard kit has 6); cycles per instance when omitted. */
   variant?: number;
 };
 
@@ -26,7 +66,8 @@ export type BodyBuild = {
   hit: Record<"head" | "spine" | "pelvis" | "uArm" | "fArm" | "hand" | "thigh" | "shin" | "foot", HitDims>;
   /** Width factor (heavier kits are bulkier). */
   w: number;
-  /** Ground-contact sample points for death settling: [bone, x, y, z]. */
+  /** Scanned-face spec; null when the kit hides the face (and at LOD > 0 the sculpted head is used). */
+  face: FaceSpec | null;
 };
 
 function camoFor(hex: number): CamoStyle {
@@ -79,8 +120,25 @@ function headLocal(p: THREE.Vector3) {
   return { x: p.x / HEAD.rx, y: (p.y - HEAD.y) / HEAD.ry, z: (p.z - HEAD.z) / HEAD.rz };
 }
 
-export function buildBody(look: LookDef, variant: number): BodyBuild {
+/**
+ * Builds one soldier's geometry per bone. lod 0 = full detail with the
+ * scanned face (added by the caller), 1 = mid range (sculpted head, tiny
+ * parts dropped), 2 = far (coarse).
+ */
+export function buildBody(look: LookDef, variant: number, lod = 0): BodyBuild {
+  return withQuality(lod, () => build(look, variant, lod));
+}
+
+function build(look: LookDef, variant: number, lod: number): BodyBuild {
   const kit = look.kit;
+  const std = kit === "standard" ? STD_LOOKS[variant % STD_LOOKS.length] : null;
+  const face: FaceSpec | null =
+    std ? { cover: std.cover, beard: std.beard, hair: std.hat === "none" ? 1 : 0.6, brim: std.hat === "none" ? 0 : 1 }
+    : kit === "sniper" ? { cover: "paint", beard: 1, hair: 0.6, brim: 1 }
+    : kit === "rusher" ? { cover: "balaclava", beard: 1, hair: 0, brim: 1 }
+    : null;
+  const scan = lod === 0 && face !== null;
+  const sleeves = std?.sleeves ?? "long";
   const heavy = kit === "heavy";
   const warden = kit === "warden";
   const armoured = heavy || warden;
@@ -90,13 +148,18 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
 
   // ---- Palette (all driven by the look colours) ---------------------------
   const uni = paint(look.uniform, camo, 0.92);
-  const shirt = paint(mix(look.uniform, 0x8c887c, 0.3), SURF.nylon, 0.93);
+  const shirt = paint(mix(look.uniform, 0x45443a, 0.25), SURF.nylon, 0.93);
   const vest = paint(look.vest, kit === "standard" || kit === "sniper" ? vestCamo : SURF.nylon, 0.86);
   const vestD = shade(vest, 0.72);
   const strap = paint(mix(look.vest, 0x1a1a18, 0.35), SURF.nylon, 0.88);
   const helm = paint(look.helmet, camo, 0.82);
   const shell = paint(look.helmet, SURF.hard, 0.5, 0.05);
-  const skin = paint(look.skin, SURF.skin, 0.6);
+  // Skin is a multiplier on the material's per-soldier tone.
+  const skin = paint(0xffffff, SURF.skin, 0.55);
+  const inked = paint(0xffffff, SURF.tattoo, 0.55);
+  const webbing = paint(look.vest, SURF.molle, 0.88);
+  const lensClear = paint(0x4a5560, SURF.hard, 0.08, 0.85); // smoked, reflective
+  const lensDark = paint(0x46484a, SURF.hard, 0.12, 0.7); // mirrored shades
   const glove = paint(mix(look.vest, 0x1c1b19, 0.6), SURF.nylon, 0.82);
   const boot = paint(mix(look.vest, 0x3b3226, 0.55), SURF.hard, 0.72);
   const sole = paint(0x151413, SURF.hard, 0.9);
@@ -167,16 +230,48 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
       false,
       true,
     ),
-    shirt,
+    sleeves === "tank" ? paint(mix(look.uniform, 0x2a2a26, 0.55), SURF.nylon, 0.95) : shirt,
+    undefined,
+    (p, _n, c) => {
+      // Neck is skin; a tank top also bares the shoulders and a scoop neckline.
+      const bare = p.y > 0.428 || (sleeves === "tank" && ((p.y > 0.3 && Math.abs(p.x) > 0.085) || (p.y > 0.355 && p.z > 0.02 && Math.abs(p.x) < 0.085) || (p.y > 0.38 && p.z < 0)));
+      if (!bare) return;
+      c.setScalar(0.97);
+      return SURF.skin;
+    },
   );
-  // Collar.
-  add("spine", loft([{ y: 0.385, rx: 0.08, rz: 0.07, cz: -0.004 }, { y: 0.425, rx: 0.068, rz: 0.062, cz: -0.006 }], 10, false, false), uni);
+  // Collar (crew neck on the tank top).
+  if (sleeves !== "tank") add("spine", loft([{ y: 0.385, rx: 0.08, rz: 0.07, cz: -0.004 }, { y: 0.425, rx: 0.068, rz: 0.062, cz: -0.006 }], 10, false, false), uni);
 
-  if (kit === "standard") {
+  if (std && std.rig === "chest") {
+    // Light chest rig over the shirt: MOLLE panel, four mag pouches, radio,
+    // H-harness, plus a small pack or nothing.
+    add("spine", rbox(0.29, 0.17, 0.05, 10, 4, 0.3), webbing, T(0, 0.135, 0.13, -0.05));
+    for (const x of [-0.105, -0.035, 0.035, 0.105]) {
+      add("spine", rbox(0.062, 0.088, 0.044, 8, 4, 0.3), vestD, T(x, 0.13, 0.168, -0.05));
+      add("spine", rbox(0.05, 0.03, 0.022, 6, 4, 0.2), poly, T(x, 0.184, 0.166, -0.05));
+    }
+    add("spine", rbox(0.16, 0.05, 0.02, 8, 4, 0.3), vest, T(0, 0.235, 0.135, -0.1)); // admin flap
+    for (const s of [1, -1]) {
+      add("spine", rbox(0.045, 0.2, 0.014, 4, 4, 0), strap, sided(s, T(-0.085, 0.3, 0.108, -0.42)));
+      add("spine", rbox(0.045, 0.024, 0.13, 4, 4, 0), strap, sided(s, T(-0.088, 0.408, 0.0)));
+      add("spine", rbox(0.045, 0.3, 0.014, 4, 4, 0), strap, sided(s, T(-0.08, 0.25, -0.112, 0.08)));
+      add("spine", rbox(0.022, 0.03, 0.012), metal, sided(s, T(-0.085, 0.36, 0.122, -0.5))); // buckle
+    }
+    add("spine", loft([{ y: 0.06, rx: 0.152, rz: 0.106, p: 2.6 }, { y: 0.1, rx: 0.155, rz: 0.108, p: 2.6 }], 12, false, false), strap);
+    add("spine", rbox(0.05, 0.12, 0.06, 8, 4, 0.3), vestD, T(0.165, 0.12, 0.03, 0, 0.5));
+    add("spine", cyl(0.004, 0.006, 0.26, 4), poly, T(0.17, 0.3, 0.02, 0, 0, -0.1));
+    add("spine", rbox(0.016, 0.03, 0.012), glow, T(0.085, 0.33, 0.118, -0.45));
+    if (std.pack === "assault") {
+      add("spine", rbox(0.25, 0.32, 0.12, 10, 4, 0.3), vestD, T(0, 0.2, -0.19, 0.04));
+      add("spine", rbox(0.24, 0.06, 0.125, 8, 4, 0.35), vest, T(0, 0.35, -0.19, 0.08));
+      add("spine", rbox(0.18, 0.14, 0.03, 8, 4, 0.3), webbing, T(0, 0.16, -0.255, 0.04));
+    }
+  } else if (kit === "standard") {
     // Plate carrier: front/back plates, cummerbund, shoulder straps.
-    add("spine", rbox(0.265, 0.3, 0.042, 10, 5, 0.3), vest, T(0, 0.215, 0.132, -0.06));
-    add("spine", rbox(0.265, 0.31, 0.042, 10, 5, 0.3), vest, T(0, 0.225, -0.122, 0.05));
-    add("spine", loft([{ y: 0.02, rx: 0.164, rz: 0.116, cz: 0.004, p: 2.7 }, { y: 0.175, rx: 0.174, rz: 0.122, cz: 0.01, p: 2.7 }], 14, false, false), vest);
+    add("spine", rbox(0.265, 0.3, 0.042, 10, 5, 0.3), webbing, T(0, 0.215, 0.132, -0.06));
+    add("spine", rbox(0.265, 0.31, 0.042, 10, 5, 0.3), webbing, T(0, 0.225, -0.122, 0.05));
+    add("spine", loft([{ y: 0.02, rx: 0.164, rz: 0.116, cz: 0.004, p: 2.7 }, { y: 0.175, rx: 0.174, rz: 0.122, cz: 0.01, p: 2.7 }], 14, false, false), webbing);
     for (const s of [1, -1]) {
       add("spine", rbox(0.058, 0.11, 0.022, 6, 4, 0.3), vest, sided(s, T(-0.092, 0.375, 0.095, -0.55)));
       add("spine", rbox(0.058, 0.024, 0.13, 6, 4, 0.3), vest, sided(s, T(-0.092, 0.418, -0.005)));
@@ -192,8 +287,8 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     add("spine", cyl(0.004, 0.006, 0.3, 4), poly, T(0.178, 0.33, -0.065, 0, 0, -0.12));
     // IR marker on the shoulder strap (team-coloured glow).
     add("spine", rbox(0.014, 0.034, 0.014), glow, T(0.092, 0.355, 0.112, -0.55));
-    // Back: hydration carrier, or an assault pack on variant 2.
-    if (variant === 2) {
+    // Back: hydration carrier or an assault pack.
+    if (std?.pack === "assault") {
       add("spine", rbox(0.27, 0.36, 0.13, 10, 4, 0.3), vestD, T(0, 0.2, -0.205, 0.04));
       add("spine", rbox(0.26, 0.06, 0.135, 8, 4, 0.35), vest, T(0, 0.37, -0.205, 0.08));
       add("spine", rbox(0.05, 0.16, 0.08, 6, 4, 0.3), vest, T(0.15, 0.14, -0.2));
@@ -251,63 +346,96 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
   }
 
   // =========================================================================
-  // Head (origin at the neck base)
+  // Head (origin at the neck base). At LOD 0 faces are the shared scanned
+  // head (added by Humanoid); otherwise a sculpted head stands in.
   // =========================================================================
-  const face = kit === "standard" || kit === "sniper";
-  const balaclava = kit === "standard" && variant === 1;
-  const shemagh = (kit === "standard" && variant === 2) || kit === "sniper";
-  add("head", loft([{ y: -0.04, rx: 0.056, rz: 0.056 }, { y: 0.05, rx: 0.05, rz: 0.052, cz: -0.004 }, { y: 0.1, rx: 0.054, rz: 0.058, cz: 0.004 }], 10, false, false), balaclava ? strap : skin);
-  const lip = new THREE.Color(look.skin).lerp(new THREE.Color(0x8a3a32), 0.35);
-  const stubble = new THREE.Color(look.skin).multiplyScalar(0.72);
-  const socket = new THREE.Color(look.skin).multiplyScalar(0.6);
-  const balaC = strap.color;
-  const skinFn: ColorFn = (p, _n, c) => {
-    const h = headLocal(p);
-    if (balaclava && !(h.y > -0.02 && h.y < 0.33 && h.z > 0.2)) {
-      c.copy(balaC);
-      return SURF.nylon;
+  const balaclava = face?.cover === "balaclava";
+  const knit = paint(0x1c1c1a, SURF.nylon, 0.98);
+  if (!scan) {
+    add("head", loft([{ y: -0.04, rx: 0.056, rz: 0.056 }, { y: 0.05, rx: 0.05, rz: 0.052, cz: -0.004 }, { y: 0.1, rx: 0.054, rz: 0.058, cz: 0.004 }], 10, false, false), balaclava ? knit : skin);
+    const lip = new THREE.Color(0.86, 0.6, 0.58);
+    const stubble = new THREE.Color(0.72, 0.72, 0.72).multiplyScalar(face && face.beard > 1 ? 0.5 : 1);
+    const socket = new THREE.Color(0.62, 0.6, 0.6);
+    const skinFn: ColorFn = (p, _n, c) => {
+      const h = headLocal(p);
+      if (balaclava && !(h.y > -0.02 && h.y < 0.33 && h.z > 0.2)) {
+        c.copy(knit.color);
+        return SURF.nylon;
+      }
+      if (face?.cover === "paint" && h.z > 0.2 && h.y > -0.6) c.multiplyScalar(0.45);
+      if (h.z > 0.3) {
+        c.lerp(socket, 0.55 * gauss(Math.abs(h.x) - 0.36, 0.17) * gauss(h.y - 0.13, 0.12));
+        c.lerp(lip, 0.7 * gauss(h.y + 0.47, 0.08) * gauss(h.x, 0.3));
+      }
+      if (h.y < -0.3 && (face?.beard ?? 1) > 0) c.lerp(stubble, 0.45 * Math.min(1, (-0.3 - h.y) * 3));
+      if (h.y > 0.55 && h.z < 0.6) c.multiplyScalar(0.4); // cropped hair
+    };
+    add("head", headGeo(), skin, T(0, HEAD.y, HEAD.z), skinFn);
+    if (face) {
+      for (const s of [1, -1]) {
+        add("head", ellipsoid(0.013, 0.028, 0.02, 6, 4), balaclava ? knit : skin, sided(s, T(-0.078, 0.118, -0.002)));
+        add("head", ellipsoid(0.012, 0.008, 0.006, 5, 3), paint(0x14110f, SURF.hard, 0.2), sided(s, T(-0.031, 0.134, 0.087)));
+      }
+      add("head", rbox(0.021, 0.042, 0.026, 6, 3, 0.3), balaclava ? knit : skin, T(0, 0.112, 0.103, -0.28), balaclava ? undefined : (_p, _n, c) => void c.multiplyScalar(0.95));
     }
-    if (h.z > 0.3) {
-      c.lerp(socket, 0.55 * gauss(Math.abs(h.x) - 0.36, 0.17) * gauss(h.y - 0.13, 0.12));
-      c.lerp(lip, 0.7 * gauss(h.y + 0.47, 0.08) * gauss(h.x, 0.3));
-    }
-    if (h.y < -0.3) c.lerp(stubble, 0.4 * Math.min(1, (-0.3 - h.y) * 3));
-    if (h.y > 0.55 && h.z < 0.6) c.lerp(stubble.clone().multiplyScalar(0.5), 0.6); // cropped hair
-  };
-  add("head", headGeo(), skin, T(0, HEAD.y, HEAD.z), skinFn);
-  if (face) {
-    for (const s of [1, -1]) {
-      add("head", ellipsoid(0.013, 0.028, 0.02, 6, 4), balaclava ? strap : skin, sided(s, T(-0.078, 0.118, -0.002)));
-      add("head", ellipsoid(0.012, 0.008, 0.006, 5, 3), paint(0x14110f, SURF.hard, 0.2), sided(s, T(-0.031, 0.134, 0.087)));
-    }
-    add("head", rbox(0.021, 0.042, 0.026, 6, 3, 0.3), balaclava ? strap : skin, T(0, 0.112, 0.103, -0.28), balaclava ? undefined : (_p, _n, c) => void c.multiplyScalar(0.95));
   }
+  const glasses = (lensP: Paint, frameP: Paint) => {
+    // Wraparound lens, bridge and temple arms back to the ears.
+    add("head", new THREE.SphereGeometry(1, 16, 5, Math.PI / 2 - 0.8, 1.6, Math.PI / 2 - 0.32, 0.6), lensP, T(0, 0.135, 0.0, 0, 0, 0, 0.075, 0.056, 0.106)); // curved both ways so it catches a sky gradient
+    add("head", new THREE.CylinderGeometry(1, 1, 1, 14, 1, true, -0.8, 1.6), frameP, T(0, 0.149, 0.0, 0, 0, 0, 0.075, 0.005, 0.105));
+    for (const s of [1, -1]) add("head", rbox(0.004, 0.005, 0.075, 4, 4, 0), frameP, sided(s, T(-0.077, 0.146, 0.03, 0, -0.1)));
+  };
+  const headset = (overCap: boolean) => {
+    for (const s of [1, -1]) {
+      add("head", cyl(0.035, 0.035, 0.03, 12), poly, sided(s, T(-0.09, 0.122, -0.004, 0, 0, Math.PI / 2)));
+      add("head", cyl(0.028, 0.03, 0.006, 12), rubber, sided(s, T(-0.071, 0.122, -0.004, 0, 0, Math.PI / 2)));
+      add("head", rbox(0.012, 0.05, 0.016, 4, 4, 0), poly, sided(s, T(-0.094, 0.165, -0.004))); // arm up to the rail / band
+    }
+    // Boom mic on the left cup.
+    add("head", cyl(0.003, 0.003, 0.085, 4), poly, T(0.085, 0.1, 0.045, 1.2, 0, -0.35));
+    add("head", ellipsoid(0.008, 0.008, 0.012, 6, 4), rubber, T(0.045, 0.073, 0.09));
+    if (overCap) add("head", new THREE.TorusGeometry(0.1, 0.007, 4, 16, Math.PI), poly, T(0, 0.16, -0.01));
+  };
+
   // Helmets / headgear per kit.
   let headTop = 0.255;
-  if (kit === "standard") {
+  if (std?.hat === "helmet" || (kit === "standard" && !std)) {
+    // Ballistic helmet with a cloth cover, NVG shroud, side rails,
+    // counterweight pouch, strobe and a four-point chin strap.
     const edge = (az: number) => 1.28 + 0.44 * (1 - Math.cos(az)) * 0.5 - 0.3 * gauss(Math.abs(az) - 1.5, 0.3);
-    add("head", dome(0.111, 0.118, 0.127, edge, 16, 6), helm, T(0, 0.137, 0.006));
-    add("head", rbox(0.046, 0.034, 0.024, 6, 4, 0.3), metal, T(0, 0.207, 0.128, -0.4)); // NVG shroud
-    for (const s of [1, -1]) {
-      add("head", rbox(0.007, 0.02, 0.1, 4, 4, 0), poly, sided(s, T(-0.112, 0.168, 0.002, 0, 0, 0.16))); // rails
-      add("head", rbox(0.009, 0.075, 0.012, 4, 4, 0), strap, sided(s, T(-0.072, 0.075, 0.035, 0.3, 0, -0.1))); // chin strap
-    }
-    add("head", rbox(0.07, 0.05, 0.034, 6, 4, 0.3), vestD, T(0, 0.182, -0.128, 0.5)); // counterweight
+    add("head", dome(0.105, 0.114, 0.121, edge, 18, 7), helm, T(0, 0.141, 0.004));
+    add("head", rbox(0.046, 0.034, 0.024, 6, 4, 0.3), metal, T(0, 0.207, 0.121, -0.4)); // NVG shroud
+    add("head", rbox(0.02, 0.03, 0.03, 4, 4, 0.2), metal, T(0, 0.183, 0.127, -0.2)); // mount arm
+    for (const s of [1, -1]) add("head", rbox(0.007, 0.02, 0.1, 4, 4, 0), poly, sided(s, T(-0.106, 0.17, 0.002, 0, 0, 0.16))); // rails
+    // Chin strap: a loop from the helmet sides under the jaw, snug to the face.
+    const loop = new THREE.TorusGeometry(1, 0.075, 3, 18, Math.PI).rotateZ(Math.PI);
+    add("head", loop, strap, T(0, 0.13, 0.03, -0.5, 0, 0, 0.074, 0.104, 0.08));
+    add("head", rbox(0.04, 0.01, 0.026, 4, 4, 0.2), strap, T(0, 0.035, 0.075, 0.5)); // chin cup
+    add("head", rbox(0.07, 0.05, 0.034, 6, 4, 0.3), vestD, T(0, 0.184, -0.12, 0.5)); // counterweight
     add("head", rbox(0.022, 0.012, 0.03), glow, T(0, 0.25, -0.05, 0.3)); // IR strobe
     add("head", rbox(0.05, 0.004, 0.035), vest, T(0, 0.255, 0.02)); // blank velcro
     headTop = 0.258;
-    if (variant === 0) {
-      add("head", loft([{ y: 0.152, rx: 0.115, rz: 0.13, cz: 0.006 }, { y: 0.172, rx: 0.114, rz: 0.129, cz: 0.006 }], 14, false, false), strap);
-      add("head", rbox(0.12, 0.042, 0.03, 8, 3, 0.35), lens, T(0, 0.205, 0.118, -0.55));
+    if (std?.goggles) {
+      add("head", loft([{ y: 0.156, rx: 0.109, rz: 0.124, cz: 0.004 }, { y: 0.176, rx: 0.108, rz: 0.123, cz: 0.004 }], 14, false, false), strap);
+      add("head", rbox(0.12, 0.042, 0.03, 8, 3, 0.35), lens, T(0, 0.207, 0.112, -0.55));
     }
+    if (std?.headset ?? true) headset(false);
+  } else if (std?.hat === "cap") {
+    // Ball cap: six-panel crown, curved brim, button.
+    const edge = (az: number) => 1.4 + 0.25 * (1 - Math.cos(az)) * 0.5;
+    add("head", dome(0.084, 0.098, 0.102, edge, 16, 6, 0.006), helm, T(0, 0.15, 0.002));
+    add("head", ellipsoid(0.08, 0.007, 0.075, 12, 4), helm, T(0, 0.168, 0.105, -0.22));
+    add("head", ellipsoid(0.008, 0.005, 0.008, 6, 3), helm, T(0, 0.248, 0.002));
+    headTop = 0.25;
+    if (std.headset) headset(true);
   } else if (kit === "rusher") {
-    // Bump helmet (bare shell) + full-face respirator.
+    // Bump helmet (bare shell) + full-face respirator over a balaclava.
     const edge = (az: number) => 1.2 + 0.5 * (1 - Math.cos(az)) * 0.5 - 0.35 * gauss(Math.abs(az) - 1.5, 0.35);
     add("head", dome(0.108, 0.112, 0.122, edge, 14, 5), shell, T(0, 0.14, 0.004));
     add("head", ellipsoid(0.07, 0.078, 0.052, 10, 7), rubber, T(0, 0.104, 0.074));
     for (const s of [1, -1]) {
       add("head", ellipsoid(0.023, 0.021, 0.008, 8, 4), paint(0x1a2228, SURF.hard, 0.05, 0.3, 0.15), sided(s, T(-0.031, 0.136, 0.118, -0.15)));
-      add("head", ellipsoid(0.012, 0.028, 0.02, 6, 4), skin, sided(s, T(-0.078, 0.118, -0.002)));
+      if (!scan) add("head", ellipsoid(0.012, 0.028, 0.02, 6, 4), knit, sided(s, T(-0.078, 0.118, -0.002)));
     }
     add("head", cyl(0.033, 0.033, 0.045, 9), paint(mix(look.accent, 0x2a2a2a, 0.6), SURF.hard, 0.6), T(0.035, 0.07, 0.125, 1.25, 0, -0.5));
     add("head", cyl(0.016, 0.02, 0.025, 7), rubber, T(0, 0.075, 0.125, 1.4));
@@ -319,7 +447,6 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     add("head", cyl(0.094, 0.104, 0.075, 12), helm, T(0, 0.212, -0.002));
     add("head", cyl(0.1, 0.098, 0.02, 12), strap, T(0, 0.183, -0.002));
     add("head", cyl(0.17, 0.175, 0.01, 14), helm, T(0, 0.17, 0.0, -0.06));
-    add("head", rbox(0.11, 0.022, 0.02, 6, 3, 0.4), lens, T(0, 0.135, 0.098));
     headTop = 0.25;
   } else if (heavy) {
     // Full EOD-style helmet with a wide visor.
@@ -337,12 +464,18 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     add("head", rbox(0.03, 0.045, 0.25, 6, 4, 0.3), metal, T(0, 0.265, -0.01));
     for (const s of [1, -1]) add("head", rbox(0.03, 0.12, 0.14, 6, 4, 0.3), plate, sided(s, T(-0.13, 0.11, -0.01, 0, 0, -0.08)));
     headTop = 0.29;
+  } else {
+    headTop = 0.24; // bare head
   }
-  if (shemagh) {
-    const cloth = paint(mix(look.uniform, 0xa89a78, 0.6), SURF.nylon, 0.95);
-    add("head", loft([{ y: -0.035, rx: 0.095, rz: 0.09, cz: 0.004 }, { y: 0.02, rx: 0.084, rz: 0.088, cz: 0.012 }, { y: 0.07, rx: 0.077, rz: 0.094, cz: 0.02 }, { y: 0.098, rx: 0.07, rz: 0.088, cz: 0.022 }], 12, false, false), cloth);
-    if (kit === "standard") add("head", rbox(0.1, 0.02, 0.018, 6, 3, 0.4), lens, T(0, 0.135, 0.099));
+  if (std?.eyes === "glasses") glasses(lensClear, poly);
+  else if (std?.eyes === "shades") glasses(lensDark, metal);
+  if (std?.shemagh || kit === "sniper") {
+    // Scarf bunched round the neck, face left open.
+    const cloth = paint(mix(look.uniform, 0xa89a78, 0.6), SURF.nylon, 0.97);
+    add("head", loft([{ y: -0.045, rx: 0.098, rz: 0.094, cz: 0.004 }, { y: -0.01, rx: 0.09, rz: 0.094, cz: 0.014, p: 2.2 }, { y: 0.025, rx: 0.075, rz: 0.084, cz: 0.012 }, { y: 0.045, rx: 0.064, rz: 0.07, cz: 0.004 }], 12, false, false), cloth);
+    add("head", rbox(0.07, 0.05, 0.03, 6, 4, 0.4), cloth, T(0.0, -0.02, 0.09, 0.4)); // knot
   }
+
 
   // =========================================================================
   // Arms (right built canonical with outward = -X; left mirrored)
@@ -353,9 +486,24 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     const hd: BoneName = side > 0 ? "handR" : "handL";
     const S = (m: THREE.Matrix4) => sided(side, m);
     const aw = armoured ? w * 1.04 : 1;
-    add(ua, ellipsoid(0.062 * aw, 0.072, 0.066 * aw, 10, 7), uni, S(T(-0.008, -0.03, 0)));
-    add(ua, loft([{ y: -0.31, rx: 0.043 * aw, rz: 0.045 * aw }, { y: -0.2, rx: 0.047 * aw, rz: 0.049 * aw }, { y: -0.1, rx: 0.053 * aw, rz: 0.056 * aw, cz: 0.003 }, { y: -0.02, rx: 0.056 * aw, rz: 0.058 * aw }], 10, false, false), uni, S(T()));
-    if (!armoured) add(ua, rbox(0.006, 0.07, 0.06, 4, 4, 0), shade(uni, 0.9), S(T(-0.052, -0.1, 0.004))); // blank sleeve panel
+    // Bare skin (tattooed right arm on the tank-top look).
+    const bareArm = sleeves === "tank" && side > 0 ? inked : skin;
+    if (sleeves === "tank") {
+      // Deltoid, biceps/triceps, elbow: sculpted, no sleeve.
+      add(ua, ellipsoid(0.058, 0.07, 0.06, 12, 8), bareArm, S(T(-0.01, -0.035, 0)));
+      add(ua, loft([{ y: -0.31, rx: 0.038, rz: 0.04 }, { y: -0.24, rx: 0.042, rz: 0.046, cz: 0.004 }, { y: -0.15, rx: 0.046, rz: 0.054, cz: 0.006 }, { y: -0.07, rx: 0.05, rz: 0.054, cz: 0.002 }, { y: -0.02, rx: 0.052, rz: 0.054 }], 12, false, false), bareArm, S(T()));
+    } else {
+      add(ua, ellipsoid(0.062 * aw, 0.072, 0.066 * aw, 10, 7), uni, S(T(-0.008, -0.03, 0)));
+      if (sleeves === "rolled") {
+        // Sleeve rolled to above the elbow: fabric, a thick cuff, then skin.
+        add(ua, loft([{ y: -0.19, rx: 0.05, rz: 0.052 }, { y: -0.1, rx: 0.053, rz: 0.056, cz: 0.003 }, { y: -0.02, rx: 0.056, rz: 0.058 }], 10, false, false), uni, S(T()));
+        add(ua, loft([{ y: -0.235, rx: 0.049, rz: 0.051, p: 2.6 }, { y: -0.215, rx: 0.054, rz: 0.056, p: 2.6 }, { y: -0.19, rx: 0.052, rz: 0.054, p: 2.6 }], 10, true, false), shade(paint(mix(look.uniform, 0xb0a890, 0.3), SURF.nylon, 0.95), 0.95), S(T()));
+        add(ua, loft([{ y: -0.31, rx: 0.039, rz: 0.042 }, { y: -0.27, rx: 0.042, rz: 0.046, cz: 0.003 }, { y: -0.22, rx: 0.045, rz: 0.048, cz: 0.004 }], 10, false, false), skin, S(T()));
+      } else {
+        add(ua, loft([{ y: -0.31, rx: 0.043 * aw, rz: 0.045 * aw }, { y: -0.2, rx: 0.047 * aw, rz: 0.049 * aw }, { y: -0.1, rx: 0.053 * aw, rz: 0.056 * aw, cz: 0.003 }, { y: -0.02, rx: 0.056 * aw, rz: 0.058 * aw }], 10, false, false), uni, S(T()));
+      }
+      if (!armoured) add(ua, rbox(0.006, 0.07, 0.06, 4, 4, 0), shade(uni, 0.9), S(T(-0.052, -0.1, 0.004))); // blank sleeve panel
+    }
     if (heavy) {
       add(ua, ellipsoid(0.088, 0.064, 0.088, 10, 6), plate, S(T(-0.02, 0.0, 0)));
       add(ua, rbox(0.03, 0.16, 0.08, 6, 4, 0.3), vest, S(T(-0.05, -0.15, 0)));
@@ -365,8 +513,15 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
       add(ua, rbox(0.035, 0.15, 0.085, 6, 4, 0.3), plate, S(T(-0.05, -0.17, 0)));
     }
     // Forearm: elbow cap, sleeve, glove cuff.
-    add(fa, ellipsoid(0.046 * aw, 0.05, 0.048 * aw, 8, 6), uni, S(T(0, -0.005, 0)));
-    add(fa, loft([{ y: -0.215, rx: 0.035 * aw, rz: 0.033 * aw }, { y: -0.15, rx: 0.04 * aw, rz: 0.041 * aw }, { y: -0.06, rx: 0.046 * aw, rz: 0.048 * aw }, { y: 0.01, rx: 0.044 * aw, rz: 0.046 * aw }], 10, false, false), uni, S(T()));
+    if (sleeves === "long") {
+      add(fa, ellipsoid(0.046 * aw, 0.05, 0.048 * aw, 8, 6), uni, S(T(0, -0.005, 0)));
+      add(fa, loft([{ y: -0.215, rx: 0.035 * aw, rz: 0.033 * aw }, { y: -0.15, rx: 0.04 * aw, rz: 0.041 * aw }, { y: -0.06, rx: 0.046 * aw, rz: 0.048 * aw }, { y: 0.01, rx: 0.044 * aw, rz: 0.046 * aw }], 10, false, false), uni, S(T()));
+    } else {
+      // Bare forearm: elbow point, muscular upper forearm tapering to the wrist.
+      add(fa, ellipsoid(0.04, 0.045, 0.042, 10, 6), bareArm, S(T(0, -0.005, -0.004)));
+      add(fa, loft([{ y: -0.215, rx: 0.029, rz: 0.025 }, { y: -0.16, rx: 0.033, rz: 0.03 }, { y: -0.09, rx: 0.042, rz: 0.04, cz: 0.003 }, { y: -0.035, rx: 0.044, rz: 0.042, cz: 0.002 }, { y: 0.01, rx: 0.04, rz: 0.04 }], 12, false, false), bareArm, S(T()));
+      if (side < 0) add(fa, loft([{ y: -0.2, rx: 0.031, rz: 0.028 }, { y: -0.185, rx: 0.031, rz: 0.028 }], 10, false, false), poly, S(T())); // watch
+    }
     add(fa, loft([{ y: -0.272, rx: 0.033 * aw, rz: 0.03 * aw }, { y: -0.205, rx: 0.038 * aw, rz: 0.036 * aw }], 8, false, false), glove, S(T()));
     if (armoured) add(fa, rbox(0.03, 0.17, 0.07, 6, 4, 0.3), warden ? plate : vest, S(T(-0.036, -0.13, 0)));
     // Gloved hand gripping around HAND_SOCKET.
@@ -421,6 +576,14 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     add(ft, rbox(0.098 * bw, 0.078, 0.255, 10, 3, 0.35), boot, S(T(0, -0.035, 0.052)));
     add(ft, ellipsoid(0.048 * bw, 0.034, 0.06, 8, 5), boot, S(T(0, -0.045, 0.15)));
     add(ft, rbox(0.106 * bw, 0.022, 0.275, 8, 4, 0.2), sole, S(T(0, -RIG.ankle + 0.011, 0.055)));
+    add(ft, rbox(0.108 * bw, 0.006, 0.278, 8, 4, 0), shade(boot, 0.55), S(T(0, -RIG.ankle + 0.024, 0.055))); // welt
+    add(ft, rbox(0.03, 0.03, 0.03, 6, 4, 0.3), shade(boot, 0.8), S(T(0, -0.03, -0.075))); // heel counter
+    if (!armoured) {
+      // Tongue and laces up the instep and shaft.
+      add(ft, rbox(0.04, 0.012, 0.11, 6, 4, 0.3), shade(boot, 0.85), S(T(0, 0.004, 0.06, -0.35)));
+      for (let i = 0; i < 4; i++) add(ft, rbox(0.044, 0.005, 0.006), rubber, S(T(0, -0.012 + i * 0.012, 0.1 - i * 0.026, -0.35)));
+      for (let i = 0; i < 3; i++) add(sh, rbox(0.044, 0.005, 0.006), rubber, S(T(0, -0.415 + i * 0.03, 0.063)));
+    }
     if (warden) add(ft, rbox(0.1, 0.05, 0.13, 6, 4, 0.3), plate, S(T(0, -0.01, 0.12, 0.3)));
   }
 
@@ -491,6 +654,7 @@ export function buildBody(look: LookDef, variant: number): BodyBuild {
     ghillie,
     elite: { armR: eb(1), armL: eb(-1), head: stripe.merge()! },
     w,
+    face,
     hit: {
       head: { size: [big, headTop - 0.025, big + 0.02], at: [0, (headTop + 0.015 + 0.04) / 2, 0.008] },
       spine: { size: [0.37 * hw, 0.48, 0.3 * hw], at: [0, 0.17, 0.012] },

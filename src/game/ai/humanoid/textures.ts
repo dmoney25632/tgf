@@ -16,6 +16,7 @@ import * as THREE from "three";
 let camo: THREE.DataTexture | null = null;
 let fabricN: THREE.DataTexture | null = null;
 let strands: THREE.DataTexture | null = null;
+let folds: THREE.DataTexture | null = null;
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -150,6 +151,59 @@ export function fabricNormalTexture() {
   return fabricN;
 }
 
+/** Turns a tileable heightfield into an RGBA tangent-space normal map. */
+function heightToNormal(h: Float32Array, N: number, s: number) {
+  const data = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const l = h[y * N + ((x + N - 1) % N)], r = h[y * N + ((x + 1) % N)];
+      const d = h[((y + N - 1) % N) * N + x], t = h[((y + 1) % N) * N + x];
+      const nx = (l - r) * s, ny = (d - t) * s;
+      const len = Math.hypot(nx, ny, 1);
+      const i = (y * N + x) * 4;
+      data[i] = (nx / len * 0.5 + 0.5) * 255;
+      data[i + 1] = (ny / len * 0.5 + 0.5) * 255;
+      data[i + 2] = (1 / len * 0.5 + 0.5) * 255;
+      data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Cloth creases: mostly horizontal, warped, broken-up ridges (compression
+ * folds round sleeves and trouser legs) plus a few diagonal pulls.
+ * Sampled at ~40 cm per tile.
+ */
+export function foldNormalTexture() {
+  if (folds) return folds;
+  const N = 128;
+  const h = new Float32Array(N * N);
+  const warp = fbm(3, 3, 515);
+  const env = fbm(4, 2, 616);
+  const diag = fbm(2, 2, 717);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const u = x / N, v = y / N;
+      const w = (warp(u, v) - 0.5) * 0.9;
+      // sharpened sine: soft valleys, tighter ridges
+      const ridge = Math.pow(0.5 + 0.5 * Math.sin((v * 4 + w) * Math.PI * 2), 2.2);
+      const e = smooth(0.3, 0.75, env(u, v));
+      const pull = Math.pow(0.5 + 0.5 * Math.sin(((u + v) * 3 + (diag(u, v) - 0.5) * 1.4) * Math.PI * 2), 3) * smooth(0.55, 0.8, env(v, u));
+      h[y * N + x] = ridge * e * 1.0 + pull * 0.6;
+    }
+  }
+  folds = heightToNormal(h, N, 3.2);
+  return folds;
+}
+
 /** Hanging burlap strips: white albedo (tinted by vertex colour), alpha cut. */
 export function strandTexture() {
   if (strands) return strands;
@@ -194,5 +248,6 @@ export function disposeTextures() {
   camo?.dispose();
   fabricN?.dispose();
   strands?.dispose();
-  camo = fabricN = strands = null;
+  folds?.dispose();
+  camo = fabricN = strands = folds = null;
 }

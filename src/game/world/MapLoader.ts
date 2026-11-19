@@ -2,10 +2,12 @@ import * as THREE from "three";
 import { CollisionWorld } from "./Collision";
 import type { Surface } from "../effects/EffectsPool";
 import { QUALITY, type QualityPreset } from "../config";
-import type { MaterialName, ModelId } from "../assets/manifest";
+import type { ModelId } from "../assets/manifest";
 import { Atmosphere, type AtmosphereDef } from "../render/Atmosphere";
 import { MaterialLibrary } from "../render/Materials";
 import { MeshBuilder } from "./MeshBuilder";
+import { WorldMaterials, type WorldMat } from "./WorldMaterials";
+import { qualityName, worldDetail } from "./quality";
 import { ModelPlacer } from "./Props";
 import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
 import { buildTerrain } from "./Terrain";
@@ -40,7 +42,7 @@ export type MapBox = {
   /** Visual only (no collision, bullets pass). */
   decor?: boolean;
   /** Render material (defaults from `surface`). */
-  mat?: MaterialName;
+  mat?: WorldMat;
   style?: BoxStyle;
   /** Free-form label used by map dressings (e.g. "wall", "tree"). */
   tag?: string;
@@ -154,6 +156,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   disposables.push(atmosphere);
   const lib = new MaterialLibrary(quality);
   disposables.push(lib);
+  const wm = new WorldMaterials(lib, quality);
+  disposables.push(wm);
 
   // ---- Ground collision (flat) + raycast proxy -------------------------------
   collision.add(new THREE.Box3(new THREE.Vector3(-half * 2, -1, -half * 2), new THREE.Vector3(half * 2, 0, half * 2)));
@@ -197,7 +201,13 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
 
   // ---- Set dressing (terrain shape, foliage plan, extra decor) --------------
   const dressing = (def.dressing && DRESSINGS[def.dressing]) || defaultDressing;
-  const plan = dressing({ def, builder, props, style: kit, quality });
+  const plan = dressing({ def, builder, props, style: kit, quality, materials: wm, windTime: atmosphere.windTime, addLamp: (p, c, i, d) => { atmosphere.addLamp(p, c, i, d); } });
+  builder.ground = plan.terrain.height;
+  for (const x of plan.extras ?? []) {
+    root.add(x.object);
+    disposables.push(x);
+    if (x.update) atmosphere.frameHooks.push((cam) => x.update!(cam));
+  }
 
   const terrain = buildTerrain(plan.terrain, lib, quality);
   root.add(terrain.mesh);
@@ -230,8 +240,9 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   }
 
   // ---- Merge static geometry --------------------------------------------------
-  const groups = builder.build(lib);
+  const groups = builder.build((m) => wm.get(m));
   let staticTris = 0;
+  const clutter: THREE.Mesh[] = [];
   for (const [group, list] of groups) {
     for (const mesh of list) {
       disposables.push(mesh.geometry);
@@ -246,8 +257,14 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
         continue;
       }
       root.add(mesh);
+      if (group.startsWith("clutter@")) {
+        // Small detail: no shadow casting, culled by distance per cell.
+        mesh.castShadow = false;
+        clutter.push(mesh);
+      }
+      if (group.startsWith("far")) mesh.receiveShadow = false;
       if (group === "solid") {
-        mesh.userData.surface = surfaceOf(mesh.userData.material as MaterialName);
+        mesh.userData.surface = surfaceOf(mesh.userData.material as WorldMat);
         meshes.push(mesh);
       }
     }
@@ -255,9 +272,21 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   props.start(root, groups);
   disposables.push(props);
 
+  let clutterDistance = worldDetail(qualityName(quality)).clutterDistance;
+  const cellCentre = new THREE.Vector3();
+  atmosphere.frameHooks.push((cam) => {
+    for (const m of clutter) {
+      const s = m.geometry.boundingSphere!;
+      cellCentre.copy(s.center);
+      m.visible = clutterDistance > 0 && cam.position.distanceTo(cellCentre) < clutterDistance + s.radius;
+    }
+  });
   const setQuality = (q: QualityPreset) => {
     atmosphere.setQuality(q);
     foliage.setQuality(q);
+    const name = qualityName(q);
+    clutterDistance = worldDetail(name).clutterDistance;
+    for (const x of plan.extras ?? []) x.setQuality?.(name);
   };
   setQuality(quality);
 
@@ -275,8 +304,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
       });
       return {
         drawables,
-        triangles: staticTris + terrain.triangles + props.triangles,
-        grassTriangles: foliage.triangles.grass,
+        triangles: staticTris + terrain.triangles + props.triangles + (plan.extras ?? []).reduce((a, x) => a + (x.triangles ?? 0), 0),
+        grassTriangles: foliage.triangles.grass + foliage.triangles.tallGrass,
         treeTriangles: foliage.triangles.trees + foliage.triangles.bushes,
         terrainTriangles: terrain.triangles,
       };
