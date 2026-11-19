@@ -87,7 +87,7 @@ export class GameEngine {
   private readonly offsets: CameraOffsets = { recoilPitch: 0, recoilYaw: 0, shakePitch: 0, shakeYaw: 0, shakeRoll: 0, shakeX: 0, shakeY: 0 };
   private readonly vmState: ViewmodelState = {
     ads: 0, sprint: 0, slide: 0, bobDistance: 0, bobAmount: 0, yawDelta: 0, pitchDelta: 0, reload: -1, reloadEmpty: false,
-    lowered: 0, grounded: true, melee: -1, throwing: -1, sinceShot: 9, shellReload: false,
+    lowered: 0, grounded: true, melee: -1, throwing: -1, sinceShot: 9, shellReload: false, empty: false,
   };
   private readonly raycastList: THREE.Object3D[] = [];
   private readonly tmpA = new THREE.Vector3();
@@ -108,6 +108,7 @@ export class GameEngine {
 
     this.input = new Input(this.pipeline.canvas);
     this.effects = new EffectsPool(this.scene, preset.maxDecals, preset.maxParticles);
+    this.effects.onShellLand = (at, kind, speed) => this.sfx.shellDrop(at, kind, speed);
     this.player = new PlayerController(this.camera, this.map.collision);
     this.hud = new HUD(container);
 
@@ -406,7 +407,9 @@ export class GameEngine {
     s.throwing = this.grenades.throwProgress;
     s.sinceShot = this.weapons.timeSinceShot;
     s.shellReload = this.weapons.shellReloading;
+    s.empty = this.weapons.active.ammo === 0;
     this.viewmodel.update(dt, s);
+    this.viewmodel.drainShells(this.camera, this.effects, p.position.y, p.velocity);
   }
 
   private onFire(def: WeaponDef, hitPoint: THREE.Vector3 | null) {
@@ -417,8 +420,8 @@ export class GameEngine {
     // Muzzle position in world space for the light + tracer.
     this.viewmodel.pivot.updateMatrixWorld(true);
     this.viewmodel.muzzleWorld(this.camera, this.tmpA);
-    this.effects.muzzleFlash(this.tmpA);
     this.camera.getWorldDirection(this.forward);
+    this.effects.muzzleFlash(this.tmpA, this.forward, def.shake / 0.16);
     if (hitPoint) this.effects.tracer(this.tmpA, hitPoint);
     else this.effects.tracer(this.tmpA, this.tmpB.copy(this.camera.position).addScaledVector(this.forward, 200));
   }
@@ -427,7 +430,7 @@ export class GameEngine {
     this.effects.explosion(at);
     const dist = at.distanceTo(this.camera.position);
     this.sfx.explosion(at, dist);
-    this.shake.add(Math.max(0, 0.45 * (1 - dist / 30)));
+    this.shake.add(Math.max(0, 0.6 * (1 - dist / 36)));
     this.mode.onExplosion(at);
   }
 
