@@ -7,11 +7,15 @@ import { qualityName, worldDetail } from "../quality";
 import { palms, type PalmPlacement } from "../Palms";
 import { smokeColumns } from "../Smoke";
 import { SHED } from "../maps/dustfallOutpost";
-import { facades, spall, PLASTER_TINTS } from "../architecture/Building";
+import { facades, silhouette, spall } from "../architecture/Building";
 import {
-  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, pipeRail, rod, wall, wallDecal, waterTank,
+  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, paintLine, pendantLamp, pipeRail, rod, wall, wallDecal, waterTank,
 } from "../architecture/kit";
 import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/debris";
+import { gasBottles, patrolTruck } from "../architecture/vehicles";
+import { postSign, roadArrow, signGantry } from "../architecture/signs";
+import { camoNets, type NetSpec } from "../CamoNet";
+import { helicopter } from "../Helicopter";
 import { town } from "./town";
 import {
   band, clearOf, concertina, decorBox, fbm2, fence, pallets, poleLine, scatterTrees, smoothstep, tyre, wireSpan,
@@ -65,10 +69,12 @@ export const dustfall: Dressing = (kit) => {
     const n2 = fbm2(x * 0.17 + 9, z * 0.17, 2);
     const t = track(x, z);
     if (d < R) {
-      // Dusty packed yard: gravel and grit where vehicles run, dried mud patches.
-      o.gravel = 0.6 + t * 0.9 + smoothstep(0.5, 0.65, n2) * 0.35;
-      o.ground = 0.35 + smoothstep(29, 31.5, d) * 1.0 + smoothstep(0.5, 0.65, n) * 0.5;
-      o.mud = smoothstep(0.58, 0.72, n2) * 0.8 + t * 0.3;
+      // Dusty packed yard: gravel where vehicles run, loose dirt blotches,
+      // dried mud pans; three noise scales so it never reads as one plane.
+      const n3 = fbm2(x * 0.11 - 5, z * 0.11 + 3, 3);
+      o.gravel = 0.3 + t * 1.2 + smoothstep(0.47, 0.6, n2) * 0.9;
+      o.ground = 0.2 + smoothstep(29, 31.5, d) * 1.0 + smoothstep(0.45, 0.6, n) * 1.0;
+      o.mud = smoothstep(0.55, 0.68, n3) * 1.2 + t * 0.35;
     } else if (d < BERM) {
       o.gravel = t * 0.6 + 0.25;
       o.ground = 1 - t * 0.75;
@@ -247,7 +253,7 @@ export const dustfall: Dressing = (kit) => {
   for (const [gx, gz] of [[-6, 2.2], [-3.4, 4.9], [-5.9, 5.0]]) wireSpan(B, [new THREE.Vector3(-4.8, 8.9, 3.8)], [new THREE.Vector3(gx, 3.56, gz)], 0.05);
   for (let i = 0; i < 5; i++) decorBox(kit, { x: -5.2 + i * 0.7, z: -4.65, y: 3.55, w: 0.65, h: 0.34, d: 0.4, color: 0xc4b48e, surface: "sand", style: "sandbags" });
   // Interior: hanging lamp, chairs round the map table, papers and debris on the floor.
-  props.place("hanging_industrial_lamp", { x: 0, y: 3.2 - 0.95, z: 0, scale: 0.7 });
+  pendantLamp(B, 0, 3.2, 0, 0.8, 1.05);
   kit.addLamp?.(new THREE.Vector3(0, 2.0, 0), 0xffd6a0, 4, 9);
   for (const [cx, cz, ry] of [[-1.7, 0.4, 1.4], [1.75, -0.3, -1.7], [0.3, 1.25, 3.0], [-4.2, -1.4, 2.6]] as const) {
     props.place("plastic_monobloc_chair_01", { x: cx, y: 0, z: cz, rotY: ry, scale: 1 });
@@ -297,17 +303,17 @@ export const dustfall: Dressing = (kit) => {
       B.box("corrugated_rust", x + 0.5, yTop + 0.2 - slip * 0.3, (z0 + z1) / 2 + slip, 1.08, 0.04, z1 - z0 + 1.2, 0xc0a890, { rotX: slip * 0.2, rot90: true });
     }
     for (const [lx, lz] of [[12, 18], [18, 21], [24, 15]] as const) {
-      props.place("hanging_industrial_lamp", { x: lx, y: h - 1.34, z: lz, scale: 1 });
+      pendantLamp(B, lx, yTop + 0.1, lz, yTop + 0.1 - (h - 1.1), 1.1);
       kit.addLamp?.(new THREE.Vector3(lx, h - 1.6, lz), 0xffd29a, 6, 14);
-      rod(B, new THREE.Vector3(lx, h, lz), new THREE.Vector3(lx, yTop + 0.1, lz), 0.006, 0x222222);
     }
     // Floor: oily concrete slab with stains, pallets, shelving, gas bottles, jerrycans.
     groundPatch(B, "concrete_broken", (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2 + 1, (z1 - z0) / 2 + 1, 0, 0xa8a49c, 23, 0.01);
     for (let i = 0; i < 5; i++) groundDecal(B, i < 3 ? "oil" : "tracks", x0 + 2 + r() * (x1 - x0 - 4), z0 + 2 + r() * (z1 - z0 - 4), 1.5 + r() * 1.5, 1.5 + r() * 1.5, r() * 6, 0xffffff);
     props.place("steel_frame_shelves_01", { x: 25.6, y: 0, z: 23.1, rotY: Math.PI, fit: [2, 2.1, 0.6] });
     props.place("steel_frame_shelves_01", { x: 10.6, y: 0, z: 23.1, rotY: Math.PI, fit: [2, 2.1, 0.6] });
-    for (const [px, pz] of [[23.4, 23.0], [23.9, 22.7], [24.3, 23.2]]) props.place("propane_tank", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1 });
-    for (const [px, pz] of [[13.2, 22.9], [13.6, 23.0], [16.5, 13.0]]) props.place("plastic_jerrycan", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1 });
+    // Photoscans at 5-7k tris each: one of each everywhere, the rest on high.
+    [[23.4, 23.0], [23.9, 22.7], [24.3, 23.2]].forEach(([px, pz], i) => props.place("propane_tank", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1, tier: i ? 2 : 0 }));
+    [[13.2, 22.9], [13.6, 23.0], [16.5, 13.0]].forEach(([px, pz], i) => props.place("plastic_jerrycan", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1, tier: i ? 2 : 0 }));
     if (free(26, 20.5, 1)) pallets(B, 26, 20.5, 0.1, 3, r);
     if (free(10.4, 14.4, 1)) pallets(B, 10.4, 14.4, -0.2, 2, r);
   }
@@ -325,11 +331,18 @@ export const dustfall: Dressing = (kit) => {
   }
   for (const a of tagged("ammo")) {
     props.place("ammo_box", { x: a.x - 0.35, y: a.h, z: a.z + 0.3, scale: 2, rotY: Math.PI / 2 }, (bb, g) => bb.box("metal_painted", a.x - 0.35, a.h + 0.16, a.z + 0.3, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
-    props.place("ammo_box", { x: a.x + 0.3, y: a.h, z: a.z - 0.32, scale: 2, rotY: Math.PI / 2 + 0.2 }, (bb, g) => bb.box("metal_painted", a.x + 0.3, a.h + 0.16, a.z - 0.32, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
+    props.place("ammo_box", { x: a.x + 0.3, y: a.h, z: a.z - 0.32, scale: 2, rotY: Math.PI / 2 + 0.2, tier: 2 }, (bb, g) => bb.box("metal_painted", a.x + 0.3, a.h + 0.16, a.z - 0.32, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
   }
   tagged("supply").forEach((c, i) => {
     if (i % 2) return;
-    props.place("wooden_crate_01", { x: c.x + (r() - 0.5) * 0.2, y: c.h, z: c.z + (r() - 0.5) * 0.2, scale: 1.15, rotY: r() * 6 }, (bb, g) => bb.box("wood", c.x, c.h + 0.19, c.z, 0.9, 0.38, 0.46, 0xc9b896, { group: g }));
+    // Small slatted crate on top (procedural: the scan was 6.6k tris).
+    const cx = c.x + (r() - 0.5) * 0.2, cz = c.z + (r() - 0.5) * 0.2, yaw = r() * 6, tint = 0xb8a882;
+    B.box("wood", cx, c.h + 0.2, cz, 0.86, 0.38, 0.5, tint, { rotY: yaw });
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    for (const s of [-1, 1]) {
+      const ox = s * 0.26 * sn, oz = s * 0.26 * cs;
+      for (const yy of [0.06, 0.34]) B.box("wood", cx + ox, c.h + yy, cz + oz, 0.9, 0.06, 0.03, 0x9a8a68, { rotY: yaw });
+    }
   });
   // Burnt-out vehicles on their colliders.
   for (const w of tagged("wreck")) burntCar(B, w.x, w.z, w.w > w.d ? 0 : Math.PI / 2, "pickup", Math.round(w.x * 13 + w.z), "decor");
@@ -337,11 +350,25 @@ export const dustfall: Dressing = (kit) => {
   for (const c of tagged("car")) groundDecal(B, "oil", c.x, c.z + 0.8, 1.6, 1.6, 0.3, 0xffffff);
 
   // ---- Ground: broken asphalt through the gates, slabs, decals ----------------------
-  const strip = (ax: number, az: number, bx: number, bz: number, seed: number) => groundStrip(B, "asphalt", ax, az, bx, bz, 4.6, () => 0, 0xb4b0a8, seed, "decor", 0.015);
+  const strip = (ax: number, az: number, bx: number, bz: number, seed: number) => groundStrip(B, "asphalt", ax, az, bx, bz, 4.6, () => 0, 0xc8c4bc, seed, "decor", 0.015);
   strip(0, -47, 0, -7.2, 1);
   strip(0, 7.2, 0, 47, 2);
   strip(-47, 0, -9.5, 0, 3);
   strip(9.5, 0, 47, 0, 4);
+  for (const [ax, az, bx, bz] of [[0, -46, 0, -8], [0, 8, 0, 46], [-46, 0, -10, 0], [10, 0, 46, 0]] as const) {
+    const len = Math.hypot(bx - ax, bz - az), vertical = ax === bx;
+    for (let t = 0; t < len; t += 3 + r() * 3) {
+      const k = t / len;
+      const x = ax + (bx - ax) * k, z = az + (bz - az) * k;
+      for (const s of [-1, 1]) {
+        if (r() < 0.3) continue;
+        const reach = 0.8 + r() * 1.6;
+        const off = s * (2.3 + 0.3 - reach / 2);
+        groundDecal(B, "sand", vertical ? x + off : x, vertical ? z : z + off, reach + 0.8, 3 + r() * 4, (vertical ? 0 : Math.PI / 2) + (r() - 0.5) * 0.3, 0xcdbfa4);
+      }
+      if (r() < 0.15) groundStrip(B, "asphalt", x, z, vertical ? x : x + 1.5 + r() * 2, vertical ? z + 1.5 + r() * 2 : z, 1 + r() * 1.5, () => 0, 0x989490, Math.floor(r() * 1e6), "decor", 0.018);
+    }
+  }
   // Potholes / exposed base: concrete chunks and rubble patches over the asphalt.
   for (let i = 0; i < 14; i++) {
     const along = (r() * 2 - 1) * 40;
@@ -370,6 +397,54 @@ export const dustfall: Dressing = (kit) => {
     const s = kind === "burn" ? 3 + r() * 3 : kind === "puddle" ? 1.5 + r() * 2.5 : 1.5 + r() * 2;
     groundDecal(B, kind, x, z, s, s * (0.7 + r() * 0.5), r() * 6, 0xffffff);
   }
+  // ---- Yard ground: curving tyre ruts, gravel and stone patches, scuffs, stains ----
+  {
+    const yard = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z)) < R - 1;
+    // Ruts where trucks turned off the gate tracks into the shed, the motor
+    // pool and round the ops block (Catmull-Rom through hand-placed points).
+    const ruts: [number, number][][] = [
+      [[30, 1.2], [24, 2.5], [19, 6], [16.5, 10.5]],
+      [[1.2, 30], [2.4, 25], [6.5, 21], [9.5, 19.5]],
+      [[-30, -1.2], [-22, -2.4], [-15, -6.5], [-12, -12], [-12.5, -20]],
+      [[-1.2, -30], [-3, -22], [-8.5, -15.5], [-15, -14], [-22, -16]],
+      [[30, -1.2], [22, -4], [17, -9], [17.5, -16], [22, -21]],
+      [[-1.2, 30], [-4, 22], [-11, 17], [-18, 18.5]],
+    ];
+    ruts.forEach((pts, i) => {
+      const curve = new THREE.CatmullRomCurve3(pts.map(([x, z]) => new THREE.Vector3(x, 0, z)));
+      const L = curve.getLength();
+      const off = (r() - 0.5) * 0.5;
+      for (let s = 0; s < L; s += 2.3) {
+        const p = curve.getPointAt(s / L), tg = curve.getTangentAt(s / L);
+        const x = p.x - tg.z * off, z = p.z + tg.x * off;
+        if (!yard(x, z) || r() < 0.12) continue;
+        groundDecal(B, "tracks", x, z, 2.4, 2.9, Math.atan2(tg.x, tg.z), i % 2 ? 0xf0ece4 : 0xffffff);
+      }
+    });
+    // Gravel / stone patches and dark damp ground.
+    for (let i = 0; i < 26; i++) {
+      const x = (r() * 2 - 1) * (R - 3), z = (r() * 2 - 1) * (R - 3);
+      if (!free(x, z, 1) || nearSpawn(x, z, 2)) continue;
+      if (r() < 0.6) groundPatch(B, "rubble", x, z, 0.8 + r() * 1.8, 0.6 + r() * 1.4, r() * 6, 0xc8c0b0, Math.floor(r() * 1e6), 0.014);
+      else groundDecal(B, r() < 0.5 ? "baseDirt" : "puddle", x, z, 2 + r() * 3, 1.5 + r() * 2.5, r() * 6, 0xb0a898);
+    }
+    // Scuffed, trampled ground round doors, crates, terminals and the tower.
+    const busy = boxes.filter((b) => ["ammo", "supply", "station", "generator", "tower", "stair", "car"].includes(b.tag ?? "") || b.style === "crate");
+    for (const b of busy) {
+      for (let k = 0; k < 3; k++) {
+        const a = r() * 6.28, d = Math.max(b.w, b.d) * 0.5 + 0.4 + r() * 1.4;
+        const x = b.x + Math.cos(a) * d, z = b.z + Math.sin(a) * d;
+        if (!yard(x, z)) continue;
+        groundDecal(B, r() < 0.55 ? "specks" : "baseDirt", x, z, 1.2 + r() * 1.6, 1.2 + r() * 1.6, r() * 6, 0xc8beac);
+      }
+    }
+    // Stones: small loose chunks across the whole yard (merged per clutter cell).
+    for (let i = 0; i < Math.round(30 * detail.debris); i++) {
+      const x = (r() * 2 - 1) * (R - 2), z = (r() * 2 - 1) * (R - 2);
+      debrisScatter(B, x, z, 2 + r() * 3, Math.round(5 + r() * 7), 1300 + i, clutterGroup(x, z), undefined, (px, pz) => free(px, pz, 0.15) && !nearSpawn(px, pz, 1.5));
+    }
+  }
+
   // Sand drifts against the inside wall faces.
   for (let i = 0; i < 16; i++) {
     const a = (r() * 2 - 1) * 28;
@@ -414,8 +489,10 @@ export const dustfall: Dressing = (kit) => {
     }
   };
   // Photoscans are 3-7k tris each: a few go a long way.
-  along(Math.round(6 * detail.debris), true, (x, z, rot) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4 }));
-  along(Math.round(4 * detail.debris), false, (x, z, rot) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4 }));
+  let bags = 0;
+  const bag = (x: number, z: number, rot: number) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4, tier: bags++ % 3 === 2 ? 2 : 0 });
+  along(6, true, bag);
+  along(4, false, bag);
   along(6, true, (x, z, rot) => props.place("old_tyre", { x, y: 0, z, rotY: rot, scale: 1 }));
   for (const [x, z] of [[16.2, -11.4], [22.6, -2.2], [-21.3, 14.6], [-26.1, 0.9], [9.4, -26.6]]) if (free(x, z, 0.5)) tyre(B, x, z, r() < 0.3, r);
   const clutterSpots: [number, number][] = [[-29.6, -28.4], [29.4, -28.8], [-12.6, 29.8], [21.6, -29.5], [-29.4, 16.5], [13.2, -29.8]];
@@ -470,9 +547,48 @@ export const dustfall: Dressing = (kit) => {
   chainlink(B, 34.5, 26, 34.5, 34.5, 2.0, () => 0, 34);
   chainlink(B, 34.5, 34.5, 26, 34.5, 2.0, () => 0, 35);
   // Road surface: broken asphalt along the old highway, a burnt car or two on it.
-  groundStrip(B, "asphalt", -220, ROAD_Z, 220, ROAD_Z, 7.5, height, 0xaaa69e, 41, "far", 0.06);
+  groundStrip(B, "asphalt", -220, ROAD_Z, 220, ROAD_Z, 7.5, height, 0xc8c4bc, 41, "far", 0.06);
+  {
+    // Patched, cracked, rutted tarmac with sand blown over both edges and
+    // faded paint (dashed centre line, broken edge lines).
+    const W = 7.5, g = "far";
+    for (let x = -205; x < 205; x += 5 + r() * 6) {
+      const z = ROAD_Z + (r() - 0.5) * 4;
+      const k = r();
+      if (k < 0.3) groundStrip(B, "asphalt", x, z, x + 1.5 + r() * 5, z, 1.2 + r() * 2.2, height, 0x9a968e, Math.floor(r() * 1e6), g, 0.07);
+      else if (k < 0.65) groundDecal(B, "cracks", x, z, 2.5 + r() * 2.5, 2.5 + r() * 2.5, r() * 6, 0xffffff, height, g, 0.08);
+      else if (k < 0.78) groundDecal(B, "oil", x, z, 1.4 + r() * 1.5, 1.4 + r() * 1.5, r() * 6, 0xffffff, height, g, 0.08);
+      else if (k < 0.86) groundDecal(B, "pocks", x, z, 1.5, 1.5, r() * 6, 0xffffff, height, g, 0.08);
+    }
+    for (let x = -205; x < 205; x += 5.5) {
+      for (const s of [-1, 1]) if (r() < 0.55) groundDecal(B, "tracks", x, ROAD_Z + s * (1.7 + r() * 0.3), 2.4, 5.8, Math.PI / 2 + (r() - 0.5) * 0.04, 0xffffff, height, g, 0.085);
+    }
+    for (let x = -212; x < 212; x += 3.5 + r() * 4.5) {
+      for (const s of [-1, 1]) {
+        if (r() < 0.2) continue;
+        const reach = 1 + r() * 2.2;
+        groundDecal(B, "sand", x, ROAD_Z + s * (W / 2 + 0.4 - reach / 2), reach + 1, 4 + r() * 6, Math.PI / 2 + (r() - 0.5) * 0.25, 0xb9ad94, height, g, 0.09);
+      }
+    }
+    paintLine(B, -212, ROAD_Z, 212, ROAD_Z, 0, 0.14, 3, 5, height, 61, 0xd8d4c6, g);
+    for (const s of [-1, 1]) paintLine(B, -212, ROAD_Z, 212, ROAD_Z, s * (W / 2 - 0.5), 0.12, 7, 0, height, 62 + s, 0xcfcab8, g);
+  }
   burntCar(B, -32, ROAD_Z + 1.2, 0.2, "sedan", 51, "far", height(-32, ROAD_Z + 1.2));
   burntCar(B, 46, ROAD_Z - 1.5, Math.PI + 0.3, "pickup", 52, "far", height(46, ROAD_Z - 1.5));
+  // Overhead destination gantry, a traffic island with keep-right sign,
+  // roundabout and warning signs, a chevron board and painted lane arrows.
+  // (Invented place names only.)
+  signGantry(B, -62, ROAD_Z, 9.6, height, 1, "far");
+  postSign(B, "warning", -36, ROAD_Z + 5.4, Math.PI / 2, height(-36, ROAD_Z + 5.4), 1.0, 0, "far");
+  postSign(B, "roundabout", -104, ROAD_Z + 5.4, Math.PI / 2, height(-104, ROAD_Z + 5.4), 0.85, 0.04, "far");
+  B.box("concrete", -92, height(-92, ROAD_Z) + 0.12, ROAD_Z, 7, 0.26, 1.3, 0xb8b4aa, { group: "far" });
+  for (const dx of [-3.3, 3.3]) B.box("concrete", -92 + dx, height(-92 + dx, ROAD_Z) + 0.12, ROAD_Z, 0.5, 0.26, 1.0, 0xc8c4ba, { group: "far" });
+  postSign(B, "arrow", -88.9, ROAD_Z, Math.PI / 2, height(-88.9, ROAD_Z) + 0.25, 0.7, 0, "far");
+  postSign(B, "chevron", 118, ROAD_Z - 5.4, -Math.PI / 2, height(118, ROAD_Z - 5.4), 0.8, 0, "far");
+  roadArrow(B, -76, ROAD_Z + 1.9, -Math.PI / 2, height);
+  roadArrow(B, -48, ROAD_Z + 1.9, -Math.PI / 2, height);
+  roadArrow(B, -106, ROAD_Z - 1.9, Math.PI / 2, height, -1);
+  roadArrow(B, -20, ROAD_Z - 1.9, Math.PI / 2, height);
 
   // ---- The town beyond the berm -------------------------------------------------------
   const roadKeep = { x0: -400, x1: 400, z0: ROAD_Z - 6, z1: ROAD_Z + 6 };
@@ -496,7 +612,7 @@ export const dustfall: Dressing = (kit) => {
     const w = 10 + r() * 14, dd = 10 + r() * 14;
     let gy = Infinity;
     for (const [sx, sz] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) gy = Math.min(gy, height(x + sx * w, z + sz * dd));
-    B.box("plaster", x, gy + (5 + r() * 16) / 2, z, w, 5 + r() * 16, dd, new THREE.Color(PLASTER_TINTS[i % PLASTER_TINTS.length]).multiplyScalar(0.85), { group: "far" });
+    silhouette(B, x, z, w, dd, 6 + r() * 16, gy, 5000 + i);
   }
   // Two water towers and a tall chimney as landmarks.
   for (const [x, z, h] of [[-128, 96, 24], [150, -64, 21]] as const) {
@@ -536,13 +652,14 @@ export const dustfall: Dressing = (kit) => {
   for (const b of boxes) if (b.style === "rock") for (let k = 0; k < 2; k++) tryBush(b.x + (r() - 0.5) * (b.w + 3), b.z + (r() - 0.5) * (b.d + 3), 0.6 + r() * 0.5, 0.3);
 
   // glTF plants (instanced) as extra ground clutter, density-scaled.
-  const plantBudget = quality.foliageDensity;
+  // Placed for high; tiers thin them out on medium (about 60%) and low (30%).
   const place = (id: "shrub_03" | "fern_02" | "weed_plant_02", n: number, ring: () => [number, number], scale: () => number) => {
     let placed = 0, guard = 0;
-    while (placed < Math.round(n * plantBudget) && guard++ < n * 20) {
+    while (placed < n && guard++ < n * 20) {
       const [x, z] = ring();
       if (!clearOf(boxes, x, z, 0.4) || nearSpawn(x, z, 3) || track(x, z) > 0.4) continue;
-      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 5) });
+      const k = placed % 10;
+      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 2), tier: k < 3 ? 0 : k < 5 ? 1 : 2 });
       placed++;
     }
   };
@@ -559,6 +676,30 @@ export const dustfall: Dressing = (kit) => {
   const palmList: PalmPlacement[] = [...t.palms];
   for (const p of tagged("tree")) palmList.push({ x: p.x, y: 0, z: p.z, height: 8 + r() * 3, rot: r() * 6, lean: (r() - 0.5) * 0.2 });
   extras.push(palms(palmList, kit.materials, kit.windTime));
+
+  // ---- Patrol truck, fuel, gas, fighting positions, camo nets -------------------------
+  for (const m of tagged("mrap")) patrolTruck(B, m.x, m.z, m.d > m.w ? -Math.PI / 2 : 0);
+  for (const f of tagged("fuel")) {
+    groundDecal(B, "oil", f.x - 0.9, f.z + 0.4, 1.6, 2.4, 0.2, 0xffffff);
+    cable(B, new THREE.Vector3(f.x - 0.5, 0.35, f.z + 1.5), new THREE.Vector3(26.4, 0.4, 25.2), 0.25);
+    gasBottles(B, f.x - 0.2, f.z - 2.6, Math.PI / 2, 4, 23);
+  }
+  gasBottles(B, -7.3, -6.75, 0, 5, 17);
+  for (const t of tagged("trench")) {
+    // Dug, trampled earth round the bags and a spoil line behind.
+    groundDecal(B, "baseDirt", t.x, t.z, t.w + 1.8, t.d + 1.8, 0, 0xb8a888);
+    groundDecal(B, "specks", t.x, t.z - Math.sign(t.z) * 1.1, t.w + 0.6, 1.2, 0, 0xc0b49a);
+  }
+  const nets: NetSpec[] = [
+    { corners: [[-28.6, -28.6], [-22.8, -28.6], [-22.8, -23.6], [-28.6, -23.6]], height: 2.9, drape: 0.7 },
+    { corners: [[4.0, -42.6], [8.4, -42.6], [8.4, -35.4], [4.0, -35.4]], height: 3.9, drape: 0.9 },
+  ];
+  for (const n of nets) for (const [x, z] of n.corners) rod(B, new THREE.Vector3(x, -0.1, z), new THREE.Vector3(x + (r() - 0.5) * 0.1, n.height + 0.05, z + (r() - 0.5) * 0.1), 0.05, 0x6e5a40, "decor", "wood");
+  pallets(B, -26.6, -26.4, 0.3, 2, r);
+  pallets(B, -24.6, -25.2, -0.2, 1, r);
+  extras.push(camoNets(nets, kit.windTime, height));
+  // A distant helicopter on a slow loop round the town.
+  extras.push(helicopter(kit.windTime, new THREE.Vector2(0, 0), 190, 70));
 
   // ---- Distant smoke columns --------------------------------------------------------
   const smoke = [

@@ -158,6 +158,39 @@ export function ghillieMaterial() {
   return ghillie;
 }
 
+const lenses = new Map<string, THREE.MeshStandardMaterial>();
+
+/**
+ * Eyewear glass: tinted and see-through face-on, turning into a mirror at
+ * grazing angles (Schlick fresnel drives both opacity and reflection).
+ * "clear" is a light smoke that shows the eyes; "dark" is mirrored shades.
+ */
+export function lensMaterial(kind: "clear" | "dark") {
+  let m = lenses.get(kind);
+  if (m) return m;
+  const dark = kind === "dark";
+  m = new THREE.MeshStandardMaterial({
+    color: dark ? 0x101214 : 0x4a4d50,
+    roughness: 0.04,
+    metalness: dark ? 0.6 : 0.1,
+    transparent: true,
+    opacity: dark ? 0.86 : 0.3,
+    depthWrite: false,
+  });
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      /* glsl */ `
+      float lensF = pow( 1.0 - clamp( dot( normalize( normal ), normalize( vViewPosition ) ), 0.0, 1.0 ), 4.0 );
+      diffuseColor.a = mix( diffuseColor.a, 0.96, lensF );
+      #include <opaque_fragment>`,
+    );
+  };
+  m.customProgramCacheKey = () => "iron-horizon-lens";
+  lenses.set(kind, m);
+  return m;
+}
+
 export function eliteMaterial() {
   if (elite) return elite;
   elite = new THREE.MeshStandardMaterial({ color: 0xd8261c, roughness: 0.6, metalness: 0, emissive: 0xff2a1c, emissiveIntensity: 0.9 });
@@ -174,6 +207,8 @@ export function hitboxMaterial() {
 export function disposeMaterials() {
   ubers.forEach((m) => m.dispose());
   ubers.clear();
+  lenses.forEach((m) => m.dispose());
+  lenses.clear();
   ghillie?.dispose();
   elite?.dispose();
   hitbox?.dispose();

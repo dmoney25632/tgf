@@ -183,6 +183,15 @@ function bake(root: THREE.Object3D): ModelVariant | null {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    // Transmission makes three.js re-render every opaque object into an extra
+    // target each frame (doubling draw calls). Cheap alpha glass instead.
+    const phys = mesh.material as THREE.MeshPhysicalMaterial;
+    if (phys.isMeshPhysicalMaterial && phys.transmission > 0) {
+      phys.transmission = 0;
+      phys.transparent = true;
+      phys.opacity = 0.35;
+      phys.depthWrite = false;
+    }
     const g = mesh.geometry.clone();
     for (const name of Object.keys(g.attributes)) if (!KEEP.includes(name)) g.deleteAttribute(name);
     if (!g.attributes.normal) g.computeVertexNormals();

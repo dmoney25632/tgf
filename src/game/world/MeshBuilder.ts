@@ -21,7 +21,7 @@ export type AddOptions = {
 };
 
 /** Materials that never get baked AO (overlays / alpha cards). */
-const NO_AO = new Set<WorldMat>(["decal", "chainlink", "frond", "cloth"]);
+const NO_AO = new Set<WorldMat>(["decal", "chainlink", "frond", "cloth", "glow", "signs"]);
 
 /**
  * Group naming: "solid" (raycast), "decor", "proxy:<surface>" (invisible

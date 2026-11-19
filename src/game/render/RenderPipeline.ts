@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GpuWarmup } from "./GpuWarmup";
 import { FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import { FXAAShader } from "three/addons/shaders/FXAAShader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
@@ -416,6 +417,9 @@ export class RenderPipeline {
   private clock = 0;
   /** Bumps whenever the drawing-buffer size changes (dynamic resolution). */
   resolutionVersion = 0;
+  private readonly warmup: GpuWarmup;
+  private readonly warmScenes: THREE.Scene[];
+  private readonly warmCameras: THREE.Camera[];
 
   constructor(
     container: HTMLElement,
@@ -443,6 +447,13 @@ export class RenderPipeline {
     canvas.style.cssText = "display:block;width:100%;height:100%;outline:none;";
     canvas.tabIndex = 0;
     container.appendChild(canvas);
+    // Spread texture uploads and shader compiles over the first frames.
+    this.warmup = new GpuWarmup(this.renderer);
+    this.warmup.watch(scene);
+    this.warmup.watch(viewScene);
+    this.warmup.wake(15000);
+    this.warmScenes = [scene, viewScene];
+    this.warmCameras = [camera, viewCamera];
 
     // Image-based lighting from the map's own sky (or a neutral room).
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -722,6 +733,7 @@ export class RenderPipeline {
 
   /** @param dt wall-clock seconds since the previous frame (drives dynamic resolution). */
   render(dt = 1 / 60) {
+    this.warmup.update(this.warmScenes, this.warmCameras);
     const r = this.renderer;
     r.info.reset();
     this.timer.begin();
@@ -849,6 +861,7 @@ export class RenderPipeline {
   }
 
   dispose() {
+    this.warmup.dispose();
     this.disposed = true;
     this.disposePost();
     this.quad.dispose();
