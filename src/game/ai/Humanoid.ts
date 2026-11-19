@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { damp, Spring } from "../core/Spring";
 import type { HitPart, Hittable } from "../core/types";
-import { buildBody, type BodyBuild, type LookDef } from "./humanoid/body";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { buildBody, STD_LOOKS, withQuality, type BodyBuild, type FaceSpec, type HitDims, type LookDef } from "./humanoid/body";
+import { disposeHeads, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
 import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
@@ -9,13 +11,49 @@ import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig
 export type HumanoidLook = LookDef;
 
 // ---------------------------------------------------------------------------
-// Shared caches: one body build per (kit, palette, variant), one gun per kit
-// palette, one box per hitbox size. Materials are global singletons.
+// Rendering: every soldier is a few SkinnedMeshes over one rigid skeleton
+// (the 15 body bones + the rifle). Vertices are stored in their bone's local
+// space with a single weight, and the bind matrices are identity, so a
+// skinned vertex lands exactly where the old per-bone mesh put it, but the
+// whole soldier (uniform, kit, skin, rifle) is one draw call. Geometry is
+// built once per (kit, palette, variant) and LOD, and shared.
+//
+//   LOD 0 (< 16 m): full body + scanned face (+ ghillie)      2-3 draws
+//   LOD 1 (< 40 m): body without small parts, sculpted head    1-2 draws
+//   LOD 2 (40 m+):  coarse body, single material               1 draw
 // ---------------------------------------------------------------------------
-const bodyCache = new Map<string, BodyBuild>();
+const GUN_BONE = BONES.length;
+const HEAD_BONE = BONES.indexOf("head");
+const LOD_MID = 16;
+const LOD_FAR = 40;
+
+type SoldierGeo = {
+  near: THREE.BufferGeometry;
+  mid: THREE.BufferGeometry;
+  far: THREE.BufferGeometry;
+  ghillie: THREE.BufferGeometry | null;
+  elite: THREE.BufferGeometry;
+  hit: BodyBuild["hit"];
+  w: number;
+  face: FaceSpec | null;
+  /** Death-settle contacts: bbox face centres of each bone's geometry. */
+  boxes: [BoneName, THREE.Box3][];
+  tris: [number, number, number];
+};
+
+const geoCache = new Map<string, SoldierGeo>();
 const gunCache = new Map<string, GunSpec>();
 const boxCache = new Map<string, THREE.BoxGeometry>();
+const IDENTITY = new THREE.Matrix4();
+const IDENTITIES = Array.from({ length: BONES.length + 1 }, () => IDENTITY);
+/** Generous cull sphere (mesh space): covers any pose, falls and the dropped rifle. */
+const CULL = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 2.3);
 let variantCounter = 0;
+let toneCounter = 0;
+
+/** Realistic skin tones (sRGB), light to deep. */
+const TONES = [0xecc4a6, 0xdcaa88, 0xc99470, 0xb27c58, 0x96633f, 0x75472b, 0x56341f];
+const IRIS = [0x3a2414, 0x2a1a0e, 0x2e3a40, 0x3a3a22, 0x4a2e18];
 
 function hitBox(size: readonly number[]) {
   const k = size.join("|");
@@ -24,23 +62,109 @@ function hitBox(size: readonly number[]) {
   return g;
 }
 
-export function disposeHumanoidCache() {
-  bodyCache.forEach((b) => {
+/** Bakes per-bone geometries into one rigidly skinned geometry. */
+function skinMerge(parts: [number, THREE.BufferGeometry | null | undefined][]) {
+  const list: THREE.BufferGeometry[] = [];
+  for (const [bone, g] of parts) {
+    if (!g) continue;
+    const c = g.clone();
+    const n = c.getAttribute("position").count;
+    const si = new Uint16Array(n * 4);
+    const sw = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      si[i * 4] = bone;
+      sw[i * 4] = 1;
+    }
+    c.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(si, 4));
+    c.setAttribute("skinWeight", new THREE.Float32BufferAttribute(sw, 4));
+    list.push(c);
+  }
+  const out = mergeGeometries(list, false)!;
+  for (const g of list) g.dispose();
+  return out;
+}
+
+const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute("position").count) / 3;
+
+function gunFor(kit: LookDef["kit"], accent: number, vest: number, lod: number) {
+  const k = `${kit}|${accent}|${vest}|${lod}`;
+  let s = gunCache.get(k);
+  if (!s) gunCache.set(k, (s = withQuality(lod, () => buildGun(kit, accent, vest))));
+  return s;
+}
+
+function soldierGeo(look: LookDef, variant: number): SoldierGeo {
+  const key = `${look.kit}|${look.uniform}|${look.vest}|${look.helmet}|${look.accent}|${look.camo ?? ""}|${variant}`;
+  const hit = geoCache.get(key);
+  if (hit) return hit;
+  const parts = (b: BodyBuild, gun: GunSpec): [number, THREE.BufferGeometry | undefined][] => [...BONES.map((n, i) => [i, b.bones[n]] as [number, THREE.BufferGeometry | undefined]), [GUN_BONE, gun.geo]];
+  const b0 = buildBody(look, variant, 0);
+  const b1 = buildBody(look, variant, 1);
+  const b2 = buildBody(look, variant, 2);
+  const near = skinMerge(parts(b0, gunFor(look.kit, look.accent, look.vest, 0)));
+  const mid = skinMerge(parts(b1, gunFor(look.kit, look.accent, look.vest, 1)));
+  const far = skinMerge(parts(b2, gunFor(look.kit, look.accent, look.vest, 2)));
+  const gh = BONES.filter((n) => b0.ghillie[n]).map((n) => [BONES.indexOf(n), b0.ghillie[n]] as [number, THREE.BufferGeometry]);
+  const ghillie = gh.length ? skinMerge(gh) : null;
+  const elite = skinMerge([[BONES.indexOf("uArmR"), b0.elite.armR], [BONES.indexOf("uArmL"), b0.elite.armL], [HEAD_BONE, b0.elite.head]]);
+  const boxes: [BoneName, THREE.Box3][] = [];
+  for (const n of BONES) {
+    const g = b0.bones[n];
+    if (g?.boundingBox) boxes.push([n, g.boundingBox.clone()]);
+  }
+  for (const b of [b0, b1, b2]) {
     Object.values(b.bones).forEach((g) => g?.dispose());
     Object.values(b.ghillie).forEach((g) => g?.dispose());
     b.elite.armL.dispose();
     b.elite.armR.dispose();
     b.elite.head.dispose();
+  }
+  const out: SoldierGeo = { near, mid, far, ghillie, elite, hit: b0.hit, w: b0.w, face: b0.face, boxes, tris: [triCount(near), triCount(mid), triCount(far)] };
+  geoCache.set(key, out);
+  return out;
+}
+
+/** Shared scan geometry, given rigid skin attributes on the head bone once. */
+function skinnedHead(g: THREE.BufferGeometry) {
+  if (!g.getAttribute("skinIndex")) {
+    const n = g.getAttribute("position").count;
+    const si = new Uint16Array(n * 4);
+    const sw = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      si[i * 4] = HEAD_BONE;
+      sw[i * 4] = 1;
+    }
+    g.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(si, 4));
+    g.setAttribute("skinWeight", new THREE.Float32BufferAttribute(sw, 4));
+  }
+  return g;
+}
+
+export function disposeHumanoidCache() {
+  geoCache.forEach((s) => {
+    s.near.dispose();
+    s.mid.dispose();
+    s.far.dispose();
+    s.ghillie?.dispose();
+    s.elite.dispose();
   });
   gunCache.forEach((g) => g.geo.dispose());
   boxCache.forEach((g) => g.dispose());
-  bodyCache.clear();
+  geoCache.clear();
   gunCache.clear();
   boxCache.clear();
   disposeMaterials();
+  disposeHeads();
 }
 
-const SHADOW: Partial<Record<BoneName, boolean>> = { pelvis: true, spine: true, head: true, uArmR: true, uArmL: true, thighR: true, thighL: true, shinR: true, shinL: true };
+/** Debug / perf stats: cached geometry sets and triangles per LOD. */
+export function humanoidStats() {
+  return [...geoCache.entries()].map(([k, s]) => ({ key: k, tris: s.tris, face: !!s.face }));
+}
+
+// Start fetching the scanned head as soon as the module loads in a browser.
+if (typeof window !== "undefined") onHeadReady(() => {});
+
 const PART: Record<BoneName, HitPart> = {
   pelvis: "body", spine: "body", head: "head", uArmR: "body", uArmL: "body", fArmR: "body", fArmL: "body", handR: "body", handL: "body",
   thighR: "legs", thighL: "legs", shinR: "legs", shinL: "legs", footR: "legs", footL: "legs",
@@ -105,17 +229,21 @@ export class Humanoid {
   readonly root = new THREE.Group();
   readonly hitboxes: THREE.Mesh[] = [];
   readonly muzzle = new THREE.Object3D();
-  readonly gun = new THREE.Group();
+  /** Rifle bone (skinned into the body mesh). */
+  readonly gun: THREE.Object3D = new THREE.Bone();
   readonly scale: number;
+  /** Distance-switched mesh sets (see the LOD table above). */
+  readonly lod = new THREE.LOD();
 
-  private readonly b = {} as Record<BoneName, THREE.Group>;
+  private readonly b = {} as Record<BoneName, THREE.Bone>;
+  private readonly skeleton: THREE.Skeleton;
+  private readonly eliteMesh: THREE.SkinnedMesh;
   private readonly spec: GunSpec;
   private readonly heavyKit: boolean;
   private readonly hipFire: boolean;
   private readonly w: number;
   private readonly shoulderR: THREE.Vector3;
   private readonly shoulderL: THREE.Vector3;
-  private readonly eliteMarks: THREE.Mesh[] = [];
   /** Death-settle contact points: hand-placed ones plus each bone mesh's bbox face centres. */
   private readonly contacts: { bone: THREE.Object3D; p: THREE.Vector3 }[] = [];
 
@@ -173,20 +301,24 @@ export class Humanoid {
     const kit = look.kit;
     this.heavyKit = kit === "heavy" || kit === "warden";
     this.hipFire = kit === "warden";
-    const variant = kit === "standard" ? (look.variant ?? variantCounter++) % 3 : 0;
-    const key = `${kit}|${look.uniform}|${look.vest}|${look.helmet}|${look.skin}|${look.accent}|${look.camo ?? ""}|${variant}`;
-    let body = bodyCache.get(key);
-    if (!body) bodyCache.set(key, (body = buildBody(look, variant)));
-    const gkey = `${kit}|${look.accent}|${look.vest}`;
-    let spec = gunCache.get(gkey);
-    if (!spec) gunCache.set(gkey, (spec = buildGun(kit, look.accent, look.vest)));
-    this.spec = spec;
-    this.w = body.w;
+    const variant = kit === "standard" ? (look.variant ?? variantCounter++) % STD_LOOKS.length : 0;
+    const geo = soldierGeo(look, variant);
+    this.spec = gunFor(kit, look.accent, look.vest, 0);
+    this.w = geo.w;
+
+    // Per-soldier face: skin tone, facial hair, eye colour. An explicit
+    // variant (menu previews) keeps the palette's skin colour.
+    const t = toneCounter++;
+    const tone = look.variant !== undefined ? look.skin : TONES[(t * 3 + 1) % TONES.length];
+    const face = geo.face;
+    let beard = face?.beard ?? 1;
+    if (face && look.variant === undefined && beard === 1) beard = [1, 0, 2, 1, 1][t % 5];
 
     // ---- Skeleton -----------------------------------------------------------
-    for (const n of BONES) this.b[n] = new THREE.Group();
+    for (const n of BONES) this.b[n] = new THREE.Bone();
     const b = this.b;
     this.root.rotation.order = "YXZ"; // yaw (manager) first, then fall pitch / roll in the body frame
+    this.root.add(this.lod); // first child: LOD levels are chosen before the bones' subtree is drawn
     this.root.add(b.pelvis);
     b.pelvis.add(b.spine, b.thighR, b.thighL);
     const hx = RIG.hipX * (this.heavyKit ? this.w * 0.95 : 1);
@@ -212,38 +344,57 @@ export class Humanoid {
     b.fArmR.add(b.handR);
     b.fArmL.add(b.handL);
     b.handR.position.y = b.handL.position.y = -RIG.foreArm;
+    this.muzzle.position.copy(this.spec.muzzle);
+    this.gun.add(this.muzzle);
+    this.skeleton = new THREE.Skeleton([...BONES.map((n) => b[n]), this.gun as THREE.Bone], IDENTITIES);
 
-    // ---- Visible meshes (one per bone) -----------------------------------------
-    const uber = uberMaterial();
-    for (const n of BONES) {
-      const g = body.bones[n];
-      if (!g) continue;
-      const m = new THREE.Mesh(g, uber);
-      m.castShadow = !!SHADOW[n];
+    // ---- Skinned meshes + LOD ------------------------------------------------
+    const uber = uberMaterial(tone);
+    const skinned = (g: THREE.BufferGeometry, mat: THREE.Material, shadow: boolean) => {
+      const m = new THREE.SkinnedMesh(g, mat);
+      m.bind(this.skeleton, IDENTITY);
+      m.boundingSphere = CULL;
+      m.castShadow = shadow;
       m.receiveShadow = true;
-      b[n].add(m);
-      const bb = g.boundingBox!;
+      return m;
+    };
+    const near = new THREE.Group();
+    const mid = new THREE.Group();
+    // Until the scan has loaded, the near level shows the sculpted head.
+    const nearBody = skinned(face ? geo.mid : geo.near, uber, true);
+    near.add(nearBody);
+    mid.add(skinned(geo.mid, uber, true));
+    if (geo.ghillie) {
+      const gm = ghillieMaterial();
+      near.add(skinned(geo.ghillie, gm, false));
+      mid.add(skinned(geo.ghillie, gm, false));
+    }
+    this.lod.addLevel(near, 0, 0.08);
+    this.lod.addLevel(mid, LOD_MID, 0.08);
+    this.lod.addLevel(skinned(geo.far, uber, true), LOD_FAR, 0.08);
+    if (face) {
+      const fl: FaceLook = { tone, beard, hair: face.hair, cover: face.cover, iris: IRIS[t % IRIS.length], brim: face.brim };
+      onHeadReady((hg) => {
+        nearBody.geometry = geo.near;
+        near.add(skinned(skinnedHead(hg), faceMaterial(fl), true));
+      });
+    }
+    this.eliteMesh = skinned(geo.elite, eliteMaterial(), false);
+    this.root.add(this.eliteMesh);
+
+    // Death-settle contacts: each bone geometry's bbox face centres + hand-placed points.
+    for (const [n, bb] of geo.boxes) {
       const c = bb.getCenter(new THREE.Vector3());
-      for (const [ax, v] of [["x", bb.min.x], ["x", bb.max.x], ["y", bb.min.y], ["y", bb.max.y], ["z", bb.min.z], ["z", bb.max.z]] as const) {
-        this.contacts.push({ bone: b[n], p: c.clone().setComponent(ax === "x" ? 0 : ax === "y" ? 1 : 2, v) });
+      for (const [ax, v] of [[0, bb.min.x], [0, bb.max.x], [1, bb.min.y], [1, bb.max.y], [2, bb.min.z], [2, bb.max.z]] as const) {
+        this.contacts.push({ bone: b[n], p: c.clone().setComponent(ax, v) });
       }
     }
     for (const [bone, x, y, z] of CONTACTS) this.contacts.push({ bone: b[bone], p: new THREE.Vector3(x, y, z) });
-    const gh = ghillieMaterial();
-    for (const n of BONES) {
-      const g = body.ghillie[n];
-      if (g) b[n].add(new THREE.Mesh(g, gh));
-    }
-    const gunMesh = new THREE.Mesh(spec.geo, uber);
-    gunMesh.castShadow = true;
-    this.gun.add(gunMesh);
-    this.muzzle.position.copy(spec.muzzle);
-    this.gun.add(this.muzzle);
 
     // ---- Hit proxies (invisible, raycast only) ------------------------------
     const hm = hitboxMaterial();
     const armor = this.heavyKit;
-    const proxy = (bone: BoneName, dims: { size: [number, number, number]; at: [number, number, number] }, mirror = false) => {
+    const proxy = (bone: BoneName, dims: HitDims, mirror = false) => {
       const m = new THREE.Mesh(hitBox(dims.size), hm);
       m.position.set(mirror ? -dims.at[0] : dims.at[0], dims.at[1], dims.at[2]);
       m.visible = false;
@@ -252,7 +403,7 @@ export class Humanoid {
       b[bone].add(m);
       this.hitboxes.push(m);
     };
-    const H = body.hit;
+    const H = geo.hit;
     proxy("head", H.head);
     proxy("spine", H.spine);
     proxy("pelvis", H.pelvis);
@@ -269,23 +420,16 @@ export class Humanoid {
     proxy("footR", H.foot);
     proxy("footL", H.foot, true);
 
-    // ---- Elite markings (hidden unless this soldier spawns as an elite) -------
-    const em = eliteMaterial();
-    for (const [bone, g] of [["uArmR", body.elite.armR], ["uArmL", body.elite.armL], ["head", body.elite.head]] as const) {
-      const m = new THREE.Mesh(g, em);
-      b[bone].add(m);
-      this.eliteMarks.push(m);
-    }
     this.setElite(false);
-
     this.root.scale.setScalar(look.scale);
     this.update(0, 0, false, 0, false);
   }
 
   /** Toggle the red elite markings (pooled models are reused for both). */
   setElite(on: boolean) {
-    for (const m of this.eliteMarks) m.visible = on;
+    this.eliteMesh.visible = on;
   }
+
 
   /** Visual hit reaction: torso jolt away from the shot, head snap on headshots. */
   flinch(head: boolean, strength: number, fromBehind: boolean) {
