@@ -43,7 +43,7 @@ export class AgentManager {
   /** Running squad revive progress for the player (0..1 handled by PlayerState). */
   playerTargets: Combatant[] = [];
   /** Extra hostiles the squad can shoot at (e.g. attack helicopters). */
-  readonly extraHostiles: Combatant[] = [];
+  extraHostiles: Combatant[] = [];
 
   private readonly laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
   private readonly laserMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 0.3, 0.2), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
