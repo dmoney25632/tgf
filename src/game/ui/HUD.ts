@@ -1,4 +1,5 @@
 import type { WeaponStats } from "../weapons/WeaponSystem";
+import { actionGlyph, glyphContext } from "./Glyphs";
 
 export type HitKind = "body" | "head" | "kill" | "headkill";
 
@@ -14,7 +15,8 @@ export type HudFrame = {
   weaponName: string;
   weaponKind: string;
   slot: number;
-  slotNames: string[];
+  /** Carried weapons (only `def.name` is read; diffed per index). */
+  slots: readonly { def: { name: string } }[];
   reload: number;
   health: number;
   maxHealth: number;
@@ -23,67 +25,152 @@ export type HudFrame = {
   grenades: number;
   /** 0..1 scope overlay (scoped weapon ADS). */
   scope: number;
+  /** Player yaw (rad): compass + damage indicators. */
+  yaw: number;
 };
 
 export type DebugInfo = Record<string, string | number>;
 
 const css = <T extends HTMLElement>(e: T, s: string): T => ((e.style.cssText = s), e);
-const div = (s = "", parent?: HTMLElement) => {
+const div = (s = "", parent?: HTMLElement, cls = "") => {
   const e = css(document.createElement("div"), s);
+  if (cls) e.className = cls;
   parent?.appendChild(e);
   return e;
 };
 
+export const HUD_FG = "#eef0ea";
+export const HUD_ACCENT = "#f0b44a";
+export const HUD_RED = "#ff4b3a";
+export const HUD_GOLD = "#ffc845";
+export const HUD_SANS = "var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif";
+export const HUD_MONO = "var(--font-geist-mono),ui-monospace,monospace";
+
+/** Shared HUD stylesheet (injected once per HUD root). */
+const STYLE = `
+.ih-hud{color:${HUD_FG};font-family:${HUD_SANS};text-shadow:0 1px 2px rgba(0,0,0,.55);-webkit-font-smoothing:antialiased}
+.ih-hud .ih-num{font-family:${HUD_MONO};font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.ih-hud .ih-cap{font-size:10px;font-weight:600;letter-spacing:.24em;text-transform:uppercase}
+.ih-hud .ih-panel{background:linear-gradient(90deg,rgba(8,10,8,0),rgba(8,10,8,.42) 30%,rgba(8,10,8,.42) 70%,rgba(8,10,8,0))}
+`;
+
+const PPD = 3.4; // compass pixels per degree
+const COMPASS_W = 340;
+
+function buildCompassSvg() {
+  // Strip from −180° to 540° so any heading has a full window either side.
+  const from = -180, to = 540;
+  const w = (to - from) * PPD;
+  let s = `<svg width="${w}" height="26" viewBox="0 0 ${w} 26" style="position:absolute;left:0;top:0" aria-hidden="true">`;
+  const names: Record<number, string> = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+  for (let d = from; d <= to; d += 5) {
+    const x = (d - from) * PPD;
+    const n = ((d % 360) + 360) % 360;
+    if (names[n] !== undefined) {
+      const card = n % 90 === 0;
+      s += `<text x="${x}" y="13" text-anchor="middle" font-size="${card ? 13 : 10}" font-weight="${card ? 700 : 600}" font-family="${HUD_SANS}" fill="${n === 0 ? HUD_ACCENT : HUD_FG}" opacity="${card ? 1 : 0.8}">${names[n]}</text>`;
+      s += `<rect x="${x - 0.75}" y="17" width="1.5" height="7" fill="${HUD_FG}"/>`;
+    } else if (n % 15 === 0) {
+      s += `<text x="${x}" y="12" text-anchor="middle" font-size="9" font-family="${HUD_MONO}" fill="${HUD_FG}" opacity=".55">${n}</text>`;
+      s += `<rect x="${x - 0.5}" y="18" width="1" height="5" fill="${HUD_FG}" opacity=".7"/>`;
+    } else {
+      s += `<rect x="${x - 0.5}" y="20" width="1" height="3" fill="${HUD_FG}" opacity=".4"/>`;
+    }
+  }
+  return s + "</svg>";
+}
+
+const GRENADE_SVG =
+  '<svg width="12" height="15" viewBox="0 0 12 15" style="vertical-align:-2px" aria-hidden="true"><ellipse cx="6" cy="9" rx="5" ry="5.6" fill="currentColor"/><rect x="4" y="1.6" width="4" height="2.6" rx=".6" fill="currentColor"/><path d="M8 2.4q3 .2 3 3.6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M2.6 9h6.8" stroke="rgba(0,0,0,.45)" stroke-width="1"/></svg>';
+
 /**
  * In-game HUD in plain DOM (cheaper than React at 60+ fps). Every setter
- * diff-checks before touching the DOM, so idle frames do no layout work.
+ * diff-checks primitives before touching the DOM, so idle frames do no style
+ * or layout work and allocate nothing; transient effects (feed, popups) use
+ * the Web Animations API so nothing is ever read back from the DOM.
  */
 export class HUD {
   readonly root: HTMLDivElement;
   private readonly hairs: HTMLDivElement[] = [];
   private readonly crosshair: HTMLDivElement;
   private readonly hitmarker: HTMLDivElement;
+  private readonly hitKill: HTMLDivElement;
   private readonly ammo: HTMLDivElement;
   private readonly reserve: HTMLDivElement;
-  private readonly pips: HTMLDivElement;
+  private readonly magFill: HTMLDivElement;
   private readonly weaponName: HTMLDivElement;
   private readonly slots: HTMLDivElement;
   private readonly status: HTMLDivElement;
   private readonly reloadBar: HTMLDivElement;
   private readonly reloadFill: HTMLDivElement;
+  private readonly healthWrap: HTMLDivElement;
   private readonly healthFill: HTMLDivElement;
+  private readonly healthChip: HTMLDivElement;
   private readonly healthText: HTMLDivElement;
+  private readonly armorFill: HTMLDivElement;
   private readonly feed: HTMLDivElement;
   private readonly medal: HTMLDivElement;
   private readonly scoreboard: HTMLDivElement;
   private readonly debug: HTMLPreElement;
   private readonly fps: HTMLDivElement;
-  private readonly armorFill: HTMLDivElement;
   private readonly grenadeEl: HTMLDivElement;
   private readonly scopeEl: HTMLDivElement;
   private readonly hurtEl: HTMLDivElement;
   private readonly lowHpEl: HTMLDivElement;
   private readonly vignetteEl: HTMLDivElement;
-  private readonly indicators: { el: HTMLDivElement; t: number; angle: number }[] = [];
-  private hurtLevel = 0;
+  private readonly compassStrip: HTMLDivElement;
+  private readonly compassDeg: HTMLDivElement;
+  private readonly indicators: { el: HTMLDivElement; t: number; bearing: number; shown: number }[] = [];
+  private readonly feedItems: { el: HTMLDivElement; t: number; fading: boolean }[] = [];
   /** Scoreboard title (mode name). */
   modeLabel = "FIRING RANGE";
-  private hitTimer = 0;
-  private crossFlash = 0;
-  private medalTimer = 0;
-  private readonly last: Record<string, unknown> = {};
-  private readonly feedItems: { el: HTMLDivElement; t: number }[] = [];
   debugVisible = false;
+  /** Haptics hook (wired by the engine). */
+  onHurt?: (amount: number) => void;
+
+  private hurtLevel = 0;
+  private hitTimer = 0;
+  private hitIsKill = false;
+  private crossFlash = 0;
+  private yaw = 0;
+
+  // Last-written values (primitives only: diffing allocates nothing).
+  private lPx = -1;
+  private lOpacity = -1;
+  private lFlash = false;
+  private lScoped = false;
+  private lAmmo = -1;
+  private lMag = -1;
+  private lReserve = -1;
+  private lWeapon = "";
+  private lSlot = -1;
+  private readonly lSlotNames: string[] = [];
+  private lStatus = "";
+  private lGlyphVer = -1;
+  private lReload = -2;
+  private lHp = -1;
+  private lMaxHp = -1;
+  private lArmor = -1;
+  private lLowHp = -1;
+  private lHurt = -1;
+  private lGrenades = -2;
+  private lHeadingQ = -99999;
+  private lHeadingDeg = -1;
+  private lBoardVisible = false;
+  private readonly lBoard = [-1, -1, -1, -1];
+  private lFps = -1;
+  private fpsVisible = true;
 
   constructor(container: HTMLElement) {
-    this.root = div(
-      "position:absolute;inset:0;pointer-events:none;user-select:none;color:#f2efe6;font-family:var(--font-geist-mono),ui-monospace,monospace;text-shadow:0 1px 2px rgba(0,0,0,.65);",
-      container,
-    );
-    // Vignette for the low preset (post-processed presets draw their own).
-    this.vignetteEl = div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.38) 100%);", this.root);
-    this.lowHpEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 35%,rgba(120,0,0,.55) 100%);", this.root);
-    this.hurtEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(200,20,10,.5) 100%);", this.root);
+    this.root = div("position:absolute;inset:0;pointer-events:none;user-select:none;overflow:hidden;", container, "ih-hud");
+    const style = document.createElement("style");
+    style.textContent = STYLE;
+    this.root.appendChild(style);
+
+    // Edge vignette for presets without post-processing (the grade pass draws its own) + damage edges.
+    this.vignetteEl = div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.32) 100%);", this.root);
+    this.lowHpEl = div("position:absolute;inset:0;opacity:0;transition:opacity 260ms ease-out;background:radial-gradient(ellipse 75% 70% at center,transparent 52%,rgba(110,6,4,.42) 82%,rgba(70,0,0,.72) 100%);", this.root);
+    this.hurtEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse 80% 75% at center,transparent 60%,rgba(190,24,12,.5) 100%);", this.root);
 
     // Scope: black surround, thin reticle, slight lens tint.
     this.scopeEl = div("position:absolute;inset:0;opacity:0;display:none;", this.root);
@@ -96,167 +183,233 @@ export class HUD {
       '<div style="position:absolute;left:calc(50% - 3px);top:calc(50% + 12vmin);width:7px;height:1px;background:#000"></div>';
 
     // ---- Crosshair ----------------------------------------------------------
-    this.crosshair = div("position:absolute;left:50%;top:50%;width:0;height:0;transition:opacity 80ms linear;", this.root);
+    this.crosshair = div(`position:absolute;left:50%;top:50%;width:0;height:0;color:${HUD_FG};transition:opacity 90ms linear;`, this.root);
     for (let i = 0; i < 4; i++) {
       const v = i < 2;
-      this.hairs.push(div(`position:absolute;background:currentColor;box-shadow:0 0 0 1px rgba(0,0,0,.45);${v ? "width:2px;height:10px;left:-1px;" : "width:10px;height:2px;top:-1px;"}`, this.crosshair));
+      this.hairs.push(div(`position:absolute;background:currentColor;box-shadow:0 0 0 1px rgba(0,0,0,.4);${v ? "width:2px;height:9px;left:-1px;" : "width:9px;height:2px;top:-1px;"}`, this.crosshair));
     }
-    div("position:absolute;width:2px;height:2px;left:-1px;top:-1px;background:currentColor;box-shadow:0 0 0 1px rgba(0,0,0,.45);", this.crosshair);
+    div("position:absolute;width:2px;height:2px;left:-1px;top:-1px;background:currentColor;box-shadow:0 0 0 1px rgba(0,0,0,.4);", this.crosshair);
 
-    this.hitmarker = div("position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;opacity:0;", this.root);
+    // Hit markers: regular (4 short strokes) and kill (longer, heavier, red).
+    this.hitmarker = div("position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;opacity:0;", this.root);
     this.hitmarker.innerHTML =
-      '<svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square" style="filter:drop-shadow(0 0 1px #000)"><path d="M3 3l7 7M25 3l-7 7M3 25l7-7M25 25l-7-7"/></svg>';
+      '<svg viewBox="0 0 30 30" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square" style="filter:drop-shadow(0 0 1px rgba(0,0,0,.9))"><path d="M5 5l6 6M25 5l-6 6M5 25l6-6M25 25l-6-6"/></svg>';
+    this.hitKill = div(`position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px;opacity:0;color:${HUD_RED};`, this.root);
+    this.hitKill.innerHTML =
+      '<svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" style="filter:drop-shadow(0 0 2px rgba(0,0,0,.9))"><path d="M5 5l9.5 9.5M35 5l-9.5 9.5M5 35l9.5-9.5M35 35l-9.5-9.5"/></svg>';
 
-    this.reloadBar = div("position:absolute;left:50%;top:calc(50% + 34px);width:64px;height:3px;margin-left:-32px;background:rgba(0,0,0,.45);opacity:0;", this.root);
-    this.reloadFill = div("height:100%;width:0;background:#f2efe6;", this.reloadBar);
+    this.reloadBar = div("position:absolute;left:50%;top:calc(50% + 32px);width:56px;height:2px;margin-left:-28px;background:rgba(0,0,0,.45);opacity:0;transition:opacity 120ms;", this.root);
+    this.reloadFill = div(`height:100%;width:100%;background:${HUD_FG};transform-origin:left;transform:scaleX(0);`, this.reloadBar);
 
-    this.medal = div("position:absolute;left:50%;top:calc(50% + 70px);transform:translateX(-50%);font-size:15px;font-weight:700;letter-spacing:.18em;opacity:0;transition:opacity 120ms;", this.root);
+    this.medal = div("position:absolute;left:50%;top:calc(50% + 58px);transform:translateX(-50%);text-align:center;white-space:nowrap;opacity:0;", this.root);
 
-    // ---- Bottom-left: health ----------------------------------------------
-    const hp = div("position:absolute;left:28px;bottom:26px;width:220px;", this.root);
-    this.healthText = div("font-size:13px;letter-spacing:.2em;margin-bottom:6px;", hp);
-    const bar = div("height:6px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.15);", hp);
-    this.healthFill = div("height:100%;width:100%;background:linear-gradient(90deg,#e8e2cc,#ffffff);transition:width 120ms;", bar);
-    const abar = div("height:4px;margin-top:3px;background:rgba(0,0,0,.35);", hp);
-    this.armorFill = div("height:100%;width:0;background:linear-gradient(90deg,#5aa0e8,#9ccaff);transition:width 120ms;", abar);
+    // ---- Top centre: compass -----------------------------------------------
+    const compass = div(
+      `position:absolute;left:50%;top:12px;width:min(${COMPASS_W}px,56vw);height:26px;transform:translateX(-50%);overflow:hidden;` +
+        "-webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);",
+      this.root,
+    );
+    this.compassStrip = div("position:absolute;left:50%;top:0;height:26px;will-change:transform;", compass);
+    this.compassStrip.innerHTML = buildCompassSvg();
+    const marker = div("position:absolute;left:50%;top:36px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;", this.root);
+    div(`width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid ${HUD_ACCENT};`, marker);
+    this.compassDeg = div("font-size:11px;font-weight:600;opacity:.85;", marker, "ih-num");
+
+    // ---- Bottom-left: health -------------------------------------------------
+    this.healthWrap = div("position:absolute;left:28px;bottom:28px;width:188px;transition:opacity 200ms;", this.root);
+    const hpRow = div("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px;", this.healthWrap);
+    div("opacity:.7;", hpRow, "ih-cap").textContent = "Health";
+    this.healthText = div("font-size:14px;font-weight:700;", hpRow, "ih-num");
+    const bar = div("position:relative;height:4px;background:rgba(0,0,0,.45);box-shadow:0 0 0 1px rgba(255,255,255,.08);overflow:hidden;", this.healthWrap);
+    this.healthChip = div("position:absolute;inset:0;background:#d8452f;transform-origin:left;transition:transform 420ms cubic-bezier(.3,0,.2,1) 280ms;", bar);
+    this.healthFill = div(`position:absolute;inset:0;background:${HUD_FG};transform-origin:left;transition:transform 90ms linear,background-color 200ms;`, bar);
+    const abar = div("height:2px;margin-top:3px;background:rgba(0,0,0,.35);overflow:hidden;", this.healthWrap);
+    this.armorFill = div("height:100%;width:100%;background:#78b4f0;transform-origin:left;transform:scaleX(0);transition:transform 160ms;", abar);
 
     // ---- Bottom-right: weapon ----------------------------------------------
-    const wb = div("position:absolute;right:28px;bottom:22px;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:2px;", this.root);
-    this.status = div("font-size:12px;letter-spacing:.24em;color:#f0b44a;height:16px;", wb);
-    this.slots = div("display:flex;gap:10px;font-size:11px;letter-spacing:.12em;margin-bottom:4px;", wb);
-    this.weaponName = div("font-size:13px;letter-spacing:.2em;text-transform:uppercase;opacity:.85;", wb);
-    const ammoRow = div("display:flex;align-items:baseline;gap:8px;", wb);
-    this.ammo = div("font-size:44px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;", ammoRow);
-    this.reserve = div("font-size:18px;opacity:.6;font-variant-numeric:tabular-nums;", ammoRow);
-    this.pips = div("display:flex;gap:2px;height:8px;margin-top:4px;", wb);
-    this.grenadeEl = div("font-size:12px;letter-spacing:.18em;margin-top:6px;opacity:.85;", wb);
+    const wb = div("position:absolute;right:30px;bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;", this.root);
+    this.status = div(`font-size:11px;font-weight:700;letter-spacing:.2em;color:${HUD_ACCENT};min-height:18px;display:flex;align-items:center;gap:6px;transition:opacity 150ms;`, wb);
+    this.slots = div("display:flex;gap:4px;margin-bottom:2px;", wb);
+    this.weaponName = div("opacity:.85;font-size:11px;", wb, "ih-cap");
+    const ammoRow = div("display:flex;align-items:flex-end;gap:9px;line-height:1;", wb);
+    this.ammo = div("font-size:46px;font-weight:700;transition:color 150ms;", ammoRow, "ih-num");
+    div("width:1.5px;height:30px;margin-bottom:6px;background:rgba(238,240,234,.35);transform:skewX(-14deg);", ammoRow);
+    this.reserve = div("font-size:19px;font-weight:600;opacity:.62;margin-bottom:5px;", ammoRow, "ih-num");
+    const mag = div("width:132px;height:3px;margin-top:4px;background:rgba(255,255,255,.14);overflow:hidden;", wb);
+    this.magFill = div(`height:100%;width:100%;background:${HUD_FG};transform-origin:right;transition:transform 70ms linear;`, mag);
+    this.grenadeEl = div("display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:700;opacity:.92;", wb);
 
     // ---- Top-right: killfeed -------------------------------------------------
-    this.feed = div("position:absolute;right:20px;top:44px;display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-size:13px;", this.root);
-    this.fps = div("position:absolute;right:12px;top:10px;font-size:11px;opacity:.55;", this.root);
+    this.feed = div("position:absolute;right:22px;top:58px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;", this.root);
+    this.fps = div("position:absolute;right:12px;top:10px;font-size:10px;opacity:.5;", this.root, "ih-num");
 
     // ---- Scoreboard (Tab) ---------------------------------------------------
     this.scoreboard = div(
-      "position:absolute;left:50%;top:18%;transform:translateX(-50%);min-width:420px;padding:18px 22px;background:rgba(12,13,11,.82);border:1px solid rgba(255,255,255,.12);border-radius:10px;display:none;text-shadow:none;font-size:13px;",
+      "position:absolute;left:50%;top:16%;transform:translateX(-50%);min-width:min(440px,92vw);padding:18px 22px;background:rgba(10,12,10,.86);border:1px solid rgba(255,255,255,.1);border-top:2px solid " +
+        HUD_ACCENT +
+        ";border-radius:6px;display:none;text-shadow:none;font-size:13px;backdrop-filter:blur(6px);",
       this.root,
     );
 
     // ---- Debug (F3) ---------------------------------------------------------
     this.debug = document.createElement("pre");
-    css(this.debug, "position:absolute;left:12px;top:12px;margin:0;padding:10px 12px;background:rgba(0,0,0,.6);font-size:11px;line-height:1.45;display:none;text-shadow:none;border-radius:6px;");
+    css(this.debug, `position:absolute;left:12px;top:12px;margin:0;padding:10px 12px;background:rgba(0,0,0,.6);font:11px/1.45 ${HUD_MONO};display:none;text-shadow:none;border-radius:6px;`);
     this.root.appendChild(this.debug);
   }
 
+  /** DOM vignette only when the post-process grade doesn't draw one. */
   setVignette(on: boolean) {
     this.vignetteEl.style.display = on ? "block" : "none";
   }
 
   frame(f: HudFrame, dt: number) {
-    // Crosshair gap = projected spread cone + a little extra on hit flash.
+    this.yaw = f.yaw;
+    const glyphVer = glyphContext.version;
+    const glyphsChanged = glyphVer !== this.lGlyphVer;
+    this.lGlyphVer = glyphVer;
+
+    // ---- Crosshair: gap = projected spread cone ---------------------------------
     const px = Math.round((Math.tan((f.spreadDeg * Math.PI) / 180) / Math.tan((f.fovDeg * Math.PI) / 360)) * (f.viewportH / 2)) + 5;
-    const op = Math.round(Math.max(0, 1 - f.crosshairHide * 1.8) * 100);
+    const opacity = Math.round(Math.max(0, 1 - f.crosshairHide * 1.8) * 50) / 50;
     this.crossFlash = Math.max(0, this.crossFlash - dt);
     const flash = this.crossFlash > 0;
-    // Numeric key: no string building on idle frames.
-    const key = px * 1000 + op * 2 + (flash ? 1 : 0);
     const scoped = f.scope > 0.9;
-    if (this.last.scoped !== scoped) {
-      this.last.scoped = scoped;
+    if (this.lScoped !== scoped) {
+      this.lScoped = scoped;
       this.scopeEl.style.display = scoped ? "block" : "none";
       this.scopeEl.style.opacity = scoped ? "1" : "0";
       this.crosshair.style.visibility = scoped ? "hidden" : "visible";
     }
-    if (this.last.cross !== key) {
-      this.last.cross = key;
-      this.crosshair.style.opacity = String(op / 100);
-      this.crosshair.style.color = flash ? "#ff5a4a" : "#f2efe6";
+    if (this.lOpacity !== opacity) {
+      this.lOpacity = opacity;
+      this.crosshair.style.opacity = String(opacity);
+    }
+    if (this.lFlash !== flash) {
+      this.lFlash = flash;
+      this.crosshair.style.color = flash ? HUD_RED : HUD_FG;
+    }
+    if (this.lPx !== px) {
+      this.lPx = px;
       const [u, d, l, r] = this.hairs;
-      u.style.top = `${-px - 10}px`;
+      u.style.top = `${-px - 9}px`;
       d.style.top = `${px}px`;
-      l.style.left = `${-px - 10}px`;
+      l.style.left = `${-px - 9}px`;
       r.style.left = `${px}px`;
     }
 
-    // Hitmarker pop: scale from 1.35 → 1 while fading.
+    // ---- Hit marker pop: scale from 1.4 → 1 while fading ---------------------
     if (this.hitTimer > 0) {
       this.hitTimer -= dt;
-      const t = Math.max(0, this.hitTimer) / 0.22;
-      this.hitmarker.style.opacity = String(Math.min(1, t * 1.6));
-      this.hitmarker.style.transform = `scale(${1 + t * 0.35})`;
+      const t = Math.max(0, this.hitTimer) / (this.hitIsKill ? 0.34 : 0.2);
+      const el = this.hitIsKill ? this.hitKill : this.hitmarker;
+      el.style.opacity = String(Math.min(1, t * 1.7));
+      el.style.transform = `scale(${1 + t * t * 0.4})`;
     }
 
-    if (this.medalTimer > 0) {
-      this.medalTimer -= dt;
-      if (this.medalTimer <= 0) this.medal.style.opacity = "0";
+    // ---- Compass --------------------------------------------------------------
+    let heading = (-f.yaw * 180) / Math.PI;
+    heading = ((heading % 360) + 360) % 360;
+    const hq = Math.round(heading * 5);
+    if (hq !== this.lHeadingQ) {
+      this.lHeadingQ = hq;
+      this.compassStrip.style.transform = `translate3d(${(-(hq / 5 + 180) * PPD).toFixed(1)}px,0,0)`;
+      const deg = Math.round(heading) % 360;
+      if (deg !== this.lHeadingDeg) {
+        this.lHeadingDeg = deg;
+        this.compassDeg.textContent = String(deg).padStart(3, "0");
+      }
     }
 
-    // Ammo.
-    if (this.last.ammo !== f.ammo || this.last.mag !== f.magSize) {
-      this.last.ammo = f.ammo;
-      this.last.mag = f.magSize;
+    // ---- Ammo -----------------------------------------------------------------
+    if (this.lAmmo !== f.ammo || this.lMag !== f.magSize) {
+      this.lAmmo = f.ammo;
+      this.lMag = f.magSize;
       this.ammo.textContent = String(f.ammo);
-      this.ammo.style.color = f.ammo <= Math.ceil(f.magSize * 0.25) ? "#ff6a4a" : "";
-      this.renderPips(f.ammo, f.magSize);
+      this.ammo.style.color = f.ammo === 0 ? HUD_RED : f.ammo <= Math.ceil(f.magSize * 0.25) ? "#ff8a5a" : "";
+      this.magFill.style.transform = `scaleX(${Math.max(0, Math.min(1, f.ammo / f.magSize)).toFixed(3)})`;
     }
-    if (this.last.reserve !== f.reserve) {
-      this.last.reserve = f.reserve;
-      this.reserve.textContent = `/ ${f.reserve}`;
+    if (this.lReserve !== f.reserve) {
+      this.lReserve = f.reserve;
+      this.reserve.textContent = String(f.reserve);
     }
-    if (this.last.weapon !== f.weaponName) {
-      this.last.weapon = f.weaponName;
-      this.weaponName.textContent = `${f.weaponName} · ${f.weaponKind}`;
+    if (this.lWeapon !== f.weaponName) {
+      this.lWeapon = f.weaponName;
+      this.weaponName.textContent = `${f.weaponName}  ·  ${f.weaponKind}`;
     }
-    if (this.last.slots !== f.slotNames || this.last.slot !== f.slot) {
-      this.last.slots = f.slotNames;
-      this.last.slot = f.slot;
-      this.slots.innerHTML = f.slotNames
-        .map((n, i) => `<span style="opacity:${i === f.slot ? 1 : 0.4};${i === f.slot ? "color:#f0b44a" : ""}">${i + 1} ${n}</span>`)
-        .join("");
+    this.updateSlots(f);
+
+    const status = f.reload >= 0 ? "reloading" : f.ammo === 0 ? (f.reserve ? "reload" : "empty") : f.ammo <= Math.ceil(f.magSize * 0.2) ? "low" : "";
+    if (this.lStatus !== status || (glyphsChanged && status === "reload")) {
+      this.lStatus = status;
+      this.status.innerHTML =
+        status === "reloading" ? "RELOADING" : status === "reload" ? `${actionGlyph("reload", glyphContext, 16)}<span>RELOAD</span>` : status === "empty" ? `<span style="color:${HUD_RED}">NO AMMO</span>` : status === "low" ? "LOW AMMO" : "";
+    }
+    const reloadQ = f.reload >= 0 ? Math.round(f.reload * 200) : -1;
+    if (this.lReload !== reloadQ) {
+      if ((this.lReload < 0) !== (reloadQ < 0)) this.reloadBar.style.opacity = reloadQ >= 0 ? "1" : "0";
+      this.lReload = reloadQ;
+      if (reloadQ >= 0) this.reloadFill.style.transform = `scaleX(${(reloadQ / 200).toFixed(3)})`;
     }
 
-    const status = f.reload >= 0 ? "RELOADING" : f.ammo === 0 ? (f.reserve ? "PRESS R TO RELOAD" : "NO AMMO") : f.ammo <= Math.ceil(f.magSize * 0.2) ? "LOW AMMO" : "";
-    if (this.last.status !== status) {
-      this.last.status = status;
-      this.status.textContent = status;
+    // ---- Health ---------------------------------------------------------------
+    const hp = Math.max(0, Math.round(f.health));
+    const armor = Math.round(f.armor);
+    if (this.lHp !== hp || this.lMaxHp !== f.maxHealth || this.lArmor !== armor) {
+      const frac = Math.max(0, Math.min(1, f.health / f.maxHealth));
+      const scale = `scaleX(${frac.toFixed(3)})`;
+      this.healthFill.style.transform = scale;
+      // The red "chip" trails damage, but snaps up with healing.
+      this.healthChip.style.transitionDuration = hp >= this.lHp ? "0ms" : "420ms";
+      this.healthChip.style.transform = scale;
+      this.healthFill.style.backgroundColor = frac < 0.35 ? "#ff6a4a" : HUD_FG;
+      this.armorFill.style.transform = `scaleX(${Math.min(1, f.armor / 150).toFixed(3)})`;
+      this.healthText.textContent = armor > 0 ? `${hp} · ${armor}` : String(hp);
+      this.lHp = hp;
+      this.lMaxHp = f.maxHealth;
+      this.lArmor = armor;
+      const low = frac < 0.45 ? Math.round(((0.45 - frac) / 0.45) * 40) / 40 : 0;
+      if (low !== this.lLowHp) {
+        this.lLowHp = low;
+        this.lowHpEl.style.opacity = String(low);
+      }
     }
-    const reloadPct = f.reload >= 0 ? Math.round(f.reload * 100) : -1;
-    if (this.last.reload !== reloadPct) {
-      this.last.reload = reloadPct;
-      this.reloadBar.style.opacity = reloadPct >= 0 ? "1" : "0";
-      if (reloadPct >= 0) this.reloadFill.style.width = `${reloadPct}%`;
+    if (this.lGrenades !== f.grenades || glyphsChanged) {
+      this.lGrenades = f.grenades;
+      this.grenadeEl.innerHTML = f.grenades >= 0 ? `${actionGlyph("grenade", glyphContext, 16)}<span style="display:inline-flex;align-items:center;gap:4px;${f.grenades === 0 ? "opacity:.4" : ""}">${GRENADE_SVG}<span class="ih-num">×${f.grenades}</span></span>` : "";
     }
 
-    const hpKey = Math.round(f.health) * 1e6 + f.maxHealth * 1e3 + Math.round(f.armor);
-    if (this.last.health !== hpKey) {
-      this.last.health = hpKey;
-      const frac = Math.max(0, f.health / f.maxHealth);
-      this.healthFill.style.width = `${frac * 100}%`;
-      this.healthFill.style.background = frac < 0.35 ? "linear-gradient(90deg,#c43a2a,#ff6a4a)" : "linear-gradient(90deg,#e8e2cc,#ffffff)";
-      this.armorFill.style.width = `${Math.min(100, (f.armor / 150) * 100)}%`;
-      this.healthText.textContent = `HEALTH ${Math.max(0, Math.round(f.health))}${f.armor > 0 ? `   ARMOR ${Math.round(f.armor)}` : ""}`;
-      this.lowHpEl.style.opacity = frac < 0.4 ? String(((0.4 - frac) / 0.4).toFixed(2)) : "0";
-    }
-    if (this.last.grenades !== f.grenades) {
-      this.last.grenades = f.grenades;
-      this.grenadeEl.textContent = f.grenades >= 0 ? `FRAG ×${f.grenades}  [G]` : "";
-    }
-
-    // Hurt flash + damage direction arcs.
+    // ---- Hurt flash + damage direction arcs --------------------------------------
     if (this.hurtLevel > 0) {
-      this.hurtLevel = Math.max(0, this.hurtLevel - dt * 1.8);
-      this.hurtEl.style.opacity = this.hurtLevel.toFixed(2);
+      this.hurtLevel = Math.max(0, this.hurtLevel - dt * 1.6);
+      const q = Math.round(this.hurtLevel * 50) / 50;
+      if (q !== this.lHurt) {
+        this.lHurt = q;
+        this.hurtEl.style.opacity = String(q);
+      }
     }
-    for (const ind of this.indicators) {
+    for (let i = 0; i < this.indicators.length; i++) {
+      const ind = this.indicators[i];
       if (ind.t <= 0) continue;
       ind.t -= dt;
-      ind.el.style.opacity = Math.max(0, Math.min(1, ind.t / 0.6)).toFixed(2);
+      const o = Math.round(Math.max(0, Math.min(1, ind.t / 0.6)) * 40) / 40;
+      if (o !== ind.shown) {
+        ind.shown = o;
+        ind.el.style.opacity = String(o);
+      }
+      // Indicators stay pinned to the world direction as you turn.
+      if (o > 0) ind.el.style.transform = `rotate(${(this.yaw - ind.bearing).toFixed(3)}rad)`;
     }
 
-    // Killfeed fade-out.
+    // ---- Killfeed fade-out -------------------------------------------------------
     for (let i = this.feedItems.length - 1; i >= 0; i--) {
       const it = this.feedItems[i];
       it.t -= dt;
-      if (it.t < 0.5) it.el.style.opacity = String(Math.max(0, it.t / 0.5));
+      if (it.t < 0.4 && !it.fading) {
+        it.fading = true;
+        it.el.style.transition = "opacity 380ms ease-in,transform 380ms ease-in";
+        it.el.style.opacity = "0";
+        it.el.style.transform = "translateX(10px)";
+      }
       if (it.t <= 0) {
         it.el.remove();
         this.feedItems.splice(i, 1);
@@ -264,32 +417,45 @@ export class HUD {
     }
   }
 
-  private renderPips(ammo: number, mag: number) {
-    const n = Math.min(mag, 40);
+  private updateSlots(f: HudFrame) {
+    let changed = this.lSlot !== f.slot || this.lSlotNames.length !== f.slots.length;
+    if (!changed) for (let i = 0; i < f.slots.length; i++) if (this.lSlotNames[i] !== f.slots[i].def.name) changed = true;
+    if (!changed) return;
+    this.lSlot = f.slot;
+    this.lSlotNames.length = f.slots.length;
     let html = "";
-    for (let i = 0; i < n; i++) {
-      const on = i < Math.round((ammo / mag) * n);
-      html += `<span style="width:3px;height:8px;background:${on ? "#f2efe6" : "rgba(255,255,255,.18)"}"></span>`;
+    for (let i = 0; i < f.slots.length; i++) {
+      const name = f.slots[i].def.name;
+      this.lSlotNames[i] = name;
+      const on = i === f.slot;
+      html += `<span style="display:inline-block;width:${on ? 22 : 12}px;height:3px;background:${on ? HUD_ACCENT : "rgba(238,240,234,.35)"};transition:width 160ms" title="${escapeHtml(name)}"></span>`;
     }
-    this.pips.innerHTML = html;
+    this.slots.innerHTML = html;
   }
 
-  /** Player took damage. `angle` = direction to the source relative to view (rad, 0 = ahead). */
+  /** Player took damage. `angle` = direction to the source relative to view (rad, 0 = ahead, + = right). */
   hurt(amount: number, angle: number | null) {
-    this.hurtLevel = Math.min(1, this.hurtLevel + amount / 45);
+    this.hurtLevel = Math.min(0.85, this.hurtLevel + amount / 50);
+    this.onHurt?.(amount);
     if (angle === null) return;
-    let ind = this.indicators.find((i) => i.t > 0 && Math.abs(i.angle - angle) < 0.35);
+    const bearing = this.yaw - angle;
+    let ind: (typeof this.indicators)[number] | undefined;
+    for (const i of this.indicators) {
+      const d = Math.atan2(Math.sin(i.bearing - bearing), Math.cos(i.bearing - bearing));
+      if (i.t > 0 && Math.abs(d) < 0.35) ind = i;
+    }
     if (!ind) ind = this.indicators.find((i) => i.t <= 0);
     if (!ind) {
       if (this.indicators.length >= 8) return;
       const el = div("position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;", this.root);
-      el.innerHTML = '<div style="position:absolute;left:-46px;top:-150px;width:92px;height:24px;background:radial-gradient(ellipse at 50% 100%,rgba(255,60,40,.95),rgba(255,40,20,0) 70%);border-top:3px solid rgba(255,70,50,.9);border-radius:50% 50% 0 0/100% 100% 0 0"></div>';
-      ind = { el, t: 0, angle };
+      el.innerHTML =
+        '<div style="position:absolute;left:-52px;top:-168px;width:104px;height:26px;background:radial-gradient(ellipse at 50% 100%,rgba(255,64,40,.85),rgba(255,40,20,0) 70%);border-top:2.5px solid rgba(255,86,60,.95);border-radius:50% 50% 0 0/100% 100% 0 0;filter:drop-shadow(0 0 3px rgba(0,0,0,.6))"></div>';
+      ind = { el, t: 0, bearing, shown: -1 };
       this.indicators.push(ind);
     }
-    ind.angle = angle;
-    ind.t = 1.4;
-    ind.el.style.transform = `rotate(${angle}rad)`;
+    ind.bearing = bearing;
+    ind.t = 1.5;
+    ind.el.style.transform = `rotate(${angle.toFixed(3)}rad)`;
   }
 
   /** Update an indicator's rotation as the player turns (called by the mode). */
@@ -298,46 +464,77 @@ export class HUD {
   }
 
   hit(kind: HitKind, medal?: string | null) {
-    this.hitTimer = 0.22;
     const kill = kind === "kill" || kind === "headkill";
-    this.hitmarker.style.color = kill ? "#ff4636" : kind === "head" ? "#ffc845" : "#ffffff";
-    this.hitmarker.style.width = this.hitmarker.style.height = kill ? "34px" : "28px";
-    this.hitmarker.style.margin = kill ? "-17px 0 0 -17px" : "-14px 0 0 -14px";
-    this.crossFlash = 0.08;
-    if (kill && medal !== null) this.showMedal(medal ?? (kind === "headkill" ? "HEADSHOT  +150" : "ELIMINATED  +100"), kind === "headkill" ? "#ffc845" : "#f2efe6");
-  }
-
-  showMedal(text: string, color: string) {
-    this.medal.textContent = text;
-    this.medal.style.color = color;
-    this.medal.style.opacity = "1";
-    this.medalTimer = 1.1;
-  }
-
-  killfeed(killer: string, weapon: string, victim: string, headshot: boolean) {
-    const el = div("padding:3px 9px;background:rgba(0,0,0,.45);border-radius:3px;white-space:nowrap;", this.feed);
-    el.innerHTML = `<span style="color:#7fc4ff">${escapeHtml(killer)}</span> <span style="opacity:.7">[${escapeHtml(weapon)}]</span>${headshot ? ' <span style="color:#ffc845">⌖</span>' : ""} <span style="color:#ff8a6a">${escapeHtml(victim)}</span>`;
-    this.feedItems.push({ el, t: 5 });
-    if (this.feedItems.length > 6) {
-      const old = this.feedItems.shift()!;
-      old.el.remove();
+    if (kill) {
+      this.hitmarker.style.opacity = "0";
+      this.hitKill.style.color = kind === "headkill" ? HUD_GOLD : HUD_RED;
+      this.hitTimer = 0.34;
+    } else {
+      if (this.hitIsKill && this.hitTimer > 0) this.hitKill.style.opacity = "0";
+      this.hitmarker.style.color = kind === "head" ? HUD_GOLD : "#ffffff";
+      this.hitTimer = 0.2;
+    }
+    this.hitIsKill = kill;
+    this.crossFlash = 0.07;
+    if (kill && medal !== null) {
+      if (medal) this.showMedal(medal, kind === "headkill" ? HUD_GOLD : HUD_FG);
+      else this.showMedal(kind === "headkill" ? "HEADSHOT" : "ELIMINATED", kind === "headkill" ? HUD_GOLD : HUD_FG, kind === "headkill" ? 150 : 100);
     }
   }
 
+  /** Score popup under the crosshair. */
+  showMedal(text: string, color: string, points = 0) {
+    this.medal.innerHTML =
+      (points ? `<div class="ih-num" style="font-size:20px;font-weight:700;color:${HUD_FG}">+${points}</div>` : "") +
+      `<div style="font-size:11px;font-weight:700;letter-spacing:.28em;color:${color}">${escapeHtml(text)}</div>`;
+    this.medal.getAnimations?.().forEach((a) => a.cancel());
+    this.medal.animate?.(
+      [
+        { opacity: 0, transform: "translate(-50%,8px) scale(.92)" },
+        { opacity: 1, transform: "translate(-50%,0) scale(1.06)", offset: 0.12 },
+        { opacity: 1, transform: "translate(-50%,0) scale(1)", offset: 0.22 },
+        { opacity: 1, transform: "translate(-50%,0) scale(1)", offset: 0.8 },
+        { opacity: 0, transform: "translate(-50%,-8px) scale(1)" },
+      ],
+      { duration: 1250, easing: "ease-out", fill: "forwards" },
+    );
+  }
+
+  killfeed(killer: string, weapon: string, victim: string, headshot: boolean) {
+    const el = div("display:flex;align-items:center;gap:7px;padding:3px 10px 3px 12px;white-space:nowrap;", this.feed, "ih-panel");
+    el.innerHTML =
+      `<span style="color:#86c7ff;font-weight:600">${escapeHtml(killer)}</span>` +
+      (weapon ? `<span class="ih-cap" style="opacity:.6;font-size:9px">${escapeHtml(weapon)}</span>` : `<span style="opacity:.5">—</span>`) +
+      (headshot ? `<span style="color:${HUD_GOLD};font-size:9px;font-weight:700;letter-spacing:.14em">HS</span>` : "") +
+      `<span style="color:#ff8a6a;font-weight:600">${escapeHtml(victim)}</span>`;
+    el.animate?.([{ opacity: 0, transform: "translateX(18px)" }, { opacity: 1, transform: "none" }], { duration: 200, easing: "cubic-bezier(.2,.8,.2,1)" });
+    this.feedItems.push({ el, t: 5, fading: false });
+    if (this.feedItems.length > 5) this.feedItems.shift()!.el.remove();
+  }
+
   setScoreboard(visible: boolean, callsign: string, stats: WeaponStats, seconds: number, mapName: string) {
-    this.scoreboard.style.display = visible ? "block" : "none";
+    if (visible !== this.lBoardVisible) {
+      this.lBoardVisible = visible;
+      this.scoreboard.style.display = visible ? "block" : "none";
+      if (visible) this.scoreboard.animate?.([{ opacity: 0, transform: "translate(-50%,-6px)" }, { opacity: 1, transform: "translate(-50%,0)" }], { duration: 140, easing: "ease-out" });
+    }
     if (!visible) return;
+    const secs = Math.floor(seconds);
+    const b = this.lBoard;
+    if (b[0] === secs && b[1] === stats.kills && b[2] === stats.shotsFired && b[3] === stats.shotsHit) return;
+    b[0] = secs;
+    b[1] = stats.kills;
+    b[2] = stats.shotsFired;
+    b[3] = stats.shotsHit;
     const acc = stats.shotsFired ? ((stats.shotsHit / stats.shotsFired) * 100).toFixed(1) : "0.0";
     const hs = stats.shotsHit ? Math.round((stats.headshots / stats.shotsHit) * 100) : 0;
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60).toString().padStart(2, "0");
-    const key = `${callsign}|${stats.kills}|${stats.shotsFired}|${stats.shotsHit}|${mins}:${secs}`;
-    if (this.last.board === key) return;
-    this.last.board = key;
-    const row = (k: string, v: string | number) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06)"><span style="opacity:.6">${k}</span><span>${v}</span></div>`;
+    const mins = Math.floor(secs / 60);
+    const ss = String(secs % 60).padStart(2, "0");
+    const row = (k: string, v: string | number) =>
+      `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06)"><span style="opacity:.6">${k}</span><span class="ih-num">${v}</span></div>`;
     this.scoreboard.innerHTML =
-      `<div style="display:flex;justify-content:space-between;margin-bottom:10px;letter-spacing:.2em;font-size:11px;opacity:.7"><span>${escapeHtml(mapName.toUpperCase())} · ${escapeHtml(this.modeLabel)}</span><span>${mins}:${secs}</span></div>` +
-      `<div style="font-size:18px;font-weight:700;margin-bottom:8px;color:#7fc4ff">${escapeHtml(callsign)}</div>` +
+      `<div class="ih-cap" style="display:flex;justify-content:space-between;margin-bottom:12px;opacity:.75"><span>${escapeHtml(mapName)} · ${escapeHtml(this.modeLabel)}</span><span class="ih-num">${mins}:${ss}</span></div>` +
+      `<div style="font-size:18px;font-weight:700;margin-bottom:8px;color:#86c7ff">${escapeHtml(callsign)}</div>` +
       row("Eliminations", stats.kills) +
       row("Score", stats.kills * 100 + stats.headshots * 50) +
       row("Accuracy", `${acc}%`) +
@@ -347,9 +544,21 @@ export class HUD {
   }
 
   setFps(fps: number) {
-    if (this.last.fps === fps) return;
-    this.last.fps = fps;
-    this.fps.textContent = `${fps} FPS`;
+    if (this.lFps === fps) return;
+    this.lFps = fps;
+    if (this.fpsVisible) this.fps.textContent = `${fps} FPS`;
+  }
+
+  setFpsVisible(v: boolean) {
+    if (this.fpsVisible === v) return;
+    this.fpsVisible = v;
+    this.fps.style.display = v ? "block" : "none";
+    this.lFps = -1;
+  }
+
+  /** Re-render glyph prompts on the next frame (device / bindings changed). */
+  refreshPrompts() {
+    this.lGlyphVer = -1;
   }
 
   toggleDebug() {
@@ -372,3 +581,4 @@ export class HUD {
 export function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+

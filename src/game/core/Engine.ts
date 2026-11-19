@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CAMERA, LOOK, QUALITY, SIM, type QualityName } from "../config";
+import { CAMERA, LOOK, QUALITY, SIM } from "../config";
 import { Input } from "./Input";
 import { damp } from "./Spring";
 import { PlayerController, type CameraOffsets, type MoveIntent } from "../player/PlayerController";
@@ -14,19 +14,16 @@ import { EffectsPool } from "../effects/EffectsPool";
 import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
 import { HUD, type HitKind, type HudFrame } from "../ui/HUD";
+import { sanitizeSettings, type GameSettings } from "../ui/Settings";
+import { glyphContext } from "../ui/Glyphs";
+import { hudSignals } from "../ui/SurvivalHUD";
+import { AimAssist } from "../player/AimAssist";
 import { Sfx } from "../audio/Sfx";
 import type { EngineContext, EngineEvent, GameMode } from "./GameMode";
 import { RangeMode } from "./RangeMode";
 import { SurvivalGameMode, type SurvivalConfig } from "../survival/SurvivalGameMode";
 
-export type GameSettings = {
-  /** Mouse sensitivity multiplier (1 = default). */
-  sensitivity: number;
-  /** Extra multiplier while aiming. */
-  adsSensitivity: number;
-  quality: QualityName;
-  volume: number;
-};
+export type { GameSettings };
 
 export type EngineOptions = {
   mode?: "range" | "survival";
@@ -35,8 +32,10 @@ export type EngineOptions = {
   loadout?: WeaponId[];
   callsign?: string;
   settings?: Partial<GameSettings>;
-  /** Pointer lock changes (React shows/hides the pause menu). */
+  /** Engaged (pointer lock or gamepad session) changes: React shows/hides the pause menu. */
   onLockChange?: (locked: boolean) => void;
+  /** The browser refused pointer lock (React shows "click to resume"). */
+  onLockError?: () => void;
   onEvent?: (e: EngineEvent) => void;
 };
 
@@ -63,6 +62,8 @@ export class GameEngine {
   private readonly shake = new CameraShake();
   private readonly hud: HUD;
   private readonly sfx = new Sfx();
+  private readonly aimAssist = new AimAssist();
+  private readonly assistList: THREE.Object3D[] = [];
   private readonly resizeObserver: ResizeObserver;
   readonly settings: GameSettings;
   readonly mode: GameMode;
@@ -97,17 +98,16 @@ export class GameEngine {
   private readonly debugInfo: Record<string, string | number> = {};
   private readonly hudFrame: HudFrame = {
     spreadDeg: 0, fovDeg: 0, viewportH: 1, crosshairHide: 0, ammo: 0, reserve: 0, magSize: 1, weaponName: "", weaponKind: "",
-    slot: 0, slotNames: [], reload: -1, health: 0, maxHealth: 1, armor: 0, grenades: -1, scope: 0,
+    slot: 0, slots: [], reload: -1, health: 0, maxHealth: 1, armor: 0, grenades: -1, scope: 0, yaw: 0,
   };
   /** Cached container size (read only on resize, never per frame). */
   private viewW = 1;
   private viewH = 1;
-  private slotNamesFor: unknown = null;
   private resolutionVersion = -1;
 
   constructor(private readonly container: HTMLElement, private readonly opts: EngineOptions = {}) {
     this.callsign = opts.callsign ?? "Recruit";
-    this.settings = { sensitivity: 1, adsSensitivity: 1, quality: "medium", volume: 0.8, ...opts.settings };
+    this.settings = sanitizeSettings(opts.settings);
     const survival = opts.mode === "survival";
 
     const preset = QUALITY[this.settings.quality];
@@ -118,10 +118,22 @@ export class GameEngine {
     this.viewmodel.scene.environment = this.pipeline.envMap;
 
     this.input = new Input(this.pipeline.canvas);
+    this.input.configure(this.settings);
+    this.input.requestLock = () => this.lock();
+    this.input.interactContext = () => hudSignals.interact;
+    this.input.onEngageChange = (engaged) => {
+      if (engaged) this.accumulator = 0;
+      else this.aimAssist.reset();
+      this.opts.onLockChange?.(engaged);
+    };
+    this.input.onDeviceChange = () => this.syncGlyphs();
     this.effects = new EffectsPool(this.scene, preset.maxDecals, preset.maxParticles);
     this.effects.onShellLand = (at, kind, speed) => this.sfx.shellDrop(at, kind, speed);
     this.player = new PlayerController(this.camera, this.map.collision);
     this.hud = new HUD(container);
+    this.hud.onHurt = (amount) => this.input.rumble(Math.min(1, amount / 45), 0.35, 140);
+    this.hud.setFpsVisible(this.settings.showFps);
+    this.syncGlyphs();
 
     const defs: WeaponDef[] = (opts.loadout ?? DEFAULT_LOADOUT).map((id) => WEAPONS[id]);
     this.weapons = new WeaponSystem(defs, this.player, () => this.collectRaycastTargets(), {
@@ -136,6 +148,7 @@ export class GameEngine {
         this.hud.hit(kind, medal);
         this.sfx.hit(kind);
         if (killed) this.shake.add(0.08);
+        this.input.rumble(killed ? 0.35 : 0, killed ? 0.5 : 0.22, killed ? 110 : 45);
       },
       onDryFire: () => this.sfx.dryFire(),
       onReload: (stage, def) => {
@@ -177,9 +190,7 @@ export class GameEngine {
       callsign: this.callsign,
       quality: this.settings.quality,
       emit: (e) => this.opts.onEvent?.(e),
-      unlock: () => {
-        if (document.pointerLockElement === this.pipeline.canvas) document.exitPointerLock();
-      },
+      unlock: () => this.input.disengage(),
       spawnPoint: (out) => {
         const s = this.map.def.spawns[0];
         out.set(s.x, s.y ?? 0, s.z);
@@ -194,7 +205,6 @@ export class GameEngine {
     this.pipeline.setQuality(preset);
     this.sfx.setVolume(this.settings.volume);
 
-    document.addEventListener("pointerlockchange", this.onLockChange);
     document.addEventListener("pointerlockerror", this.onLockError);
     window.addEventListener("beforeunload", this.onBeforeUnload);
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -211,15 +221,20 @@ export class GameEngine {
     this.raf = requestAnimationFrame(this.loop);
   }
 
-  /** Must be called from a user gesture (click). */
-  lock() {
+  /**
+   * Enter play. Mouse: must be called from a user gesture (click/key).
+   * `via: "pad"` starts a gamepad session instead (no pointer lock needed;
+   * gamepad presses can't request it); falls back to pointer lock without a pad.
+   */
+  lock(via?: "pad") {
     this.sfx.resume();
     const canvas = this.pipeline.canvas;
     // A stale engine (mid-remount) has a detached canvas: locking it rejects
     // with WrongDocumentError, so don't try.
     if (this.disposed || !canvas.isConnected) return;
+    if (via === "pad" && this.input.engagePad()) return;
     type LockResult = Promise<void> | undefined;
-    const fail = () => this.opts.onLockChange?.(false);
+    const fail = () => (this.opts.onLockError ? this.opts.onLockError() : this.opts.onLockChange?.(false));
     try {
       const p = canvas.requestPointerLock({ unadjustedMovement: true }) as unknown as LockResult;
       p?.catch?.(() => {
@@ -252,9 +267,23 @@ export class GameEngine {
     this.lastPitch = this.player.pitch;
   }
 
+  /** Leave play (pause). */
+  unlock() {
+    this.input.disengage();
+  }
+
+  get mapName() {
+    return this.map.def.name;
+  }
+
   applySettings(next: Partial<GameSettings>) {
     const prevQuality = this.settings.quality;
-    Object.assign(this.settings, next);
+    const prevBindings = this.settings.bindings;
+    Object.assign(this.settings, sanitizeSettings({ ...this.settings, ...next }));
+    if (!next.bindings) this.settings.bindings = prevBindings;
+    this.input.configure(this.settings);
+    this.hud.setFpsVisible(this.settings.showFps);
+    if (this.settings.bindings !== prevBindings) this.syncGlyphs();
     if (next.quality && next.quality !== prevQuality) {
       const q = QUALITY[next.quality];
       this.pipeline.setQuality(q);
@@ -277,6 +306,7 @@ export class GameEngine {
     const t0 = performance.now();
 
     const input = this.input;
+    input.poll(dt);
     input.watchdog();
     const playing = input.locked;
     let alpha = 1;
@@ -288,8 +318,10 @@ export class GameEngine {
       // Mouse look every frame (lowest latency), scaled down while aiming.
       input.consumeMouseDelta(this.mouse);
       const ads = this.weapons.adsAmount;
-      const sens = LOOK.baseSensitivity * this.settings.sensitivity * THREE.MathUtils.lerp(1, LOOK.adsSensitivityMultiplier * this.settings.adsSensitivity, ads);
-      this.player.look(this.mouse.x, this.mouse.y, sens);
+      const s = this.settings;
+      const sens = LOOK.baseSensitivity * s.sensitivity * THREE.MathUtils.lerp(1, LOOK.adsSensitivityMultiplier * s.adsSensitivity, ads);
+      this.player.look(this.mouse.x, s.invertY ? -this.mouse.y : this.mouse.y, sens);
+      this.padLook(dt, ads);
 
       this.buildIntent();
       this.player.frameInput(dt, this.intent);
@@ -360,8 +392,9 @@ export class GameEngine {
   private buildIntent() {
     const input = this.input;
     const it = this.intent;
-    it.forward = (input.isDown("KeyW") ? 1 : 0) - (input.isDown("KeyS") ? 1 : 0);
-    it.strafe = (input.isDown("KeyD") ? 1 : 0) - (input.isDown("KeyA") ? 1 : 0);
+    const clamp = THREE.MathUtils.clamp;
+    it.forward = clamp((input.isDown("KeyW") ? 1 : 0) - (input.isDown("KeyS") ? 1 : 0) + input.moveY, -1, 1);
+    it.strafe = clamp((input.isDown("KeyD") ? 1 : 0) - (input.isDown("KeyA") ? 1 : 0) + input.moveX, -1, 1);
     it.sprint = input.isDown("ShiftLeft") || input.isDown("ShiftRight");
     it.jumpPressed = input.pressed("Space");
 
@@ -374,14 +407,40 @@ export class GameEngine {
     it.crouchPressed = crouchKeyPressed;
 
     it.ads = this.weapons.adsAmount;
-    it.blockSprint = input.isDown("Mouse0") || this.weapons.wantsAds(input) || this.grenades.throwProgress >= 0;
+    // Aiming or firing always breaks sprint (wantsAds() is false mid-sprint, so test the button).
+    it.blockSprint = input.isDown("Mouse0") || input.isDown("Mouse2") || this.grenades.throwProgress >= 0;
+  }
+
+  /** Right-stick look (curve/accel in Input) with gamepad-only aim assist. */
+  private padLook(dt: number, ads: number) {
+    const input = this.input;
+    const s = this.settings;
+    let slow = 1;
+    if (s.aimAssist && input.device === "pad") {
+      const list = this.assistList;
+      list.length = 0;
+      this.mode.collectTargets(list);
+      slow = this.aimAssist.update(dt, list, this.camera.position, this.player, ads, this.map.collision);
+    }
+    if (input.lookX === 0 && input.lookY === 0) return;
+    const P = LOOK.pad;
+    const rate = s.padSensitivity * THREE.MathUtils.lerp(1, P.adsMultiplier * s.padAdsSensitivity, ads) * slow * dt;
+    this.player.look(input.lookX * P.yawSpeed * rate, (s.padInvertY ? -1 : 1) * input.lookY * P.pitchSpeed * rate, 1);
+  }
+
+  /** Push device / layout / bindings to the HUD glyphs. */
+  private syncGlyphs() {
+    glyphContext.device = this.input.device;
+    glyphContext.layout = this.input.padLayout;
+    glyphContext.bindings = this.settings.bindings;
+    glyphContext.version++;
   }
 
   private updateFov(dt: number) {
     const def = this.weapons.active.def;
     const a = this.weapons.adsAmount;
     const ease = a * a * (3 - 2 * a);
-    const base = CAMERA.fov + this.player.fovOffset;
+    const base = this.settings.fov + this.player.fovOffset;
     const target = THREE.MathUtils.lerp(base, def.adsFov, ease);
     const fov = this.camera.fov + (target - this.camera.fov) * damp(30, dt);
     if (Math.abs(this.camera.fov - fov) > 0.005) {
@@ -432,6 +491,7 @@ export class GameEngine {
   }
 
   private onFire(def: WeaponDef, hitPoint: THREE.Vector3 | null) {
+    this.input.rumble(Math.min(1, def.shake * 1.8), Math.min(1, def.shake * 3), def.pellets > 1 ? 110 : 60);
     this.viewmodel.kick(def, this.weapons.adsAmount);
     this.shake.add(def.shake * (1 - this.weapons.adsAmount * 0.4));
     this.sfx.gunshot(def);
@@ -449,7 +509,9 @@ export class GameEngine {
     this.effects.explosion(at);
     const dist = at.distanceTo(this.camera.position);
     this.sfx.explosion(at, dist);
-    this.shake.add(Math.max(0, 0.6 * (1 - dist / 36)));
+    const near = Math.max(0, 1 - dist / 36);
+    this.shake.add(0.6 * near);
+    if (near > 0) this.input.rumble(near, near * 0.8, 200 + near * 250);
     this.mode.onExplosion(at);
   }
 
@@ -468,17 +530,14 @@ export class GameEngine {
     f.weaponName = w.def.name;
     f.weaponKind = w.def.kind;
     f.slot = this.weapons.current;
-    // Slot labels only change with the loadout (the slots array is replaced).
-    if (this.slotNamesFor !== this.weapons.slots) {
-      this.slotNamesFor = this.weapons.slots;
-      f.slotNames = this.weapons.slots.map((s) => s.def.name.split(" ")[0]);
-    }
+    f.slots = this.weapons.slots;
     f.reload = this.weapons.reloadProgress;
     f.health = v.health;
     f.maxHealth = v.maxHealth;
     f.armor = v.armor;
     f.grenades = this.grenades.count >= 50 ? -1 : this.grenades.count;
     f.scope = w.def.scope ? ads : 0;
+    f.yaw = this.player.yaw;
     this.hud.frame(f, dt);
     this.hud.setScoreboard(playing && this.input.isDown("Tab"), this.callsign, this.weapons.stats, this.sessionTime, this.map.def.name);
 
@@ -542,12 +601,7 @@ export class GameEngine {
     this.effects.setViewportHeight(h * this.pipeline.renderer.getPixelRatio());
   }
 
-  private onLockChange = () => {
-    const locked = document.pointerLockElement === this.pipeline.canvas;
-    if (locked) this.accumulator = 0;
-    this.opts.onLockChange?.(locked);
-  };
-  private onLockError = () => this.opts.onLockChange?.(false);
+  private onLockError = () => (this.opts.onLockError ? this.opts.onLockError() : this.opts.onLockChange?.(false));
   /** Guards against Ctrl+W (crouch + forward) closing the tab mid-fight. */
   private onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (this.input.locked) e.preventDefault();
@@ -557,7 +611,6 @@ export class GameEngine {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     if (document.pointerLockElement === this.pipeline.canvas) document.exitPointerLock();
-    document.removeEventListener("pointerlockchange", this.onLockChange);
     document.removeEventListener("pointerlockerror", this.onLockError);
     window.removeEventListener("beforeunload", this.onBeforeUnload);
     this.resizeObserver.disconnect();
