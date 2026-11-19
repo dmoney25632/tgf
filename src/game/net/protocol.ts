@@ -4,28 +4,39 @@ import { ByteReader, ByteWriter } from "./codec";
  * Co-op wire protocol (host-authoritative survival).
  *
  * Rates (see NET below) and typical sizes, measured by tests/net.test.ts:
- *  - Player state, every peer → everyone, 20 Hz: 23 bytes binary
+ *  - Player state, client → everyone, ≤20 Hz: 23 bytes binary
  *    (55 B JSON payload; hit claims add ~20 B each while firing).
- *  - Host snapshot, host → everyone, 12 Hz: 19 B header + 14 B per player +
+ *  - Host snapshot, host → everyone, ≤12 Hz: 19 B header + 14 B per player +
  *    9–11 B per moving enemy (delta) / 19 B per enemy (keyframe, 1 per second).
  *    A busy wave (4 players, 24 enemies) is 339 B delta / 531 B keyframe
  *    binary = 475 B / 731 B JSON payload. Far below Realtime's payload cap
  *    (256 KB free / 3 MB pro). ≈6 KB/s down per client at 12 Hz.
- *  - Message rate per room with N players (Realtime counts each delivery):
- *    20·N·(N−1) state + 12·(N−1) snapshot deliveries/s → 2 players ≈ 52/s,
- *    3 ≈ 144/s, 4 ≈ 276/s. Free projects allow 100 msg/s, Pro 500 msg/s
- *    (project-wide), so 3–4 player rooms need Pro or a lower STATE_HZ.
+ *  - Message rate per room with N players (Realtime counts every delivery,
+ *    i.e. one broadcast to N−1 subscribers costs N−1 messages). The host's
+ *    own pose rides inside its snapshot, so only clients send state:
+ *      deliveries/s = (N−1)·snapshotHz + (N−1)²·stateHz
+ *    netRates() picks the best tier in RATE_TIERS that fits NET.MSG_BUDGET
+ *    (80/s, under the Free plan's 100/s; raise it on Pro, 500/s):
+ *      2 players: state 20 Hz, snapshots 12 Hz, keyframe 1 s  →  32/s
+ *      3 players: state 12 Hz, snapshots 10 Hz, keyframe 1 s  →  68/s
+ *      4 players: state  6 Hz, snapshots  8 Hz, keyframe 2 s  →  78/s
+ *    Interpolation delay grows with the send interval (100 → 200 ms).
  *    Gameplay events (hit claims, purchases, kills, hurt…) ride inside these
  *    periodic messages rather than costing extra ones.
  */
 export const NET = {
-  /** Player state send rate (client-side prediction; peers interpolate). */
+  /**
+   * Realtime messages per second one room may cost (all deliveries). 80 keeps
+   * a room under the Free plan's 100 msg/s; on Pro (500/s) raise to ~400 and
+   * 4-player rooms get the full 20 Hz / 12 Hz rates.
+   */
+  MSG_BUDGET: 80,
+  /** Best-case rates (used whenever they fit the budget). */
   STATE_HZ: 20,
-  /** Host snapshot rate. */
   SNAPSHOT_HZ: 12,
   /** Full snapshot every N snapshots (≈1 s) so a dropped delta heals quickly. */
   KEYFRAME_EVERY: 12,
-  /** Remote entities render this far in the past. */
+  /** Minimum render delay for remote entities. */
   INTERP_DELAY_MS: 100,
   /** Max extrapolation past the newest sample when packets are late. */
   MAX_EXTRAPOLATE_MS: 120,
@@ -38,6 +49,50 @@ export const NET = {
 } as const;
 
 export const MSG = { snapshot: 1, state: 2 } as const;
+
+/** Send rates for one match, fixed at launch from the roster size. */
+export type NetRates = {
+  /** Client player-state rate (the host's pose rides in its snapshots). */
+  stateHz: number;
+  snapshotHz: number;
+  /** Full snapshot every N snapshots. */
+  keyframeEvery: number;
+  /** Render remote entities this far behind (covers the slowest stream + jitter). */
+  interpMs: number;
+  /** Realtime deliveries per second for the whole room. */
+  msgsPerSec: number;
+};
+
+/** Rate tiers, best first: [stateHz, snapshotHz, keyframe seconds]. */
+export const RATE_TIERS: readonly (readonly [number, number, number])[] = [
+  [NET.STATE_HZ, NET.SNAPSHOT_HZ, 1],
+  [15, 12, 1],
+  [12, 10, 1],
+  [10, 10, 1],
+  [8, 8, 2],
+  [6, 8, 2],
+  [5, 6, 2],
+];
+
+/** Deliveries/s for a room: snapshots to every client + client state to everyone else. */
+export function roomMessageRate(players: number, stateHz: number, snapshotHz: number) {
+  const others = Math.max(0, players - 1);
+  return others * snapshotHz + others * others * stateHz;
+}
+
+/** Highest rate tier that keeps a room of `players` within `budget` msgs/s. */
+export function netRates(players: number, budget: number = NET.MSG_BUDGET): NetRates {
+  const n = Math.max(1, Math.min(NET.MAX_PLAYERS, Math.round(players)));
+  const tier = RATE_TIERS.find(([st, sn]) => roomMessageRate(n, st, sn) <= budget) ?? RATE_TIERS[RATE_TIERS.length - 1];
+  const [stateHz, snapshotHz, kfSeconds] = tier;
+  return {
+    stateHz,
+    snapshotHz,
+    keyframeEvery: Math.max(1, Math.round(snapshotHz * kfSeconds)),
+    interpMs: Math.max(NET.INTERP_DELAY_MS, Math.ceil((1200 / Math.min(stateHz, snapshotHz)) / 10) * 10),
+    msgsPerSec: roomMessageRate(n, stateHz, snapshotHz),
+  };
+}
 
 /** Position quantum: centimetres in int16 (±327 m, maps are ±60 m). */
 const POS_Q = 100;
@@ -491,5 +546,6 @@ export type HostEvent =
   /** Match over. `earned` per slot for the summary; `reason` for host-left etc. */
   | { k: "end"; victory: boolean; earned: number[]; reason?: string };
 
-export type SnapshotPayload = { b: string; e?: HostEvent[] };
+/** `h`: the host's own player state (same encoding as StatePayload.b). */
+export type SnapshotPayload = { b: string; e?: HostEvent[]; h?: string };
 export type StatePayload = { b: string } & StateExtras;

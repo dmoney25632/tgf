@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fromBase64, toBase64 } from "../src/game/net/codec";
 import {
-  decodePlayerState, encodePlayerState, NET, NO_TARGET, SnapshotDecoder, SnapshotEncoder, STATE_DEAD,
+  decodePlayerState, encodePlayerState, NET, netRates, NO_TARGET, roomMessageRate, SnapshotDecoder, SnapshotEncoder, STATE_DEAD,
   type EnemyRec, type PlayerStateMsg, type PlayerVitals, type SnapshotFrame,
 } from "../src/game/net/protocol";
 import { ClockSync, InterpBuffer } from "../src/game/net/interpolation";
@@ -239,4 +239,38 @@ test("room codes", () => {
   assert.equal(normalizeRoomCode("k7qx-2"), "K7QX2");
   assert.equal(normalizeRoomCode("AB0DE"), null); // 0 is excluded
   assert.equal(normalizeRoomCode("ABCD"), null);
+});
+
+test("message budget: every room size stays under the Free-tier budget", () => {
+  assert.ok(NET.MSG_BUDGET <= 80);
+  const r = [2, 3, 4].map((n) => netRates(n));
+  for (const [i, x] of r.entries()) {
+    assert.ok(x.msgsPerSec <= NET.MSG_BUDGET, `${i + 2} players: ${x.msgsPerSec}/s`);
+    assert.equal(x.msgsPerSec, roomMessageRate(i + 2, x.stateHz, x.snapshotHz));
+    // Render delay must cover the slowest stream's send interval.
+    assert.ok(x.interpMs >= 1000 / Math.min(x.stateHz, x.snapshotHz), `interp ${x.interpMs}`);
+    assert.ok(x.keyframeEvery / x.snapshotHz <= 2.01);
+  }
+  assert.deepEqual([r[0].stateHz, r[0].snapshotHz, r[0].keyframeEvery, r[0].interpMs, r[0].msgsPerSec], [20, 12, 12, 100, 32]);
+  assert.deepEqual([r[1].stateHz, r[1].snapshotHz, r[1].keyframeEvery, r[1].interpMs, r[1].msgsPerSec], [12, 10, 10, 120, 68]);
+  assert.deepEqual([r[2].stateHz, r[2].snapshotHz, r[2].keyframeEvery, r[2].interpMs, r[2].msgsPerSec], [6, 8, 16, 200, 78]);
+  // Rates never increase with more players.
+  assert.ok(r[0].stateHz >= r[1].stateHz && r[1].stateHz >= r[2].stateHz);
+  // Raising the budget (Pro plan) restores the full rates for 4 players.
+  const pro = netRates(4, 400);
+  assert.deepEqual([pro.stateHz, pro.snapshotHz, pro.interpMs], [NET.STATE_HZ, NET.SNAPSHOT_HZ, NET.INTERP_DELAY_MS]);
+});
+
+test("decoder heals after a gap at the 2 s keyframe interval", () => {
+  const enc = new SnapshotEncoder(netRates(4).keyframeEvery);
+  const dec = new SnapshotDecoder();
+  const f = (t: number): SnapshotFrame => ({ time: t, wave: 1, phase: 1, timer: 0, remaining: 3, players: [vitals(0)], enemies: [enemy(1, { x: t / 1000 })] });
+  let healed = -1;
+  for (let i = 0; i < 40; i++) {
+    const bytes = enc.encode(f(i * 125));
+    if (i === 3) continue; // lost
+    const out = dec.apply(bytes);
+    if (i > 3 && out && healed < 0) healed = i;
+  }
+  assert.equal(healed, 16);
 });

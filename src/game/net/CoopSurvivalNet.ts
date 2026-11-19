@@ -20,7 +20,7 @@ import {
   AGENT_STATES, decodePlayerState, encodePlayerState, NET, NO_TARGET, PARTS, PHASES, phaseCode,
   SnapshotDecoder, SnapshotEncoder,
   type EnemyRec, type HitClaimWire, type HostEvent, type PlayerStateMsg, type PlayerVitals,
-  type SnapshotPayload, type StatePayload,
+  type SnapshotPayload, type StatePayload, type NetRates, netRates,
 } from "./protocol";
 import type { NetTransport, RoomSettings, RosterEntry } from "./transport";
 import type { SurvivalBridge, SurvivalNet } from "./types";
@@ -102,7 +102,7 @@ export class CoopSurvivalNet implements SurvivalNet {
   private readonly buys: [string, number][] = [];
 
   // Host.
-  private readonly encoder = new SnapshotEncoder();
+  private readonly encoder: SnapshotEncoder;
   private readonly validator = new HitValidator();
   private snapAcc = 0;
   private readonly events: HostEvent[] = [];
@@ -137,6 +137,8 @@ export class CoopSurvivalNet implements SurvivalNet {
     if (!self) throw new Error("Not in this match's roster");
     this.slot = self.slot;
     this.role = setup.transport.selfId === setup.hostId ? "host" : "client";
+    this.rates = netRates(setup.roster.length);
+    this.encoder = new SnapshotEncoder(this.rates.keyframeEvery);
     for (const entry of setup.roster) {
       if (entry.slot === this.slot) continue;
       this.peers.set(entry.slot, {
@@ -148,6 +150,9 @@ export class CoopSurvivalNet implements SurvivalNet {
       });
     }
   }
+
+  /** Send rates for this room size, within NET.MSG_BUDGET (see protocol.ts). */
+  readonly rates: NetRates;
 
   get playerCount() {
     return this.setup.roster.length;
@@ -206,7 +211,9 @@ export class CoopSurvivalNet implements SurvivalNet {
     this.offs.push(t.on("s", (p) => this.onState(p as StatePayload & { m?: string })));
     this.offs.push(t.on("snap", (p) => {
       const sp = p as SnapshotPayload & { m?: string };
-      if (this.role === "client" && sp.m === this.setup.matchId) this.snapQueue.push(sp);
+      if (this.role !== "client" || sp?.m !== this.setup.matchId) return;
+      if (typeof sp.h === "string") this.onState({ m: sp.m, b: sp.h }); // host pose
+      this.snapQueue.push(sp);
     }));
     this.offs.push(t.on("bye", (p) => this.onBye(p as { id: string; m?: string })));
     this.offs.push(t.onPresence((list) => {
@@ -344,21 +351,26 @@ export class CoopSurvivalNet implements SurvivalNet {
     if (this.role === "client") this.updateProxies(dt, now);
     this.watchPeerDowns();
 
-    this.stateAcc += dt;
-    if (this.stateAcc >= 1 / NET.STATE_HZ) {
-      this.stateAcc = Math.min(this.stateAcc - 1 / NET.STATE_HZ, 1 / NET.STATE_HZ);
-      this.sendState(now);
-    }
     if (this.role === "host") {
+      // The host's own pose rides inside its snapshots (saves a broadcast).
+      const iv = 1 / this.rates.snapshotHz;
       this.snapAcc += dt;
-      if (this.snapAcc >= 1 / NET.SNAPSHOT_HZ || this.endRepeats > 0) {
-        this.snapAcc = Math.min(this.snapAcc - 1 / NET.SNAPSHOT_HZ, 1 / NET.SNAPSHOT_HZ);
+      if (this.snapAcc >= iv || this.endRepeats > 0) {
+        this.snapAcc = Math.min(Math.max(0, this.snapAcc - iv), iv);
         this.sendSnapshot(now);
       }
-    } else this.clientWatchdog(now);
+    } else {
+      const iv = 1 / this.rates.stateHz;
+      this.stateAcc += dt;
+      if (this.stateAcc >= iv) {
+        this.stateAcc = Math.min(this.stateAcc - iv, iv);
+        this.setup.transport.send("s", this.buildState(now));
+      }
+      this.clientWatchdog(now);
+    }
   }
 
-  private sendState(now: number) {
+  private buildState(now: number): StatePayload & { m: string } {
     const ctx = this.ctx;
     const p = ctx.player;
     const s = this.mode.state;
@@ -383,7 +395,7 @@ export class CoopSurvivalNet implements SurvivalNet {
     if (this.claims.length) payload.c = this.claims.splice(0, MAX_CLAIMS_PER_MSG);
     if (this.explosions.length) payload.x = this.explosions.splice(0);
     if (this.buys.length) payload.buy = this.buys.splice(0);
-    this.setup.transport.send("s", payload);
+    return payload;
   }
 
   // ---------------------------------------------------------------------------
@@ -631,7 +643,7 @@ export class CoopSurvivalNet implements SurvivalNet {
       time: now, wave: w.wave, phase: phaseCode(w.phase), timer: w.timer,
       remaining: w.remaining(mode.agents.enemiesAlive), players, enemies,
     });
-    const payload: SnapshotPayload & { m: string } = { m: this.setup.matchId, b: toBase64(bytes) };
+    const payload: SnapshotPayload & { m: string } = { m: this.setup.matchId, b: toBase64(bytes), h: this.buildState(now).b };
     const events = this.events.splice(0);
     if (this.endEvent && this.endRepeats > 0) {
       events.push(this.endEvent);
@@ -840,7 +852,7 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (!av) continue;
       const v = p.vitals;
       const status = !p.connected ? "OFFLINE" : v.dead ? "KIA" : v.downed ? "DOWN" : canShop && p.last?.ready ? "READY" : "";
-      av.update(dt, p.clock.renderTime(now, NET.INTERP_DELAY_MS), {
+      av.update(dt, p.clock.renderTime(now, this.rates.interpMs), {
         crouched: !!p.last?.crouch,
         downed: v.downed && !v.dead,
         dead: v.dead,
@@ -855,7 +867,8 @@ export class CoopSurvivalNet implements SurvivalNet {
         p.shotTimer -= dt;
         if (p.shotTimer <= 0) {
           p.pendingShots--;
-          p.shotTimer = 1 / NET.STATE_HZ / Math.max(1, p.pendingShots + 1);
+          const hz = p.entry.id === this.setup.hostId ? this.rates.snapshotHz : this.rates.stateHz;
+          p.shotTimer = 1 / hz / Math.max(1, p.pendingShots + 1);
           this.teammateShot(p);
         }
       }
@@ -878,7 +891,7 @@ export class CoopSurvivalNet implements SurvivalNet {
   }
 
   private updateProxies(dt: number, now: number) {
-    const rt = this.hostClock.renderTime(now, NET.INTERP_DELAY_MS);
+    const rt = this.hostClock.renderTime(now, this.rates.interpMs);
     for (const e of this.proxies.values()) {
       if (!e.active) continue;
       e.update(dt, rt);
@@ -892,7 +905,7 @@ export class CoopSurvivalNet implements SurvivalNet {
         e.shotTimer -= dt;
         if (e.shotTimer <= 0) {
           e.pendingShots--;
-          e.shotTimer = 1 / NET.SNAPSHOT_HZ / Math.max(1, e.pendingShots + 1);
+          e.shotTimer = 1 / this.rates.snapshotHz / Math.max(1, e.pendingShots + 1);
           this.enemyShot(e);
         }
       }
