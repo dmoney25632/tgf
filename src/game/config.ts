@@ -68,6 +68,47 @@ export const LOOK = {
   adsSensitivityMultiplier: 0.62,
   /** Keep pitch this far from straight up/down so the camera never flips. */
   poleMargin: 0.08,
+  /** Gamepad right stick (rates at full deflection, sensitivity 1). */
+  pad: {
+    /** rad/s ≈ 200°/s, before the outer-edge turn boost. */
+    yawSpeed: 3.5,
+    pitchSpeed: 2.3,
+    adsMultiplier: 0.5,
+    /** Holding the stick at the rim ramps yaw up to this multiplier… */
+    boost: 1.7,
+    /** …after this long at the rim (s)… */
+    boostDelay: 0.12,
+    /** …over this long (s). */
+    boostRamp: 0.32,
+    /** Stick magnitude that counts as "at the rim". */
+    boostEdge: 0.94,
+    /** Outer deadzone: anything past 1 − this reads as full deflection. */
+    outerDeadzone: 0.04,
+    /** Trigger thresholds (0..1). */
+    fireThreshold: 0.3,
+    adsThreshold: 0.2,
+    /** Hold reload/interact this long (s) to interact instead of reload. */
+    holdTime: 0.25,
+  },
+  /**
+   * Gamepad-only aim assist: deliberately light. Slows the stick near a
+   * visible target and nudges (never locks) toward it when you start aiming.
+   */
+  aimAssist: {
+    range: 55,
+    /** Half-width (m) of the "sticky" zone around a target's centre. */
+    width: 0.75,
+    minAngleDeg: 1.2,
+    maxAngleDeg: 5,
+    /** Stick speed multiplier with the crosshair right on a target. */
+    slowdown: 0.6,
+    /** ADS snap only engages within this × the sticky zone. */
+    snapZone: 1.8,
+    /** Fraction of the offset the snap corrects, and its cap (deg). */
+    snapStrength: 0.55,
+    snapMaxDeg: 3.5,
+    snapTime: 0.12,
+  },
 } as const;
 
 export const CAMERA = {
