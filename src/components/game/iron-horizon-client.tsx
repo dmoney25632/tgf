@@ -139,6 +139,7 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
           callsign,
           settings: initial,
           mode: choice.mode,
+          mapId: choice.map,
           loadout: [choice.primary, choice.secondary],
           survival: {
             operator: choice.operator,

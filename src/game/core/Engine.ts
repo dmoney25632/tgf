@@ -10,6 +10,7 @@ import { DEFAULT_LOADOUT, WEAPONS, type WeaponDef, type WeaponId } from "../weap
 import { loadMap, type LoadedMap, type MapDef } from "../world/MapLoader";
 import { KESTREL_YARD } from "../world/maps/kestrelYard";
 import { DUSTFALL_OUTPOST } from "../world/maps/dustfallOutpost";
+import { getMap } from "../world/maps/registry";
 import { EffectsPool } from "../effects/EffectsPool";
 import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
@@ -32,6 +33,8 @@ export type EngineOptions = {
   mode?: "range" | "survival";
   survival?: SurvivalConfig;
   map?: MapDef;
+  /** Map by registry id (world/maps/registry.ts); `map` wins when both are set. */
+  mapId?: string;
   loadout?: WeaponId[];
   callsign?: string;
   settings?: Partial<GameSettings>;
@@ -101,7 +104,9 @@ export class GameEngine {
     const survival = opts.mode === "survival";
 
     const preset = QUALITY[this.settings.quality];
-    this.map = loadMap(this.scene, opts.map ?? (survival ? DUSTFALL_OUTPOST : KESTREL_YARD), preset);
+    const picked = opts.map ?? getMap(opts.mapId);
+    const mapDef = picked && (!survival || picked.survival) ? picked : survival ? DUSTFALL_OUTPOST : KESTREL_YARD;
+    this.map = loadMap(this.scene, mapDef, preset);
     this.viewmodel = new WeaponViewmodel(null);
     this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
     this.viewmodel.scene.environment = this.pipeline.envMap;

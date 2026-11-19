@@ -287,7 +287,7 @@ export function composeWave(wave: number, countMul: number, squadSize: number): 
   if (wave >= 7) take("sniper", Math.min(4, 1 + Math.floor((wave - 7) / 2)));
   // Juggernauts: from wave 4, more on elite waves (10+) and two extra escorting each boss.
   const boss = wave >= 10 && wave % 5 === 0;
-  if (wave >= 4) take("armored", Math.min(7, 1 + Math.floor((wave - 4) / 2) + (wave >= 10 ? 1 : 0) + (boss ? 2 : 0)));
+  if (wave >= 4) take("armored", Math.min(boss ? 10 : 7, 1 + Math.floor((wave - 4) / 2) + (wave >= 10 ? 1 : 0) + (boss ? 2 : 0)));
   if (wave >= 4) take("rusher", total * (wave >= 7 ? 0.28 : 0.2));
   out.rifleman += rest;
   return out;
