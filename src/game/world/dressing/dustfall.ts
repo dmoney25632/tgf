@@ -47,9 +47,10 @@ export const dustfall: Dressing = (kit) => {
     const n2 = fbm2(x * 0.17 + 9, z * 0.17, 2);
     const t = track(x, z);
     if (d < R) {
-      o.gravel = 1;
-      o.ground = smoothstep(29, 31.5, d) * 1.2 + smoothstep(0.6, 0.72, n) * 0.6;
-      o.mud = smoothstep(0.58, 0.7, n2) * 0.8 + t * 0.55;
+      // Packed earth yard: gravel where vehicles run, dark earth and wet mud patches elsewhere.
+      o.gravel = 0.35 + t * 0.9 + smoothstep(0.5, 0.65, n2) * 0.35;
+      o.ground = 0.55 + smoothstep(29, 31.5, d) * 1.2 + smoothstep(0.45, 0.62, n) * 0.7;
+      o.mud = smoothstep(0.52, 0.68, n2) * 1.1 + t * 0.45 + smoothstep(0.6, 0.75, n) * 0.4;
     } else if (d < BERM) {
       o.gravel = t * 0.6 + 0.04;
       o.ground = 1 - t * 0.75;
@@ -65,7 +66,12 @@ export const dustfall: Dressing = (kit) => {
   // ---- Grass -------------------------------------------------------------------------
   const grass = (x: number, z: number) => {
     const d = Math.max(Math.abs(x), Math.abs(z));
-    if (d < R - 0.4) return d > R - 2.6 ? 0.6 : fbm2(x * 0.3, z * 0.3, 2) > 0.68 ? 0.25 : 0;
+    if (d < R - 0.4) {
+      // Dry tufts along the walls and in patches across the yard, never on the vehicle tracks.
+      if (d > R - 2.6) return 0.75;
+      const tuft = fbm2(x * 0.3, z * 0.3, 2);
+      return track(x, z) > 0.3 ? 0 : tuft > 0.6 ? 0.55 : tuft > 0.52 ? 0.2 : 0;
+    }
     if (d < R + 0.5) return 0;
     if (d > BERM - 0.2) return 0;
     const t = track(x, z);

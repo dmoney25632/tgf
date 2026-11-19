@@ -138,7 +138,7 @@ export function buildTerrain(spec: TerrainSpec, lib: MaterialLibrary, quality: Q
         vec2 uvA = wuv * groundScale;
         vec2 uvB = mat2(0.8, -0.6, 0.6, 0.8) * wuv * groundScale * 0.37 + 0.31;
         vec3 cA = mix(texture2D(map, uvA).rgb, texture2D(map, uvB).rgb, smoothstep(0.35, 0.65, tMacro.g));
-        vec3 cG = texture2D(gravelMap, wuv * gravelScale).rgb;
+        vec3 cG = texture2D(gravelMap, wuv * gravelScale).rgb * vec3(0.78, 0.76, 0.72);
         vec3 cM = cA * vec3(0.42, 0.36, 0.3);
         vec3 alb = cG * w.x + cA * w.y + cM * w.z;
         alb *= mix(0.82, 1.12, tMacro.r);
