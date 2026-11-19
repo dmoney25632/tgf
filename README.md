@@ -27,6 +27,17 @@ npm test            # headless smoke tests (tests/*.test.ts, Node's built-in run
 npm run build       # production build
 ```
 
+### Performance and assets
+
+```bash
+npm run analyze          # after a build: initial JS per route, fails if three.js leaks into one
+npm run assets:optimize  # macOS: re-encode new JPEGs + write 512px Low variants (idempotent)
+npm run assets:ktx2      # KTX2 textures + meshopt geometry; needs gltfpack and KTX-Software (toktx),
+                         # which are not installed by this repo. Dry run unless given -- --write
+```
+
+Budgets, caching and security headers, adaptive quality, and how to profile are covered in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 The tests run the game's pure TypeScript modules (wave rules, vitals, economy, navigation on Dustfall Outpost) directly in Node, with no browser or WebGL needed.
 
 ### Supabase setup

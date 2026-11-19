@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import type { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { HDRI, MODELS, TEXTURE_SETS, assetUrl, textureUrl, type ModelId, type TextureMapKind } from "./manifest";
 
@@ -9,14 +10,47 @@ import { HDRI, MODELS, TEXTURE_SETS, assetUrl, textureUrl, type ModelId, type Te
  * `null` on failure (never throws), and results are cached at module level so
  * remounting the engine doesn't refetch. GPU copies are owned by whoever
  * builds Textures/Meshes from them; `clearAssetCaches()` drops the CPU side.
+ *
+ * Delivery details handled here (not in the manifest):
+ * - URLs are rewritten to /assets/v/<content hash>/... so they can be served
+ *   with immutable caching (see next.config.ts).
+ * - Texture sets prefer the `<kind>_512.jpg` variant when the preset caps
+ *   textures at 512 px, falling back to the full file if it is missing.
+ * - Images are decoded (and resized) off the main thread with
+ *   createImageBitmap, already flipped for WebGL, so uploads don't stall.
+ * - glTF files using EXT_meshopt_compression or KHR_texture_basisu get the
+ *   matching decoder loaded on demand (see scripts/ktx2-encode.sh).
  */
 
-type Img = HTMLImageElement | HTMLCanvasElement;
+/**
+ * Decoded image. ImageBitmaps are pre-flipped (imageOrientation "flipY"), so
+ * textures built from them must set `flipY = false` (see `isPreFlipped`).
+ */
+type Img = HTMLImageElement | HTMLCanvasElement | ImageBitmap;
 
 const imageCache = new Map<string, Promise<Img | null>>();
 const modelCache = new Map<ModelId, Promise<PreparedModel | null>>();
 let hdriCache: Promise<THREE.DataTexture | null> | null = null;
 const warned = new Set<string>();
+
+const ASSET_VERSION = process.env.NEXT_PUBLIC_ASSET_VERSION ?? "";
+
+/** /assets/x → /assets/v/<hash>/x (immutable-cacheable). */
+export function versionedUrl(url: string) {
+  if (!ASSET_VERSION || !url.startsWith("/assets/")) return url;
+  return `/assets/v/${ASSET_VERSION}/${url.slice("/assets/".length)}`;
+}
+
+/** True when the image is already flipped for WebGL (set texture.flipY = false). */
+export function isPreFlipped(img: unknown) {
+  return typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap;
+}
+
+let assetRenderer: THREE.WebGLRenderer | null = null;
+/** Lets loaders that need GPU capabilities (KTX2) query the renderer. */
+export function setAssetRenderer(r: THREE.WebGLRenderer | null) {
+  assetRenderer = r;
+}
 
 function warnOnce(key: string, err?: unknown) {
   if (warned.has(key)) return;
@@ -37,25 +71,63 @@ function downscale(img: HTMLImageElement, max: number): Img {
   return c;
 }
 
-function loadImage(url: string, maxSize: number): Promise<Img | null> {
+/** Fallback path: <img> element + canvas downscale on the main thread. */
+function loadImageElement(url: string, maxSize: number): Promise<Img | null> {
+  return new Promise<Img | null>((resolve) => {
+    new THREE.ImageLoader().load(
+      url,
+      (img) => resolve(downscale(img, maxSize)),
+      undefined,
+      () => resolve(null),
+    );
+  });
+}
+
+const canBitmap = typeof createImageBitmap === "function" && typeof fetch === "function";
+
+/** fetch + off-thread decode/resize. Null on HTTP error; throws if decode fails. */
+async function loadBitmap(url: string, maxSize: number): Promise<Img | null> {
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  const opts: ImageBitmapOptions = { imageOrientation: "flipY", premultiplyAlpha: "none", colorSpaceConversion: "none" };
+  const full = await createImageBitmap(blob, opts);
+  if (full.width <= maxSize && full.height <= maxSize) return full;
+  const s = maxSize / Math.max(full.width, full.height);
+  const w = Math.max(1, Math.round(full.width * s));
+  const h = Math.max(1, Math.round(full.height * s));
+  full.close();
+  return createImageBitmap(blob, { ...opts, resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
+}
+
+async function fetchImage(url: string, maxSize: number): Promise<Img | null> {
+  if (canBitmap) {
+    try {
+      return await loadBitmap(url, maxSize);
+    } catch {
+      // Older Safari/Firefox reject some ImageBitmap options: use <img>.
+    }
+  }
+  return loadImageElement(url, maxSize);
+}
+
+function loadImage(url: string, maxSize: number, smallUrl?: string): Promise<Img | null> {
   const key = `${url}@${maxSize}`;
   let p = imageCache.get(key);
   if (!p) {
-    p = new Promise<Img | null>((resolve) => {
-      new THREE.ImageLoader().load(
-        url,
-        (img) => resolve(downscale(img, maxSize)),
-        undefined,
-        (err) => {
-          warnOnce(url, err);
-          resolve(null);
-        },
-      );
-    });
+    p = (async () => {
+      const small = smallUrl ? await fetchImage(versionedUrl(smallUrl), maxSize) : null;
+      const img = small ?? (await fetchImage(versionedUrl(url), maxSize));
+      if (!img) warnOnce(url);
+      return img;
+    })();
     imageCache.set(key, p);
   }
   return p;
 }
+
+/** Edge size of the pre-scaled texture-set variants written by scripts/optimize-assets.sh. */
+const SMALL_VARIANT = 512;
 
 export type TextureSetImages = Partial<Record<TextureMapKind, Img>>;
 
@@ -63,7 +135,13 @@ export type TextureSetImages = Partial<Record<TextureMapKind, Img>>;
 export async function loadTextureSet(id: string, maxSize: number): Promise<TextureSetImages | null> {
   const entry = TEXTURE_SETS[id];
   if (!entry || typeof window === "undefined") return null;
-  const imgs = await Promise.all(entry.maps.map((k) => loadImage(textureUrl(id, k), maxSize)));
+  const imgs = await Promise.all(
+    entry.maps.map((k) => {
+      const url = textureUrl(id, k);
+      const small = maxSize <= SMALL_VARIANT ? url.replace(/\.jpg$/, `_${SMALL_VARIANT}.jpg`) : undefined;
+      return loadImage(url, maxSize, small);
+    }),
+  );
   const out: TextureSetImages = {};
   entry.maps.forEach((k, i) => {
     const img = imgs[i];
@@ -76,7 +154,7 @@ export async function loadTextureSet(id: string, maxSize: number): Promise<Textu
 export function loadHdri(): Promise<THREE.DataTexture | null> {
   if (!HDRI || typeof window === "undefined") return Promise.resolve(null);
   if (!hdriCache) {
-    const url = assetUrl(HDRI.file);
+    const url = versionedUrl(assetUrl(HDRI.file));
     hdriCache = new HDRLoader()
       .loadAsync(url)
       .then((tex) => {
@@ -128,15 +206,48 @@ function bake(root: THREE.Object3D): ModelVariant | null {
   return parts.length ? { parts, bounds } : null;
 }
 
+type MeshoptDecoderLike = Parameters<GLTFLoader["setMeshoptDecoder"]>[0];
+let meshopt: Promise<MeshoptDecoderLike> | null = null;
+let ktx2: Promise<KTX2Loader> | null = null;
+
+/** Where the Basis transcoder is served from (copied there by scripts/ktx2-encode.sh). */
+const BASIS_PATH = "/assets/basis/";
+
+/**
+ * Loads a glTF, pulling in the meshopt / KTX2 decoders only when the file
+ * declares those extensions, so plain assets never pay for them.
+ */
+async function loadGltf(url: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const loader = new GLTFLoader();
+  if (text.includes("EXT_meshopt_compression")) {
+    meshopt ??= import("three/addons/libs/meshopt_decoder.module.js").then(async ({ MeshoptDecoder }) => {
+      await MeshoptDecoder.ready;
+      return MeshoptDecoder as MeshoptDecoderLike;
+    });
+    loader.setMeshoptDecoder(await meshopt);
+  }
+  if (text.includes("KHR_texture_basisu")) {
+    ktx2 ??= import("three/addons/loaders/KTX2Loader.js").then(({ KTX2Loader }) => {
+      const l = new KTX2Loader().setTranscoderPath(versionedUrl(BASIS_PATH));
+      if (assetRenderer) l.detectSupport(assetRenderer);
+      return l;
+    });
+    loader.setKTX2Loader(await ktx2);
+  }
+  return loader.parseAsync(text, THREE.LoaderUtils.extractUrlBase(url));
+}
+
 /** Loads + prepares a manifest model (baked transforms, merged per material). */
 export function loadModel(id: ModelId): Promise<PreparedModel | null> {
   const entry = MODELS[id];
   if (!entry || typeof window === "undefined") return Promise.resolve(null);
   let p = modelCache.get(id);
   if (!p) {
-    const url = assetUrl(entry.file);
-    p = new GLTFLoader()
-      .loadAsync(url)
+    const url = versionedUrl(assetUrl(entry.file));
+    p = loadGltf(url)
       .then((gltf) => {
         const scene = gltf.scene;
         scene.updateMatrixWorld(true);
