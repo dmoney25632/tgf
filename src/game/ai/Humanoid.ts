@@ -4,7 +4,7 @@ import type { HitPart, Hittable } from "../core/types";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { buildBody, STD_LOOKS, withQuality, type BodyBuild, type FaceSpec, type HitDims, type LookDef } from "./humanoid/body";
 import { disposeHeads, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
-import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, uberMaterial } from "./humanoid/materials";
+import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
 
@@ -18,7 +18,7 @@ export type HumanoidLook = LookDef;
 // whole soldier (uniform, kit, skin, rifle) is one draw call. Geometry is
 // built once per (kit, palette, variant) and LOD, and shared.
 //
-//   LOD 0 (< 16 m): full body + scanned face (+ ghillie)      2-3 draws
+//   LOD 0 (< 16 m): full body + scanned face (+ lenses | ghillie) 2-3 draws
 //   LOD 1 (< 40 m): body without small parts, sculpted head    1-2 draws
 //   LOD 2 (40 m+):  coarse body, single material               1 draw
 // ---------------------------------------------------------------------------
@@ -36,6 +36,8 @@ type SoldierGeo = {
   hit: BodyBuild["hit"];
   w: number;
   face: FaceSpec | null;
+  /** Transparent eyewear lenses, head-bone skinned (LOD 0 only). */
+  lens: { geo: THREE.BufferGeometry; kind: "clear" | "dark" } | null;
   /** Death-settle contacts: bbox face centres of each bone's geometry. */
   boxes: [BoneName, THREE.Box3][];
   tris: [number, number, number];
@@ -119,7 +121,7 @@ function soldierGeo(look: LookDef, variant: number): SoldierGeo {
     b.elite.armR.dispose();
     b.elite.head.dispose();
   }
-  const out: SoldierGeo = { near, mid, far, ghillie, elite, hit: b0.hit, w: b0.w, face: b0.face, boxes, tris: [triCount(near), triCount(mid), triCount(far)] };
+  const out: SoldierGeo = { near, mid, far, ghillie, elite, hit: b0.hit, w: b0.w, face: b0.face, lens: b0.lens ? { geo: skinnedHead(b0.lens.geo), kind: b0.lens.kind } : null, boxes, tris: [triCount(near), triCount(mid), triCount(far)] };
   geoCache.set(key, out);
   return out;
 }
@@ -146,6 +148,7 @@ export function disposeHumanoidCache() {
     s.mid.dispose();
     s.far.dispose();
     s.ghillie?.dispose();
+    s.lens?.geo.dispose();
     s.elite.dispose();
   });
   gunCache.forEach((g) => g.geo.dispose());
@@ -208,6 +211,68 @@ const smooth = (e0: number, e1: number, x: number) => {
 const lerp = THREE.MathUtils.lerp;
 /** Vertical extent of a leg from hip joint to sole (thigh / knee / foot world angles). */
 const legExtent = (T: number, Kn: number, F: number) => RIG.thigh * Math.cos(T) + RIG.shin * Math.cos(T + Kn) + RIG.ankle * Math.cos(F) + 0.04 * Math.abs(Math.sin(F));
+/** Ankle height above the floor for a foot at world angle F (heel up: pivots on the ball; toes up: on the heel). */
+const ankleH = (F: number) => RIG.ankle * Math.cos(F) + (F > 0 ? 0.13 : 0.04) * Math.abs(Math.sin(F));
+
+type LegPose = { t: number; k: number; f: number };
+const GAIT = { R: { t: 0, k: 0, f: 0 } as LegPose, L: { t: 0, k: 0, f: 0 } as LegPose, hip: 0 };
+const _foot = [
+  { z: 0, y: 0, f: 0 },
+  { z: 0, y: 0, f: 0 },
+];
+
+/**
+ * Foot-planted gait. ph: gait phase (right heel strike at ph = pi/2), stride:
+ * metres per cycle, run: 0 walk .. 1 run, cb: forward share of the travel
+ * direction. During stance a foot sweeps back exactly as far as the body
+ * travels (stance share x stride), so it stays put on the ground; in swing
+ * it lifts, toes up, and reaches forward. The hip joint rides as high as
+ * the planted legs allow; legs are then solved with two-bone IK. Returns
+ * world thigh / knee / foot angles per leg and the hip-joint height.
+ * Allocation-free (module scratch).
+ */
+function gait(ph: number, stride: number, run: number, cb: number) {
+  const L1 = RIG.thigh, L2 = RIG.shin, reach = (L1 + L2) * 0.985;
+  const st = lerp(0.62, 0.38, run); // stance share of the cycle (< 0.5 when running: a flight phase)
+  const step = st * stride;
+  const lift = lerp(0.06, 0.16, run);
+  let hip = reach + RIG.ankle;
+  for (let i = 0; i < 2; i++) {
+    const u = (((ph - Math.PI / 2) / (Math.PI * 2) + i * 0.5) % 1 + 1) % 1;
+    const o = _foot[i];
+    if (u < st) {
+      const v = u / st;
+      o.z = step * (0.5 - v);
+      o.y = 0;
+      // Heel strike (toes up) -> flat -> heel rises for push-off.
+      o.f = -0.22 * (1 - smooth(0, 0.18, v)) + lerp(0.45, 0.7, run) * smooth(0.62, 1, v);
+    } else {
+      const v = (u - st) / (1 - st);
+      const e = smooth(0, 1, v);
+      o.z = step * (-0.5 + e);
+      o.y = lift * Math.sin(Math.PI * Math.min(1, v * 1.15)) * (1 - 0.5 * v);
+      o.f = lerp(lerp(0.45, 0.7, run), -0.22, smooth(0, 0.7, v));
+    }
+    const ay = o.y + ankleH(o.f);
+    hip = Math.min(hip, ay + Math.sqrt(Math.max(0, reach * reach - o.z * o.z)));
+  }
+  hip -= lerp(0.012, 0.05, run); // never quite locked: soft knees, more when running
+  for (let i = 0; i < 2; i++) {
+    const o = _foot[i];
+    const zf = o.z * cb;
+    const dy = hip - (o.y + ankleH(o.f));
+    const D = Math.min(L1 + L2 - 1e-4, Math.max(0.2, Math.hypot(zf, dy)));
+    const knee = Math.PI - Math.acos(THREE.MathUtils.clamp((L1 * L1 + L2 * L2 - D * D) / (2 * L1 * L2), -1, 1));
+    const gam = Math.acos(THREE.MathUtils.clamp((L1 * L1 + D * D - L2 * L2) / (2 * L1 * D), -1, 1));
+    const leg = i === 0 ? GAIT.R : GAIT.L;
+    leg.t = Math.atan2(-zf, dy) - gam;
+    leg.k = knee;
+    leg.f = o.f;
+  }
+  GAIT.hip = hip;
+  return GAIT;
+}
+
 /** Exponentially ease a bone's Euler rotation toward a target. */
 function ease(o: THREE.Object3D, x: number, y: number, z: number, k: number) {
   o.rotation.x += (x - o.rotation.x) * k;
@@ -377,6 +442,7 @@ export class Humanoid {
       onHeadReady((hg) => {
         nearBody.geometry = geo.near;
         near.add(skinned(skinnedHead(hg), faceMaterial(fl), true));
+        if (geo.lens) near.add(skinned(geo.lens.geo, lensMaterial(geo.lens.kind), false));
       });
     }
     this.eliteMesh = skinned(geo.elite, eliteMaterial(), false);
@@ -576,13 +642,28 @@ export class Humanoid {
 
     const pp = 0.03 + c * 0.32 + run * 0.12; // pelvis pitch (world)
     // Legs: world-space thigh angle T, knee K, foot F.
-    const tR = -A * sinP * cb - c * 1.05 - run * 0.06;
-    const tL = A * sinP * cb - c * 1.35 - run * 0.06;
+    let tR = -A * sinP * cb - c * 1.05 - run * 0.06;
+    let tL = A * sinP * cb - c * 1.35 - run * 0.06;
     const idleBend = (1 - moving) * (0.07 + 0.05 * Math.sin(t * 0.45 + this.seed));
-    const kR = K * Math.max(0, cosP) + run * 0.25 * Math.max(0, -cosP) + c * 1.85 + idleBend + 0.05;
-    const kL = K * Math.max(0, -cosP) + run * 0.25 * Math.max(0, cosP) + c * 1.95 + (1 - moving) * (0.07 - 0.05 * Math.sin(t * 0.45 + this.seed)) + 0.05;
-    const fR = -0.2 * Math.max(0, cosP) * moving, fL = -0.2 * Math.max(0, -cosP) * moving;
-    const standY = Math.max(legExtent(tR, kR, fR), legExtent(tL, kL, fL)) - RIG.hipY + run * 0.025 * Math.abs(Math.sin(ph * 2));
+    let kR = K * Math.max(0, cosP) + run * 0.25 * Math.max(0, -cosP) + c * 1.85 + idleBend + 0.05;
+    let kL = K * Math.max(0, -cosP) + run * 0.25 * Math.max(0, cosP) + c * 1.95 + (1 - moving) * (0.07 - 0.05 * Math.sin(t * 0.45 + this.seed)) + 0.05;
+    let fR = -0.2 * Math.max(0, cosP) * moving, fL = -0.2 * Math.max(0, -cosP) * moving;
+    let standY = Math.max(legExtent(tR, kR, fR), legExtent(tL, kL, fL)) - RIG.hipY + run * 0.025 * Math.abs(Math.sin(ph * 2));
+    // Upright walking / running: plant the feet. Each foot follows a step
+    // cycle (ground-locked through stance, lifted and swung forward), the
+    // hips ride as high as the planted leg allows (so they dip at double
+    // support and through the run's landing), and the legs are solved by IK.
+    const wIK = moving * (1 - c);
+    if (wIK > 0.001) {
+      const g = gait(ph, stride, run, cb);
+      tR = lerp(tR, g.R.t, wIK);
+      kR = lerp(kR, g.R.k, wIK);
+      fR = lerp(fR, g.R.f, wIK);
+      tL = lerp(tL, g.L.t, wIK);
+      kL = lerp(kL, g.L.k, wIK);
+      fL = lerp(fL, g.L.f, wIK);
+      standY = lerp(standY, g.hip - RIG.hipY, wIK);
+    }
     const stanceSign = Math.sin(ph);
     const sway = (0.022 * moving * (1 - run * 0.5) + (1 - moving) * 0.015 * Math.sin(t * 0.45 + this.seed)) * (moving > 0.01 ? stanceSign : 1);
     const pelvisYaw = hipYawDir + 0.12 * moving * sinP * cb + fy * 0.05;
