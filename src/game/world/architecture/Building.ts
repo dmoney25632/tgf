@@ -179,7 +179,8 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
           const sh = open < 0.35 ? o.h : open < 0.7 ? o.h * (0.25 + r() * 0.4) : 0;
           if (sh > 0) {
             const p = f.at(o.u, top - sh, -0.06);
-            props.place("rollershutter_door", { x: p.x, y: p.y, z: p.z, fit: [o.w, sh, 0.25], rotY: f.rotY + Math.PI });
+            // Every other shutter only on high (open, dark shopfront otherwise).
+            props.place("rollershutter_door", { x: p.x, y: p.y, z: p.z, fit: [o.w, sh, 0.25], rotY: f.rotY + Math.PI, tier: Math.round(p.x * 0.7 + p.z * 1.3) & 1 ? 2 : 0 });
           }
         }
         if (detail && full && r() < 0.7) awning(B, f, o.u, gy + top + 0.55, o.w + 0.6, 1.4, 0.5, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < damage * 0.6, group);
@@ -234,8 +235,8 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
         const c2 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, bd - 0.03), c3 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, 0.03);
         c0.y = c1.y = c2.y = c3.y = gy + o.y - 0.04;
         const ironTint = r() < 0.6 ? 0x232321 : 0x3c4a4a;
-        railing(B, c0, c1, 1.0, ironTint, 0.14, group);
-        railing(B, c1, c2, 1.0, ironTint, 0.14, group);
+        railing(B, c0, c1, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, group);
+        railing(B, c1, c2, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, group);
         railing(B, c2, c3, 1.0, ironTint, 0.14, group);
         wallDecal(B, f, "leak", o.u, o.y - 0.9, bw * 0.8, 1.4, 0xffffff, 0.012, group);
         if (r() < 0.3) awning(B, f, o.u, gy + top + 0.45, bw, 1.0, 0.35, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < damage, group);
@@ -288,10 +289,82 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
 }
 
 /** Distant low-detail block for skyline silhouettes (a few boxes, dark windows as decals). */
-export function silhouette(B: MeshBuilder, x: number, z: number, w: number, d: number, h: number, gy: number, seed: number) {
+/**
+ * Backdrop block (merged into "far", no shadows): plastered box with a
+ * window grid, shutters, a few balconies, floor bands and a parapet on the
+ * faces that look towards `view`, plus rooftop clutter (stair hut, tanks,
+ * AC units, dish, mast). Roughly 300-600 tris; costs no draw calls.
+ */
+export function silhouette(B: MeshBuilder, x: number, z: number, w: number, d: number, h: number, gy: number, seed: number, view: { x: number; z: number } = { x: 0, z: 0 }) {
   const r = rnd(seed);
-  const tint = new THREE.Color(PLASTER_TINTS[Math.floor(r() * PLASTER_TINTS.length)]).multiplyScalar(0.9);
-  B.box("plaster", x, gy + h / 2 - 0.5, z, w, h + 1, d, tint, { group: "far" });
-  if (r() < 0.6) B.box("plaster", x + (r() - 0.5) * w * 0.4, gy + h + 1.1, z + (r() - 0.5) * d * 0.4, w * 0.3, 2.2, d * 0.3, tint, { group: "far" });
-  if (r() < 0.5) waterTank(B, x + (r() - 0.5) * w * 0.6, gy + h, z + (r() - 0.5) * d * 0.6, r() < 0.5, "far");
+  const g = "far";
+  const tint = new THREE.Color(PLASTER_TINTS[Math.floor(r() * PLASTER_TINTS.length)]).multiplyScalar(0.78 + r() * 0.22);
+  // Some blocks are bare concrete frame / grey render instead of plaster.
+  if (r() < 0.2) tint.lerp(new THREE.Color(0x9c9a94), 0.6);
+  B.box("plaster", x, gy + h / 2 - 0.5, z, w, h + 1, d, tint, { group: g });
+  const floors = Math.max(1, Math.round(h / 3.1));
+  const fh = h / floors;
+  const dark = new THREE.Color(0x1d1b19);
+  const shutterTints = [0x5a6e5c, 0x4c6278, 0x7a5a40, 0x8c8a80];
+  const quads: number[] = [];
+  const pushQuad = (f: Frame, u: number, y: number, qw: number, qh: number, out: number) => {
+    const a = f.at(u - qw / 2, y, out), b = f.at(u + qw / 2, y, out), c = f.at(u + qw / 2, y + qh, out), e = f.at(u - qw / 2, y + qh, out);
+    // Wound so the face points out of the wall (t × up points in).
+    quads.push(a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z, a.x, a.y, a.z, e.x, e.y, e.z, c.x, c.y, c.z);
+  };
+  const fr = facades(x, z, w, d, gy);
+  const trim = tint.clone().multiplyScalar(0.82);
+  fr.forEach((f, side) => {
+    const L = side % 2 === 0 ? w : d;
+    // Only faces turned towards the viewer get detail.
+    const cx = f.o.x + f.t.x * (L / 2), cz = f.o.z + f.t.z * (L / 2);
+    if (f.n.x * (view.x - cx) + f.n.z * (view.z - cz) <= 0) return;
+    const cols = Math.max(1, Math.floor((L - 1.2) / 3.1));
+    const step = L / cols;
+    const balconyCol = r() < 0.55 ? Math.floor(r() * cols) : -1;
+    for (let fl = 0; fl < floors; fl++) {
+      const y = fl * fh;
+      if (fl > 0) fbox(B, f, "plaster", L / 2, y - 0.05, 0.06, L + 0.1, 0.18, 0.12, trim, { group: g });
+      for (let c = 0; c < cols; c++) {
+        if (r() < 0.1) continue; // blank bay
+        const u = (c + 0.5) * step;
+        const shop = fl === 0 && r() < 0.6;
+        const ww = shop ? Math.min(step - 0.5, 2.6) : 1.1, wh = shop ? 2.4 : 1.4;
+        const wy = shop ? 0.1 : y + fh * 0.32;
+        if (r() < 0.25 && !shop) {
+          // Closed shutters (coloured) instead of a dark opening.
+          const st = new THREE.Color(shutterTints[Math.floor(r() * shutterTints.length)]).multiplyScalar(0.8 + r() * 0.3);
+          const before = quads.length;
+          pushQuad(f, u, wy, ww, wh, 0.03);
+          const sq = quads.splice(before);
+          addQuads(B, sq, st, g);
+        } else pushQuad(f, u, wy, ww, wh, 0.03);
+        if (c === balconyCol && fl > 0) {
+          fbox(B, f, "concrete", u, y + 0.05, 0.55, ww + 1.0, 0.14, 1.1, trim, { group: g });
+          fbox(B, f, "metal_dark", u, y + 0.65, 1.07, ww + 1.0, 0.9, 0.04, 0x34322e, { group: g });
+        }
+      }
+    }
+    // Parapet lip.
+    fbox(B, f, "plaster", L / 2, h + 0.35, 0.1, L, 0.7, 0.2, trim, { group: g });
+  });
+  if (quads.length) addQuads(B, quads, dark, g);
+  // Roof clutter.
+  const rx = () => x + (r() - 0.5) * w * 0.7, rz = () => z + (r() - 0.5) * d * 0.7;
+  if (r() < 0.65) B.box("plaster", x + (r() - 0.5) * w * 0.4, gy + h + 1.1, z + (r() - 0.5) * d * 0.4, Math.min(w * 0.3, 4), 2.2, Math.min(d * 0.3, 3.5), tint, { group: g });
+  const tanks = Math.floor(r() * 3);
+  for (let i = 0; i < tanks; i++) waterTank(B, rx(), gy + h, rz(), r() < 0.5, g);
+  const acs = Math.floor(r() * 3);
+  for (let i = 0; i < acs; i++) B.box("metal_painted", rx(), gy + h + 0.35, rz(), 0.9, 0.7, 0.6, 0xc4c2ba, { group: g });
+  if (r() < 0.3) dish(B, rx(), gy + h, rz(), r() * 6, 0.6, g);
+  if (r() < 0.2) B.box("metal_dark", rx(), gy + h + 2.5, rz(), 0.06, 5, 0.06, 0x3a3a38, { group: g });
+}
+
+function addQuads(B: MeshBuilder, q: number[], tint: THREE.Color, group: string) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(q, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(new Array((q.length / 3) * 2).fill(0), 2));
+  geo.computeVertexNormals();
+  B.add(geo, null, "plain", tint, { group, noAo: true, uv: "keep" });
+  geo.dispose();
 }

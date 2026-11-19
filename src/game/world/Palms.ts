@@ -27,7 +27,8 @@ function makePalm(seed: number) {
     const t = i / seg;
     const c = spine(t);
     const ring = 1 + 0.08 * Math.max(0, Math.sin(t * 60));
-    const R = (0.028 - 0.01 * t) * ring;
+    // Swollen base, slim mid, thickened crown shaft under the leaf bases.
+    const R = (0.034 - 0.012 * t + 0.016 * Math.max(0, 1 - t * 9) + 0.008 * Math.max(0, t - 0.88) / 0.12) * ring;
     for (let k = 0; k <= rad; k++) {
       const a = (k / rad) * Math.PI * 2;
       tp.push(c.x + Math.cos(a) * R, c.y, c.z + Math.sin(a) * R);
@@ -48,42 +49,55 @@ function makePalm(seed: number) {
   trunk.setAttribute("color", new THREE.Float32BufferAttribute(tc, 3));
   trunk.setIndex(ti);
 
-  // Crown: arching fronds (strips, 6 segments) + a few dead ones hanging down.
+  // Crown: three tiers of arching fronds (young upright, spreading, drooping
+  // old) round the crown shaft, plus a skirt of dead brown fronds hanging
+  // against the trunk. Each frond is a V-folded strip (rib + leaflets).
   const fp: number[] = [], fn: number[] = [], fu: number[] = [], fc: number[] = [], fi: number[] = [];
   const top = spine(1);
-  const fronds = 13;
-  for (let f = 0; f < fronds; f++) {
-    const dead = f >= fronds - 3;
-    const yaw = (f / fronds) * Math.PI * 2 + r() * 0.4;
-    const dir = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
-    const side = new THREE.Vector3(-dir.z, 0, dir.x);
-    const len = (dead ? 0.22 : 0.3) + r() * 0.08;
-    const lift = dead ? -0.6 : 0.35 + r() * 0.4;
-    const droop = dead ? 0.1 : 0.55 + r() * 0.3;
-    const width = 0.075;
-    const n = 6;
-    const base = fp.length / 3;
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const p = top.clone().addScaledVector(dir, t * len);
-      p.y += (lift * t - droop * t * t) * len;
-      const w = width * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.08)) * (dead ? 0.5 : 1);
-      // Fold the leaflets down along the rib (V-section) for volume.
-      for (const sgn of [-1, 1]) {
-        const q = p.clone().addScaledVector(side, sgn * w);
-        q.y -= w * 0.35;
-        fp.push(q.x, q.y, q.z);
-        fn.push(0, 1, 0);
-        fu.push(sgn < 0 ? 0 : 1, t);
-        const g = dead ? [0.62, 0.5, 0.34] : [0.75 + r() * 0.1, 0.82 + r() * 0.12, 0.6];
-        fc.push(g[0], g[1], g[2]);
+  type Tier = { count: number; len: [number, number]; lift: [number, number]; droop: [number, number]; y: number; dead?: boolean };
+  const tiers: Tier[] = [
+    { count: 9, len: [0.32, 0.4], lift: [0.95, 1.3], droop: [0.75, 1.0], y: 0.03 },
+    { count: 13, len: [0.42, 0.52], lift: [0.35, 0.6], droop: [0.95, 1.25], y: 0.0 },
+    { count: 11, len: [0.38, 0.48], lift: [-0.3, 0.0], droop: [0.7, 1.0], y: -0.025 },
+    { count: 10, len: [0.14, 0.2], lift: [-0.85, -0.6], droop: [-0.2, 0], y: -0.03, dead: true },
+  ];
+  const fold = (lo: number, hi: number) => lo + r() * (hi - lo);
+  tiers.forEach((tier, ti2) => {
+    for (let f = 0; f < tier.count; f++) {
+      const dead = !!tier.dead;
+      const yaw = (f / tier.count) * Math.PI * 2 + ti2 * 0.7 + r() * 0.35;
+      const dir = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+      const side = new THREE.Vector3(-dir.z, 0, dir.x);
+      const len = fold(...tier.len);
+      const lift = fold(...tier.lift);
+      const droop = fold(...tier.droop);
+      const width = dead ? 0.035 : 0.1 + r() * 0.02;
+      const n = dead ? 3 : 6;
+      const base = fp.length / 3;
+      const start = top.clone().addScaledVector(dir, dead ? 0.03 : 0.012);
+      start.y += tier.y;
+      const tint = dead ? [0.55 + r() * 0.1, 0.42 + r() * 0.06, 0.28] : ti2 === 2 && r() < 0.35 ? [0.82, 0.78, 0.5] : [0.72 + r() * 0.1, 0.85 + r() * 0.1, 0.62 + r() * 0.08];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        const p = start.clone().addScaledVector(dir, t * len * (dead ? 0.45 : 1));
+        p.y += (lift * t - droop * t * t) * len;
+        const w = width * Math.sin(Math.PI * Math.min(1, t * 0.95 + 0.12));
+        // V-section: leaflets fold down from the rib; tips twist a little.
+        for (const sgn of [-1, 1]) {
+          const q = p.clone().addScaledVector(side, sgn * w * Math.cos(t * 0.5));
+          q.y -= w * (0.45 + sgn * 0.12 * t);
+          fp.push(q.x, q.y, q.z);
+          fn.push(0, 1, 0);
+          fu.push(sgn < 0 ? 0 : 1, t);
+          fc.push(tint[0], tint[1], tint[2]);
+        }
+      }
+      for (let i = 0; i < n; i++) {
+        const a = base + i * 2;
+        fi.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
       }
     }
-    for (let i = 0; i < n; i++) {
-      const a = base + i * 2;
-      fi.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-    }
-  }
+  });
   const crown = new THREE.BufferGeometry();
   crown.setAttribute("position", new THREE.Float32BufferAttribute(fp, 3));
   crown.setAttribute("normal", new THREE.Float32BufferAttribute(fn, 3));

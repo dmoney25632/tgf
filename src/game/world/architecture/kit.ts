@@ -204,7 +204,7 @@ export function wallDecal(B: MeshBuilder, f: Frame, kind: DecalKind, u: number, 
  * Ground decal: a quad lying on the ground, rotated by `yaw`. With a height
  * function it is subdivided to follow uneven terrain.
  */
-export function groundDecal(B: MeshBuilder, kind: DecalKind, x: number, z: number, w: number, l: number, yaw: number, tint: Tint, height?: (x: number, z: number) => number, group = "decor") {
+export function groundDecal(B: MeshBuilder, kind: DecalKind, x: number, z: number, w: number, l: number, yaw: number, tint: Tint, height?: (x: number, z: number) => number, group = "decor", lift = 0.02) {
   const [u0, v0, u1, v1] = decalRect(kind);
   const segs = height ? Math.max(1, Math.ceil(Math.max(w, l) / 2)) : 1;
   const c = Math.cos(yaw), s = Math.sin(yaw);
@@ -212,7 +212,7 @@ export function groundDecal(B: MeshBuilder, kind: DecalKind, x: number, z: numbe
   const vert = (i: number, j: number) => {
     const a = (i / segs - 0.5) * w, b = (j / segs - 0.5) * l;
     const px = x + a * c + b * s, pz = z - a * s + b * c;
-    pos.push(px, (height ? height(px, pz) : 0) + 0.02, pz);
+    pos.push(px, (height ? height(px, pz) : 0) + lift, pz);
     uv.push(u0 + (u1 - u0) * (i / segs), v0 + (v1 - v0) * (j / segs));
     nor.push(0, 1, 0);
   };
@@ -264,6 +264,8 @@ export function railing(B: MeshBuilder, a: THREE.Vector3, b: THREE.Vector3, h: n
   const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
   B.box(mat, mid.x, a.y + h, mid.z, len, 0.04, 0.05, tint, { rotY: yaw, group });
   B.box(mat, mid.x, a.y + 0.1, mid.z, len, 0.03, 0.03, tint, { rotY: yaw, group });
+  // Sparse (backdrop) railings read better with a mid rail between the posts.
+  if (spacing > 0.4) B.box(mat, mid.x, a.y + h * 0.55, mid.z, len, 0.03, 0.03, tint, { rotY: yaw, group });
   const n = Math.max(1, Math.round(len / spacing));
   for (let i = 0; i <= n; i++) {
     const p = a.clone().lerp(b, i / n);
@@ -350,6 +352,27 @@ export function rod(B: MeshBuilder, a: THREE.Vector3, b: THREE.Vector3, radius: 
   );
   B.add(geo, m, mat, tint, { group, uv: "keep", uvScale: [0.1, len] });
   geo.dispose();
+}
+
+/**
+ * Industrial pendant lamp hanging from (x, top, z): enamel shade (outer and
+ * inner skins), socket cap and a glowing bulb. About 300 tris, no draw calls.
+ */
+export function pendantLamp(B: MeshBuilder, x: number, top: number, z: number, drop: number, scale = 1, tint: Tint = 0x4f5a4c, group = "decor") {
+  const s = scale;
+  const prof: [number, number][] = [[0.035, 0], [0.06, -0.02], [0.075, -0.07], [0.15, -0.17], [0.25, -0.27], [0.28, -0.3]];
+  const outer = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r * s, y * s)), 14);
+  const inner = new THREE.LatheGeometry(prof.slice().reverse().map(([r, y]) => new THREE.Vector2(r * s * 0.97, (y + 0.004) * s)), 14);
+  const y0 = top - drop;
+  const m = new THREE.Matrix4().makeTranslation(x, y0, z);
+  B.add(outer, m, "metal_painted", tint, { group, uv: "keep" });
+  B.add(inner, m, "metal_painted", 0xe8e4d8, { group, uv: "keep" });
+  outer.dispose();
+  inner.dispose();
+  const bulb = new THREE.SphereGeometry(0.06 * s, 8, 6);
+  B.add(bulb, new THREE.Matrix4().makeTranslation(x, y0 - 0.12 * s, z), "glow", 0xffffff, { group, uv: "keep" });
+  bulb.dispose();
+  rod(B, new THREE.Vector3(x, top, z), new THREE.Vector3(x, y0, z), 0.006, 0x1e1e1e, group);
 }
 
 /** Wall-hung split AC unit with a fan grille, brackets and a drip stain. */
@@ -452,6 +475,54 @@ export function chainlink(B: MeshBuilder, ax: number, az: number, bx: number, bz
   post.dispose();
 }
 
+/**
+ * Faded road paint: dashes (or a broken solid line when gap = 0) from a to
+ * b, offset sideways by `side`, following the ground. Worn sections drop out.
+ */
+export function paintLine(B: MeshBuilder, ax: number, az: number, bx: number, bz: number, side: number, width: number, dash: number, gap: number, height: (x: number, z: number) => number, seed: number, tint: Tint = 0xd6d2c4, group = "decor", lift = 0.075) {
+  const r = rnd(seed);
+  const len = Math.hypot(bx - ax, bz - az);
+  const dx = (bx - ax) / len, dz = (bz - az) / len;
+  const nx = -dz, nz = dx;
+  const step = gap > 0 ? dash + gap : dash;
+  const pos: number[] = [], nor: number[] = [], uv: number[] = [];
+  for (let t = r() * step; t + dash < len; t += step) {
+    if (r() < 0.22) continue; // worn away
+    const l = dash * (gap > 0 ? 0.85 + r() * 0.15 : 0.5 + r() * 0.5);
+    const segs = Math.max(1, Math.round(l / 3));
+    for (let k = 0; k < segs; k++) {
+      const t0 = t + (l * k) / segs, t1 = t + (l * (k + 1)) / segs;
+      const q = [t0, t1].map((tt) => {
+        const cx = ax + dx * tt + nx * side, cz = az + dz * tt + nz * side;
+        return [
+          [cx - nx * width / 2, height(cx - nx * width / 2, cz - nz * width / 2) + lift, cz - nz * width / 2],
+          [cx + nx * width / 2, height(cx + nx * width / 2, cz + nz * width / 2) + lift, cz + nz * width / 2],
+        ];
+      });
+      const [a0, a1] = q[0], [b0, b1] = q[1];
+      for (const p of [a0, b0, a1, a1, b0, b1]) {
+        pos.push(p[0], p[1], p[2]);
+        nor.push(0, 1, 0);
+        uv.push(0, 0);
+      }
+    }
+  }
+  if (!pos.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  // Winding: make sure faces point up.
+  const p = geo.attributes.position as THREE.BufferAttribute;
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), a = new THREE.Vector3();
+  a.fromBufferAttribute(p, 0);
+  e1.fromBufferAttribute(p, 1).sub(a);
+  e2.fromBufferAttribute(p, 2).sub(a);
+  if (e1.cross(e2).y < 0) flipWinding(geo);
+  B.add(geo, null, "plain", tint, { group, noAo: true, uv: "keep" });
+  geo.dispose();
+}
+
 /** Textured strip (road surface) following the ground between two points, with ragged edges. */
 export function groundStrip(B: MeshBuilder, mat: WorldMat, ax: number, az: number, bx: number, bz: number, width: number, height: (x: number, z: number) => number, tint: Tint, seed: number, group = "decor", lift = 0.04) {
   const r = rnd(seed);
@@ -463,17 +534,21 @@ export function groundStrip(B: MeshBuilder, mat: WorldMat, ax: number, az: numbe
   const edge: [number, number][] = [];
   for (let i = 0; i <= n; i++) edge.push([(width / 2) * (0.8 + r() * 0.2), (width / 2) * (0.8 + r() * 0.2)]);
   const pos: number[] = [], uv: number[] = [], nor: number[] = [];
-  const P = (i: number, s: number) => {
+  // Columns across the strip so it follows the ground (cuts, cambers) too.
+  const m = Math.max(1, Math.ceil(width / 2.2));
+  const P = (i: number, j: number) => {
     const t = (i / n) * len;
-    const e = s < 0 ? -edge[i][0] : edge[i][1];
+    const e = -edge[i][0] + ((edge[i][0] + edge[i][1]) * j) / m;
     const x = ax + dx * t + px * e, z = az + dz * t + pz * e;
     pos.push(x, height(x, z) + lift, z);
     uv.push(e, t);
     nor.push(0, 1, 0);
   };
   for (let i = 0; i < n; i++) {
-    P(i, -1); P(i + 1, 1); P(i, 1);
-    P(i, -1); P(i + 1, -1); P(i + 1, 1);
+    for (let j = 0; j < m; j++) {
+      P(i, j); P(i + 1, j + 1); P(i, j + 1);
+      P(i, j); P(i + 1, j); P(i + 1, j + 1);
+    }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));

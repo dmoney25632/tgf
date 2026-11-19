@@ -429,7 +429,7 @@ export class Foliage {
     const td = Math.min(1, 0.4 + d * 0.6);
     for (const t of this.trees) t.mesh.count = Math.max(1, Math.floor(t.total * td));
     if (this.bushes) this.bushes.mesh.count = Math.floor(this.bushes.total * Math.min(1, 0.3 + d * 0.7));
-    if (this.tall) this.tall.mesh.count = Math.floor(this.tall.total * Math.min(1, 0.35 + d * 0.65));
+    if (this.tall) this.tall.mesh.count = Math.floor(this.tall.total * Math.min(1, 0.15 + d * d * 0.85));
     this.tallFade.value = q.grassDistance * 2;
   }
 
