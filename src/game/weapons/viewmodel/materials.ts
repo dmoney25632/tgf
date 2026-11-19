@@ -73,7 +73,8 @@ export function createViewmodelMaterials() {
     /** Parkerised / phosphate steel: grey, very matte, light edge polish. */
     steel: u(0x2e2f30, { metal: 0.7, rough: 0.55, wear: 0.7, n: 0.45 }),
     /** Nitrided barrel steel, a little glossier. */
-    blued: u(0x1e2024, { metal: 0.85, rough: 0.34, wear: 0.55, n: 0.3 }),
+    /** Blued steel: blue-black, rubs through to silvery steel on edges. */
+    blued: u(0x141820, { metal: 0.85, rough: 0.32, wear: 0.9, n: 0.3 }),
     /** Bright machined steel (bolt carrier, extractor, cylinder face). */
     bright: u(0x9a9c9e, { metal: 1, rough: 0.24, wear: 0.15, n: 0.25 }),
     stainless: u(0x7a7d80, { metal: 1, rough: 0.3, wear: 0.2, n: 0.35 }),
@@ -94,7 +95,9 @@ export function createViewmodelMaterials() {
     /** Stippled grip panels. */
     grip: u(0x19191a, { rough: 0.84, wear: -0.5, n: 1, layer: "stipple" }),
     gripTan: u(0x7a6748, { rough: 0.84, wear: -0.4, n: 1, layer: "stipple" }),
-    rubber: u(0x121212, { rough: 0.9, wear: -0.3, n: 0.6, layer: "rubber" }),
+    /** Varnished walnut (shotgun furniture, revolver grips); grain from the wood layer. */
+    wood: u(0x5a3219, { metal: 0, rough: 0.36, n: 0.5, layer: "wood" }),
+        rubber: u(0x121212, { rough: 0.9, wear: -0.3, n: 0.6, layer: "rubber" }),
     /** Olive webbing / canvas (LMG pouch, slings, suppressor cover). */
     canvas: u(0x474a33, { rough: 0.95, n: 1, layer: "fabric" }),
     shellHull: u(0x86201a, { metal: 0.05, rough: 0.45, n: 0.2, layer: "polymer" }),
@@ -215,6 +218,8 @@ ${NOISE_GLSL}`,
         `#include <color_fragment>
 vec4 vmDet = texture(vmDetail, vec3(vNormalMapUv, vSurf.x));
 if (vSurf.y > 0.5) diffuseColor.rgb *= vmTints[int(vSurf.y - 0.5)];
+// Wood: the B channel is grain darkness (late wood + pores), not wear.
+if (abs(vSurf.x - 7.0) < 0.5) diffuseColor.rgb *= mix(1.25, 0.38, vmDet.b);
 // Wear: chamfer flag x per-surface amount, broken up by noise; scratches add.
 float vmSigned = vPbr.z;
 float vmAmt = abs(vmSigned);

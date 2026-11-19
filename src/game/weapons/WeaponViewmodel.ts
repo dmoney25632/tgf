@@ -569,19 +569,22 @@ export class WeaponViewmodel {
       g.position.y += 0.012 * tilt;
       g.position.z += 0.02 * tilt;
     } else if (sp.reload === "box") {
-      g.rotation.z += 0.32 * tilt;
-      g.rotation.x += 0.16 * tilt;
-      g.position.y -= 0.02 * tilt;
-      g.position.z += 0.03 * tilt;
-      g.position.x -= 0.02 * tilt;
+      // Feed tray toward the support hand, kept low and away from the lens.
+      g.rotation.z += 0.2 * tilt;
+      g.rotation.x += 0.06 * tilt;
+      g.position.y -= 0.01 * tilt;
+      g.position.z -= 0.01 * tilt;
+      g.position.x -= 0.03 * tilt;
       if (sp.cover) sp.cover.rotation.x = 1.05 * smooth(r, 0.13, 0.24) * (1 - smooth(r, 0.72, 0.8));
     } else {
-      g.rotation.z += 0.45 * tilt;
-      g.rotation.x += 0.1 * tilt;
-      g.rotation.y -= 0.08 * tilt;
-      g.position.y -= 0.03 * tilt;
-      g.position.x -= 0.025 * tilt;
-      g.position.z += 0.02 * tilt;
+      // Cant left and lift the mag well into view; nose dips a touch so the
+      // muzzle stays in frame instead of swinging up past the crosshair.
+      g.rotation.z += 0.32 * tilt;
+      g.rotation.x -= 0.08 * tilt;
+      g.rotation.y += 0.05 * tilt;
+      g.position.y += 0.03 * tilt;
+      g.position.x -= 0.035 * tilt;
+      g.position.z += 0.035 * tilt;
     }
 
     // Magazine path + visibility.
