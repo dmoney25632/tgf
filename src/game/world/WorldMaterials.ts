@@ -30,6 +30,7 @@ const DEFS: Record<ExtraMaterialName, ExtraDef> = {
   chainlink: { tile: 1, roughness: 0.6, metalness: 0.6, normalScale: 0, placeholder: 0x9a9a96 },
   decal: { tile: 1, roughness: 1, metalness: 0, normalScale: 0, placeholder: 0x202020 },
   frond: { tile: 1, roughness: 0.9, metalness: 0, normalScale: 0, placeholder: 0x6a7040 },
+  glow: { tile: 1, roughness: 0.5, metalness: 0, normalScale: 0, placeholder: 0xffe2b0 },
 };
 
 /** Ground decals overlay the terrain; wall decals sit 1-2 cm proud. Both use the atlas below. */
@@ -391,6 +392,9 @@ export class WorldMaterials {
         return new THREE.MeshStandardMaterial({ ...base, map: this.tex(makeChainlink(), true), alphaTest: 0.5, side: THREE.DoubleSide });
       case "frond":
         return new THREE.MeshStandardMaterial({ ...base, map: this.tex(makeFrond(), true), alphaTest: 0.45, side: THREE.DoubleSide });
+      case "glow":
+        // Lamp bulbs and lit panels: unlit warm emissive, picked up by bloom.
+        return new THREE.MeshStandardMaterial({ ...base, color: 0x000000, emissive: 0xffe2b0, emissiveIntensity: 3.2 });
       default:
         return this.photo(name, def);
     }

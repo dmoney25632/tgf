@@ -352,6 +352,27 @@ export function rod(B: MeshBuilder, a: THREE.Vector3, b: THREE.Vector3, radius: 
   geo.dispose();
 }
 
+/**
+ * Industrial pendant lamp hanging from (x, top, z): enamel shade (outer and
+ * inner skins), socket cap and a glowing bulb. About 300 tris, no draw calls.
+ */
+export function pendantLamp(B: MeshBuilder, x: number, top: number, z: number, drop: number, scale = 1, tint: Tint = 0x4f5a4c, group = "decor") {
+  const s = scale;
+  const prof: [number, number][] = [[0.035, 0], [0.06, -0.02], [0.075, -0.07], [0.15, -0.17], [0.25, -0.27], [0.28, -0.3]];
+  const outer = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r * s, y * s)), 14);
+  const inner = new THREE.LatheGeometry(prof.slice().reverse().map(([r, y]) => new THREE.Vector2(r * s * 0.97, (y + 0.004) * s)), 14);
+  const y0 = top - drop;
+  const m = new THREE.Matrix4().makeTranslation(x, y0, z);
+  B.add(outer, m, "metal_painted", tint, { group, uv: "keep" });
+  B.add(inner, m, "metal_painted", 0xe8e4d8, { group, uv: "keep" });
+  outer.dispose();
+  inner.dispose();
+  const bulb = new THREE.SphereGeometry(0.06 * s, 8, 6);
+  B.add(bulb, new THREE.Matrix4().makeTranslation(x, y0 - 0.12 * s, z), "glow", 0xffffff, { group, uv: "keep" });
+  bulb.dispose();
+  rod(B, new THREE.Vector3(x, top, z), new THREE.Vector3(x, y0, z), 0.006, 0x1e1e1e, group);
+}
+
 /** Wall-hung split AC unit with a fan grille, brackets and a drip stain. */
 export function acUnit(B: MeshBuilder, f: Frame, u: number, y: number, seed: number, group = "decor") {
   const r = rnd(seed);

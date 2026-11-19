@@ -196,27 +196,41 @@ export function drawBox(kit: StyleKit, b: MapBox) {
 
     case "rock": {
       proxy(kit, b, "sand");
-      kit.props.place(
-        "rock_moss_set_01",
-        { x: b.x, y, z: b.z, fit: [b.w * 1.12, b.h * 1.08, b.d * 1.12], rotY: Math.round(r() * 3) * (Math.PI / 2), variant: Math.floor(r() * 6), sink: b.h * 0.08 },
-        (bb, g) => {
-          const geo = new THREE.IcosahedronGeometry(0.5, 2);
-          const p = geo.attributes.position as THREE.BufferAttribute;
-          const v = new THREE.Vector3();
-          const ph = r() * 10;
-          for (let i = 0; i < p.count; i++) {
-            v.fromBufferAttribute(p, i);
-            const n = 1 + 0.18 * Math.sin(v.x * 9 + ph) * Math.cos(v.z * 7 - ph) + 0.08 * Math.sin(v.y * 15 + ph);
-            v.multiplyScalar(n);
-            v.y = Math.max(v.y, -0.35);
-            p.setXYZ(i, v.x, v.y, v.z);
+      // Main boulder plus one or two split-off slabs leaning on it. Faceted
+      // noise (low-frequency lumps + planar cuts) reads as weathered stone.
+      const lump = (sx: number, sy: number, sz: number, cx: number, cy: number, cz: number, yaw: number) => {
+        const geo = new THREE.IcosahedronGeometry(0.5, 3);
+        const p = geo.attributes.position as THREE.BufferAttribute;
+        const v = new THREE.Vector3();
+        const ph = r() * 10;
+        const cuts = [0, 1, 2].map(() => new THREE.Vector3(r() - 0.5, r() * 0.6, r() - 0.5).normalize());
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i);
+          const n = 1 + 0.16 * Math.sin(v.x * 6 + ph) * Math.cos(v.z * 5 - ph) + 0.07 * Math.sin(v.y * 13 + ph * 2) + 0.04 * Math.sin((v.x + v.z) * 21);
+          v.multiplyScalar(n);
+          for (const c of cuts) {
+            const d = v.dot(c) - 0.36;
+            if (d > 0) v.addScaledVector(c, -d * 0.85);
           }
-          geo.computeVertexNormals();
-          const m = new THREE.Matrix4().compose(new THREE.Vector3(b.x, y + b.h * 0.42, b.z), new THREE.Quaternion(), new THREE.Vector3(b.w * 1.1, b.h * 1.15, b.d * 1.1));
-          bb.add(geo, m, "rock", b.color, { group: g });
-          geo.dispose();
-        },
-      );
+          v.y = Math.max(v.y, -0.3);
+          p.setXYZ(i, v.x, v.y, v.z);
+        }
+        geo.computeVertexNormals();
+        const m = new THREE.Matrix4().compose(
+          new THREE.Vector3(cx, cy, cz),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw),
+          new THREE.Vector3(sx, sy, sz),
+        );
+        B.add(geo, m, "rock", vary(b.color, r, 0.08), { group: "decor" });
+        geo.dispose();
+      };
+      lump(b.w * 1.1, b.h * 1.2, b.d * 1.1, b.x, y + b.h * 0.36, b.z, r() * 6.28);
+      const extra = 1 + Math.floor(r() * 2);
+      for (let k = 0; k < extra; k++) {
+        const a = r() * 6.28, rr = Math.max(b.w, b.d) * 0.5;
+        const sc = 0.35 + r() * 0.2;
+        lump(b.w * sc, b.h * sc * 0.9, b.d * sc, b.x + Math.cos(a) * rr, y + b.h * sc * 0.3, b.z + Math.sin(a) * rr, r() * 6.28);
+      }
       return;
     }
 

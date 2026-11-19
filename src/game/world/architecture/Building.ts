@@ -234,8 +234,8 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
         const c2 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, bd - 0.03), c3 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, 0.03);
         c0.y = c1.y = c2.y = c3.y = gy + o.y - 0.04;
         const ironTint = r() < 0.6 ? 0x232321 : 0x3c4a4a;
-        railing(B, c0, c1, 1.0, ironTint, 0.14, group);
-        railing(B, c1, c2, 1.0, ironTint, 0.14, group);
+        railing(B, c0, c1, 1.0, ironTint, group.startsWith("far") ? 0.3 : 0.14, group);
+        railing(B, c1, c2, 1.0, ironTint, group.startsWith("far") ? 0.3 : 0.14, group);
         railing(B, c2, c3, 1.0, ironTint, 0.14, group);
         wallDecal(B, f, "leak", o.u, o.y - 0.9, bw * 0.8, 1.4, 0xffffff, 0.012, group);
         if (r() < 0.3) awning(B, f, o.u, gy + top + 0.45, bw, 1.0, 0.35, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < damage, group);

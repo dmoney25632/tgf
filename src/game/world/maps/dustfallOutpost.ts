@@ -170,8 +170,8 @@ const drums: [number, number, "Barrel_01" | "barrel_03"][] = [
 drums.forEach(([x, z, model], i) => B({ x, z, w: 0.62, h: 0.9, d: 0.62, color: i % 2 ? 0x7d8a6a : 0x8a5a40, surface: "metal", style: "model", model, rotY: i * 1.7 }));
 
 // Old ammunition chests on the ground by the ops building and a container.
-B({ x: 4.2, z: -6.3, w: 1.5, h: 0.3, d: 0.5, color: OLIVE, surface: "wood", style: "model", model: "old_military_crate" });
-B({ x: -18, z: 14.2, w: 1.5, h: 0.3, d: 0.5, color: OLIVE, surface: "wood", style: "model", model: "old_military_crate", rotY: Math.PI });
+B({ x: 4.2, z: -6.3, w: 1.5, h: 0.3, d: 0.5, color: OLIVE, surface: "wood", style: "crate" });
+B({ x: -18, z: 14.2, w: 1.5, h: 0.3, d: 0.5, color: OLIVE, surface: "wood", style: "crate", rotY: Math.PI });
 
 // ---- Buy stations (glowing terminals) + ammo crates ---------------------------------
 const stations = [
@@ -215,8 +215,8 @@ B({ x: -30.4, z: 11.5, w: 0.32, h: 3, d: 0.32, color: WOOD, surface: "wood", sty
 for (const [x, z] of [[37, -37.5], [38.9, -35.6], [-37, 37.5], [-38.9, 35.6]]) B({ x, z, w: 1.5, h: 1.25, d: 1.5, color: 0xd9d6c8, surface: "sand", style: "bale" });
 
 // Road barriers channelling the east gate approach.
-B({ x: 37.5, z: -5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "model", model: "concrete_road_barrier_02" });
-B({ x: 37.5, z: 5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "model", model: "concrete_road_barrier_02", rotY: Math.PI });
+B({ x: 37.5, z: -5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "barrier" });
+B({ x: 37.5, z: 5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "barrier", rotY: Math.PI });
 
 const perches = [
   { x: -43, y: 6, z: -43 },

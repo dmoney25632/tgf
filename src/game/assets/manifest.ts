@@ -86,6 +86,7 @@ export const EXTRA_MATERIAL_TEXTURES = {
   chainlink: null,
   decal: null,
   frond: null,
+  glow: null,
 } as const satisfies Record<string, string | null>;
 
 export type ExtraMaterialName = keyof typeof EXTRA_MATERIAL_TEXTURES;
@@ -141,7 +142,7 @@ const model = (id: ModelId, tris: number, variants: ModelEntry["variants"], cast
 export const MODELS: Record<ModelId, ModelEntry> = {
   wooden_crate_01: model("wooden_crate_01", 6576, "whole"),
   old_military_crate: model("old_military_crate", 10476, "whole"),
-  ammo_box: model("ammo_box", 4382, "whole"),
+  ammo_box: model("ammo_box", 4382, "whole", false),
   Barrel_01: model("Barrel_01", 2682, "whole"),
   barrel_03: model("barrel_03", 1473, "whole"),
   concrete_road_barrier_02: model("concrete_road_barrier_02", 23822, "whole"),
@@ -155,11 +156,11 @@ export const MODELS: Record<ModelId, ModelEntry> = {
   old_tyre: model("old_tyre", 2880, "whole"),
   trashbag: model("trashbag", 4482, "whole", false),
   plastic_jerrycan: model("plastic_jerrycan", 7348, "whole", false),
-  propane_tank: model("propane_tank", 5238, "whole"),
+  propane_tank: model("propane_tank", 5238, "whole", false),
   utility_box_01: model("utility_box_01", 4404, "whole"),
   rollershutter_door: model("rollershutter_door", 552, "whole", false),
-  steel_frame_shelves_01: model("steel_frame_shelves_01", 4348, "whole"),
-  metal_office_desk: model("metal_office_desk", 6898, "whole"),
+  steel_frame_shelves_01: model("steel_frame_shelves_01", 4348, "whole", false),
+  metal_office_desk: model("metal_office_desk", 6898, "whole", false),
   plastic_monobloc_chair_01: model("plastic_monobloc_chair_01", 3356, "whole", false),
   hanging_industrial_lamp: model("hanging_industrial_lamp", 9530, "whole", false),
 };

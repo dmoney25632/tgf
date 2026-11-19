@@ -9,7 +9,7 @@ import { smokeColumns } from "../Smoke";
 import { SHED } from "../maps/dustfallOutpost";
 import { facades, spall, PLASTER_TINTS } from "../architecture/Building";
 import {
-  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, pipeRail, rod, wall, wallDecal, waterTank,
+  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, pendantLamp, pipeRail, rod, wall, wallDecal, waterTank,
 } from "../architecture/kit";
 import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/debris";
 import { town } from "./town";
@@ -247,7 +247,7 @@ export const dustfall: Dressing = (kit) => {
   for (const [gx, gz] of [[-6, 2.2], [-3.4, 4.9], [-5.9, 5.0]]) wireSpan(B, [new THREE.Vector3(-4.8, 8.9, 3.8)], [new THREE.Vector3(gx, 3.56, gz)], 0.05);
   for (let i = 0; i < 5; i++) decorBox(kit, { x: -5.2 + i * 0.7, z: -4.65, y: 3.55, w: 0.65, h: 0.34, d: 0.4, color: 0xc4b48e, surface: "sand", style: "sandbags" });
   // Interior: hanging lamp, chairs round the map table, papers and debris on the floor.
-  props.place("hanging_industrial_lamp", { x: 0, y: 3.2 - 0.95, z: 0, scale: 0.7 });
+  pendantLamp(B, 0, 3.2, 0, 0.75, 0.75);
   kit.addLamp?.(new THREE.Vector3(0, 2.0, 0), 0xffd6a0, 4, 9);
   for (const [cx, cz, ry] of [[-1.7, 0.4, 1.4], [1.75, -0.3, -1.7], [0.3, 1.25, 3.0], [-4.2, -1.4, 2.6]] as const) {
     props.place("plastic_monobloc_chair_01", { x: cx, y: 0, z: cz, rotY: ry, scale: 1 });
@@ -297,9 +297,8 @@ export const dustfall: Dressing = (kit) => {
       B.box("corrugated_rust", x + 0.5, yTop + 0.2 - slip * 0.3, (z0 + z1) / 2 + slip, 1.08, 0.04, z1 - z0 + 1.2, 0xc0a890, { rotX: slip * 0.2, rot90: true });
     }
     for (const [lx, lz] of [[12, 18], [18, 21], [24, 15]] as const) {
-      props.place("hanging_industrial_lamp", { x: lx, y: h - 1.34, z: lz, scale: 1 });
+      pendantLamp(B, lx, yTop + 0.1, lz, yTop + 0.1 - (h - 1.1), 1.1);
       kit.addLamp?.(new THREE.Vector3(lx, h - 1.6, lz), 0xffd29a, 6, 14);
-      rod(B, new THREE.Vector3(lx, h, lz), new THREE.Vector3(lx, yTop + 0.1, lz), 0.006, 0x222222);
     }
     // Floor: oily concrete slab with stains, pallets, shelving, gas bottles, jerrycans.
     groundPatch(B, "concrete_broken", (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2 + 1, (z1 - z0) / 2 + 1, 0, 0xa8a49c, 23, 0.01);
@@ -325,7 +324,7 @@ export const dustfall: Dressing = (kit) => {
   }
   for (const a of tagged("ammo")) {
     props.place("ammo_box", { x: a.x - 0.35, y: a.h, z: a.z + 0.3, scale: 2, rotY: Math.PI / 2 }, (bb, g) => bb.box("metal_painted", a.x - 0.35, a.h + 0.16, a.z + 0.3, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
-    props.place("ammo_box", { x: a.x + 0.3, y: a.h, z: a.z - 0.32, scale: 2, rotY: Math.PI / 2 + 0.2 }, (bb, g) => bb.box("metal_painted", a.x + 0.3, a.h + 0.16, a.z - 0.32, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
+    props.place("ammo_box", { x: a.x + 0.3, y: a.h, z: a.z - 0.32, scale: 2, rotY: Math.PI / 2 + 0.2, tier: 2 }, (bb, g) => bb.box("metal_painted", a.x + 0.3, a.h + 0.16, a.z - 0.32, 0.52, 0.32, 0.16, 0x7d8456, { group: g }));
   }
   tagged("supply").forEach((c, i) => {
     if (i % 2) return;
@@ -414,8 +413,10 @@ export const dustfall: Dressing = (kit) => {
     }
   };
   // Photoscans are 3-7k tris each: a few go a long way.
-  along(Math.round(6 * detail.debris), true, (x, z, rot) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4 }));
-  along(Math.round(4 * detail.debris), false, (x, z, rot) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4 }));
+  let bags = 0;
+  const bag = (x: number, z: number, rot: number) => props.place("trashbag", { x, y: 0, z, rotY: rot, scale: 0.9 + r() * 0.4, tier: bags++ % 3 === 2 ? 2 : 0 });
+  along(6, true, bag);
+  along(4, false, bag);
   along(6, true, (x, z, rot) => props.place("old_tyre", { x, y: 0, z, rotY: rot, scale: 1 }));
   for (const [x, z] of [[16.2, -11.4], [22.6, -2.2], [-21.3, 14.6], [-26.1, 0.9], [9.4, -26.6]]) if (free(x, z, 0.5)) tyre(B, x, z, r() < 0.3, r);
   const clutterSpots: [number, number][] = [[-29.6, -28.4], [29.4, -28.8], [-12.6, 29.8], [21.6, -29.5], [-29.4, 16.5], [13.2, -29.8]];
@@ -536,13 +537,14 @@ export const dustfall: Dressing = (kit) => {
   for (const b of boxes) if (b.style === "rock") for (let k = 0; k < 2; k++) tryBush(b.x + (r() - 0.5) * (b.w + 3), b.z + (r() - 0.5) * (b.d + 3), 0.6 + r() * 0.5, 0.3);
 
   // glTF plants (instanced) as extra ground clutter, density-scaled.
-  const plantBudget = quality.foliageDensity;
+  // Placed for high; tiers thin them out on medium (about 60%) and low (30%).
   const place = (id: "shrub_03" | "fern_02" | "weed_plant_02", n: number, ring: () => [number, number], scale: () => number) => {
     let placed = 0, guard = 0;
-    while (placed < Math.round(n * plantBudget) && guard++ < n * 20) {
+    while (placed < n && guard++ < n * 20) {
       const [x, z] = ring();
       if (!clearOf(boxes, x, z, 0.4) || nearSpawn(x, z, 3) || track(x, z) > 0.4) continue;
-      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 5) });
+      const k = placed % 10;
+      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 2), tier: k < 3 ? 0 : k < 6 ? 1 : 2 });
       placed++;
     }
   };
