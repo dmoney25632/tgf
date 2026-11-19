@@ -452,7 +452,7 @@ export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1
     { label: "Headshots", value: s.headshots * P.headshot },
     { label: "Gunships downed", value: s.gunships * P.gunship },
     { label: "Time bonus", value: Math.round(under * P.timeBonus) },
-    { label: "Retries", value: s.retries * P.retry },
+    { label: "Retries", value: s.retries ? s.retries * P.retry : 0 },
   ];
   const raw = breakdown.reduce((a, b) => a + b.value, 0);
   const score = Math.max(0, Math.round(raw * difficultyMul));

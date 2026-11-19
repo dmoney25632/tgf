@@ -403,9 +403,12 @@ export class MissionGameMode implements GameMode {
       f.inZone = playerUp && near(p.x, p.z, r);
       if (!f.inZone && obj?.kind === "defend") for (const s of this.agents.squad) if (s !== this.vip && s.alive && near(s.position.x, s.position.z, r)) f.inZone = true;
       if (obj?.kind === "defend") {
+        // Contested: more hostiles inside than defenders (and at least three).
         let n = 0;
+        let team = playerUp && near(p.x, p.z, r) ? 1 : 0;
         for (const a of this.agents.active) if (a.alive && near(a.position.x, a.position.z, r)) n++;
-        f.contested = n >= 3;
+        for (const s of this.agents.squad) if (s.alive && near(s.position.x, s.position.z, r)) team++;
+        f.contested = n >= 3 && n > team;
       }
     }
     f.interacting = this.prompt.startsWith("HOLD [F] P") || this.prompt.startsWith("HOLD [F] F") ? this.ctx.input.isDown("KeyF") : false;
