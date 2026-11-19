@@ -174,6 +174,22 @@ export type EnemyDef = {
   colors: { uniform: number; vest: number; helmet: number; skin: number; accent: number };
   /** Visual kit: plates, visor, ghillie hood, etc. */
   kit: "standard" | "rusher" | "heavy" | "sniper" | "warden";
+  /** Keeps firing at the last-seen position this many seconds after losing sight (suppression). */
+  suppress?: number;
+  /** Big hits knock it off balance (heavies). */
+  stagger?: StaggerDef;
+};
+
+/** See ai/heavy/Juggernaut.ts. Damage values are raw (before armour). */
+export type StaggerDef = {
+  /** A single hit at least this big staggers. */
+  threshold: number;
+  /** …or this much total inside `window` seconds. */
+  burst: number;
+  window: number;
+  duration: number;
+  /** Immune to another stagger for this long after one ends. */
+  cooldown: number;
 };
 
 export const ENEMIES: Record<EnemyType, EnemyDef> = {
@@ -190,10 +206,13 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
     colors: { uniform: 0x3a3634, vest: 0x2a2624, helmet: 0x2a2624, skin: 0xa07a5a, accent: 0xe8a33a }, kit: "rusher",
   },
   armored: {
-    type: "armored", name: "Juggernaut", health: 420, bodyArmor: 0.6, speed: 1.6, runSpeed: 2.2, range: [6, 22],
-    weapon: { damage: 7, rpm: 640, burst: [10, 18], burstPause: [0.8, 1.4], accuracy: 0.32, range: 45, falloff: 0.6, heavy: 1.3 },
-    coverBias: 0, flinch: 0, reward: 180, scale: 1.12,
+    // Heavy LMG gunner in layered plate: slow, very tough, only the head takes full damage.
+    type: "armored", name: "Juggernaut", health: 640, bodyArmor: 0.4, speed: 1.45, runSpeed: 2.0, range: [6, 24],
+    weapon: { damage: 8, rpm: 720, burst: [16, 30], burstPause: [0.7, 1.25], accuracy: 0.3, range: 50, falloff: 0.6, heavy: 1.5 },
+    coverBias: 0, flinch: 0, reward: 250, scale: 1.14,
     colors: { uniform: 0x3c3f42, vest: 0x2b2d30, helmet: 0x22252a, skin: 0x9a7a60, accent: 0xff5a2a }, kit: "heavy",
+    suppress: 3.5,
+    stagger: { threshold: 60, burst: 170, window: 1.1, duration: 0.95, cooldown: 2.6 },
   },
   sniper: {
     type: "sniper", name: "Marksman", health: 110, bodyArmor: 1, speed: 2.2, runSpeed: 3.6, range: [30, 90],
@@ -266,7 +285,9 @@ export function composeWave(wave: number, countMul: number, squadSize: number): 
   };
   if (wave >= 10 && wave % 5 === 0) take("warden", 1 + Math.floor((wave - 10) / 10));
   if (wave >= 7) take("sniper", Math.min(4, 1 + Math.floor((wave - 7) / 2)));
-  if (wave >= 4) take("armored", Math.min(5, 1 + Math.floor((wave - 4) / 2) + (wave >= 10 ? 1 : 0)));
+  // Juggernauts: from wave 4, more on elite waves (10+) and two extra escorting each boss.
+  const boss = wave >= 10 && wave % 5 === 0;
+  if (wave >= 4) take("armored", Math.min(7, 1 + Math.floor((wave - 4) / 2) + (wave >= 10 ? 1 : 0) + (boss ? 2 : 0)));
   if (wave >= 4) take("rusher", total * (wave >= 7 ? 0.28 : 0.2));
   out.rifleman += rest;
   return out;

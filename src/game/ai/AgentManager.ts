@@ -5,6 +5,8 @@ import type { Sfx } from "../audio/Sfx";
 import type { CollisionWorld } from "../world/Collision";
 import { ENEMIES, SQUAD, type EnemyType } from "../survival/config";
 import { Agent, type AgentSpec } from "./Agent";
+import { attachJuggernautArmor, disposeJuggernautArmor } from "./heavy/JuggernautArmor";
+import { tickStagger } from "./heavy/Juggernaut";
 import type { CoverPoint, NavGrid } from "./NavGrid";
 import type { Combatant } from "./types";
 
@@ -40,6 +42,8 @@ export class AgentManager {
   reviver: Agent | null = null;
   /** Running squad revive progress for the player (0..1 handled by PlayerState). */
   playerTargets: Combatant[] = [];
+  /** Extra hostiles the squad can shoot at (e.g. attack helicopters). */
+  readonly extraHostiles: Combatant[] = [];
 
   private readonly laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
   private readonly laserMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 0.3, 0.2), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
@@ -84,11 +88,19 @@ export class AgentManager {
     return agent;
   }
 
-  addSquadmate(index: number, colors: { uniform: number; vest: number; helmet: number; accent: number }) {
+  /**
+   * Friendly bot that follows the player. `opts.unarmed` makes a non-combatant
+   * (escort / rescue VIP): it follows and can be downed and revived, but never shoots.
+   */
+  addSquadmate(
+    index: number,
+    colors: { uniform: number; vest: number; helmet: number; accent: number },
+    opts: { name?: string; health?: number; unarmed?: boolean } = {},
+  ) {
     const spec: AgentSpec = {
-      role: "squad", name: SQUAD.names[index] ?? `Squad ${index + 1}`, team: "player",
-      health: SQUAD.health, bodyArmor: 1, speed: SQUAD.speed, runSpeed: SQUAD.runSpeed, range: [4, 40],
-      weapon: SQUAD.weapon, coverBias: 0, flinch: 0,
+      role: "squad", name: opts.name ?? SQUAD.names[index] ?? `Squad ${index + 1}`, team: "player",
+      health: opts.health ?? SQUAD.health, bodyArmor: 1, speed: SQUAD.speed, runSpeed: SQUAD.runSpeed, range: [4, 40],
+      weapon: opts.unarmed ? { ...SQUAD.weapon, damage: 0, range: 0 } : SQUAD.weapon, coverBias: 0, flinch: 0,
       look: { ...colors, skin: 0xb08a6a, kit: "standard", scale: 1 },
     };
     const agent = new Agent(spec, this.nextId++);
@@ -129,8 +141,10 @@ export class AgentManager {
       speed: def.speed, runSpeed: def.runSpeed, range: def.range, weapon: def.weapon,
       coverBias: def.coverBias, flinch: def.flinch,
       look: { ...def.colors, kit: def.kit, scale: def.scale },
+      suppress: def.suppress, stagger: def.stagger,
     };
     const agent = new Agent(spec, this.nextId++);
+    if (type === "armored") attachJuggernautArmor(agent.model);
     agent.onDamage = (ag, amount, part, killed) => {
       const src = ag.lastHitSource;
       if (src) this.events.onAgentDamaged(ag, amount, part, killed, src);
@@ -235,6 +249,7 @@ export class AgentManager {
     ag.sinceDamage += dt;
     ag.flinchTimer = Math.max(0, ag.flinchTimer - dt);
     ag.seenTimer += dt;
+    if (ag.spec.stagger) tickStagger(ag, dt);
 
     if (ag.state === "downed") {
       ag.bleed -= dt;
@@ -281,6 +296,7 @@ export class AgentManager {
       for (const s of this.squad) if (s.targetable) list.push(s);
     } else {
       for (const e of this.active) if (e.alive) list.push(e);
+      for (const e of this.extraHostiles) if (e.targetable) list.push(e);
     }
     return list;
   }
@@ -382,6 +398,13 @@ export class AgentManager {
 
   private thinkSquad(ag: Agent) {
     const p = this.player;
+    if (ag.spec.weapon.damage === 0) {
+      // Non-combatant (VIP): just stick with the player.
+      ag.target = null;
+      ag.hasLos = false;
+      if (ag.state !== "follow") this.setState(ag, "follow");
+      return;
+    }
     // Revive the player if downed (bots are brave).
     if (!p.targetable && (p as unknown as { downed?: boolean }).downed) {
       this.setState(ag, "revive");
@@ -549,10 +572,22 @@ export class AgentManager {
     }
 
     if (ag.flinchTimer > 0) speed *= 0.25;
+    // Staggered heavy: rooted, weapon off target.
+    const staggered = ag.staggerTimer > 0;
+    if (staggered) {
+      speed = 0;
+      wantFire = false;
+    }
+    // Suppression: a heavy that just lost sight keeps raking the spot it last saw you.
+    const suppressing =
+      !staggered && !!ag.spec.suppress && ag.team === "enemy" && t !== null && !ag.hasLos && ag.seenTimer > 0.25 && ag.seenTimer < ag.spec.suppress;
 
     // ---- Facing -----------------------------------------------------------
     let desiredYaw = ag.yaw;
-    if (faceTarget && t) {
+    if (suppressing) {
+      desiredYaw = Math.atan2(ag.lastSeen.x - ag.position.x, ag.lastSeen.z - ag.position.z);
+      ag.aimPitch *= 1 - Math.min(1, dt * 4);
+    } else if (faceTarget && t) {
       desiredYaw = Math.atan2(t.position.x - ag.position.x, t.position.z - ag.position.z);
       t.aimPoint(this.b);
       ag.eye(this.a);
@@ -573,14 +608,16 @@ export class AgentManager {
     // ---- Fire -------------------------------------------------------------
     if (wantFire && t && ag.hasLos && Math.abs(dy) < 0.4) {
       ag.engageTime += dt;
-      this.trigger(ag, dt);
+      this.trigger(ag, dt, false);
+    } else if (suppressing && Math.abs(dy) < 0.5) {
+      this.trigger(ag, dt, true);
     } else {
       ag.engageTime = Math.max(0, ag.engageTime - dt * 2);
       if (ag.burstLeft > 0 && !wantFire) ag.burstLeft = 0;
       ag.pauseTimer = Math.max(ag.pauseTimer - dt, 0);
     }
 
-    ag.model.update(dt, ag.moveSpeed, ag.crouched, ag.aimPitch, faceTarget || wantFire);
+    ag.model.update(dt, ag.moveSpeed, ag.crouched, ag.aimPitch, faceTarget || wantFire || suppressing);
     this.syncModel(ag);
   }
 
@@ -695,7 +732,7 @@ export class AgentManager {
   // Shooting
   // ---------------------------------------------------------------------------
 
-  private trigger(ag: Agent, dt: number) {
+  private trigger(ag: Agent, dt: number, suppress: boolean) {
     const w = ag.spec.weapon;
     if (ag.burstLeft <= 0) {
       ag.pauseTimer -= dt;
@@ -705,7 +742,8 @@ export class AgentManager {
     }
     ag.fireTimer -= dt;
     while (ag.fireTimer <= 0 && ag.burstLeft > 0) {
-      this.shoot(ag);
+      if (suppress) this.suppressShot(ag);
+      else this.shoot(ag);
       ag.burstLeft--;
       ag.fireTimer += 60 / w.rpm;
       if (ag.burstLeft === 0) ag.pauseTimer = rand(w.burstPause[0], w.burstPause[1]);
@@ -769,6 +807,34 @@ export class AgentManager {
     this.sfx.enemyShot(muzzle, w.heavy, muzzle.distanceTo(this.listener));
   }
 
+  /**
+   * Suppressive round at the last-seen position: tracer, impact, whizz and a
+   * nudge of camera shake if it cracks past the player. Never damages (no line of sight).
+   */
+  private suppressShot(ag: Agent) {
+    const w = ag.spec.weapon;
+    const muzzle = ag.model.muzzle.getWorldPosition(this.c);
+    this.b.set(ag.lastSeen.x + rand(-0.9, 0.9), ag.lastSeen.y + rand(0.5, 1.7), ag.lastSeen.z + rand(-0.9, 0.9));
+    this.d.subVectors(this.b, muzzle);
+    const len0 = this.d.length();
+    if (len0 < 1e-3) return;
+    this.d.multiplyScalar(1 / len0);
+    ag.model.fire();
+    const far = this.world.raycast(muzzle.x, muzzle.y, muzzle.z, this.d.x, this.d.y, this.d.z, w.range);
+    const len = far === Infinity ? w.range : Math.min(far, w.range);
+    this.e.copy(this.d).multiplyScalar(len).add(muzzle);
+    this.effects.tracer(muzzle, this.e, true);
+    if (far !== Infinity && far < w.range) {
+      this.a.copy(this.d).negate();
+      this.effects.impact(this.e, this.a, "concrete", Math.random() < 0.35);
+    }
+    this.closestPointOnSegment(muzzle, this.e, this.listener, this.a);
+    if (this.a.distanceToSquared(this.listener) < 6) this.sfx.whizz(this.a);
+    this.d.subVectors(this.e, muzzle).normalize();
+    this.effects.muzzlePuff(muzzle, this.d);
+    this.sfx.enemyShot(muzzle, w.heavy, muzzle.distanceTo(this.listener));
+  }
+
   private closestPointOnSegment(a: THREE.Vector3, b: THREE.Vector3, p: THREE.Vector3, out: THREE.Vector3) {
     out.subVectors(b, a);
     const len2 = out.lengthSq();
@@ -823,5 +889,6 @@ export class AgentManager {
   dispose() {
     this.laserGeo.dispose();
     this.laserMat.dispose();
+    disposeJuggernautArmor();
   }
 }
