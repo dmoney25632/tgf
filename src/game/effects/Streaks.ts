@@ -25,6 +25,8 @@ export class StreakSystem {
   private readonly gravity: Float32Array;
   private readonly drag: Float32Array;
   private next = 0;
+  /** Highest slot touched since the last upload (+1); 0 = nothing to upload. */
+  private dirtyEnd = 0;
   cap: number;
   /** Optional ground plane: physics streaks bounce off it. */
   groundY = -Infinity;
@@ -142,11 +144,13 @@ export class StreakSystem {
     const i4 = i * 4;
     this.color[i4] = r; this.color[i4 + 1] = g; this.color[i4 + 2] = b; this.color[i4 + 3] = a;
     this.width[i] = width;
+    if (i >= this.dirtyEnd) this.dirtyEnd = i + 1;
   }
 
   hide(i: number) {
     this.width[i] = 0;
     this.color[i * 4 + 3] = 0;
+    if (i >= this.dirtyEnd) this.dirtyEnd = i + 1;
   }
 
   /** Advance physics streaks (skip for manual-only systems). */
@@ -186,12 +190,18 @@ export class StreakSystem {
     this.flush();
   }
 
+  /** Uploads the touched range only; idle systems upload nothing. */
   flush() {
+    const end = this.dirtyEnd;
+    if (end === 0) return;
+    this.dirtyEnd = 0;
     const a = this.geometry.attributes;
-    a.aHead.needsUpdate = true;
-    a.aTail.needsUpdate = true;
-    a.aColor.needsUpdate = true;
-    a.aWidth.needsUpdate = true;
+    for (const k of ["aHead", "aTail", "aColor", "aWidth"] as const) {
+      const attr = a[k] as THREE.InstancedBufferAttribute;
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, end * attr.itemSize);
+      attr.needsUpdate = true;
+    }
   }
 
   dispose() {

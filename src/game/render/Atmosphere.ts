@@ -53,8 +53,27 @@ export function installHeightFog() {
 	#else
 		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
 	#endif
-	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+	#ifdef IH_SUN_INSCATTER
+		// Aerial perspective: haze glows warmer/brighter looking toward the sun.
+		vec3 ihSunW = normalize( ( vec4( directionalLights[ 0 ].direction, 0.0 ) * viewMatrix ).xyz );
+		float ihMu = max( dot( normalize( vFogWorldPos - cameraPosition ), ihSunW ), 0.0 );
+		vec3 ihSun = directionalLights[ 0 ].color;
+		ihSun /= max( max( ihSun.r, ihSun.g ), max( ihSun.b, 1e-3 ) );
+		float ihPhase = ihMu * ihMu;
+		ihPhase *= ihPhase * ihPhase;
+		vec3 ihFogColor = fogColor * mix( vec3( 1.0 ), ihSun * 1.4, ihPhase * 0.55 );
+	#else
+		vec3 ihFogColor = fogColor;
+	#endif
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, ihFogColor, fogFactor );
 #endif`;
+  // Flags lit materials so the fog can read the sun (directionalLights[0]).
+  if (!C.lights_pars_begin.includes("IH_SUN_INSCATTER")) {
+    C.lights_pars_begin += `
+#if NUM_DIR_LIGHTS > 0
+	#define IH_SUN_INSCATTER
+#endif`;
+  }
 }
 
 export type AtmosphereDef = {
@@ -158,6 +177,16 @@ void main() {
 
 export const SKY_NAME = "ih-sky";
 
+/** A registered light source (e.g. a hanging warehouse lamp). */
+export type Lamp = {
+  position: THREE.Vector3;
+  color: THREE.Color;
+  /** Candela-ish (PointLight, physical decay 2). ~3-8 for a work lamp. */
+  intensity: number;
+  /** Cut-off range (m). */
+  distance: number;
+};
+
 /** Lives on scene.userData so the render pipeline can find it. */
 export function getAtmosphere(scene: THREE.Scene): Atmosphere | null {
   const a = scene.userData.ihAtmosphere;
@@ -185,6 +214,14 @@ export class Atmosphere {
   private readonly prevOnBeforeRender: THREE.Scene["onBeforeRender"];
   private hasHdri = false;
   private hemiBase: number;
+  private frame = 0;
+  private shadowInterval = 1;
+  private readonly lastFitFwd = new THREE.Vector3();
+  private readonly lastFitPos = new THREE.Vector3(1e9, 0, 0);
+  private readonly lamps: Lamp[] = [];
+  private readonly lampLights: THREE.PointLight[] = [];
+  private maxLampLights = 4;
+  private readonly lampOrder: Lamp[] = [];
 
   constructor(private readonly scene: THREE.Scene, def: AtmosphereDef, mapHalf: number) {
     installHeightFog();
@@ -236,7 +273,7 @@ export class Atmosphere {
 
     scene.userData.ihAtmosphere = this;
     this.prevOnBeforeRender = scene.onBeforeRender;
-    scene.onBeforeRender = (_r, _s, camera) => this.update(camera);
+    scene.onBeforeRender = (r, _s, camera) => this.update(camera, r);
   }
 
   /** Creates/removes dust and refits shadows for a quality preset. */
@@ -248,6 +285,75 @@ export class Atmosphere {
     cam.updateProjectionMatrix();
     if (q.dustMotes && !this.dust) this.makeDust();
     if (!q.dustMotes && this.dust) this.removeDust();
+    this.shadowInterval = Math.max(1, Math.round(q.shadowInterval));
+    this.lastFitPos.set(1e9, 0, 0);
+    this.maxLampLights = q.maxLocalLights;
+    this.syncLampPool();
+  }
+
+  /** Unit vector toward the sun (world space). */
+  get sunDirection(): THREE.Vector3 {
+    return this.sunDir;
+  }
+
+  /**
+   * Registers a local light (hanging lamp, work light). Lamps share a small
+   * pool of shadowless point lights (quality.maxLocalLights); the lamps
+   * nearest the camera get them, so any number can be registered without
+   * raising per-pixel cost. Register during map load to avoid a recompile.
+   */
+  addLamp(position: THREE.Vector3, color: THREE.ColorRepresentation = 0xffd6a0, intensity = 5, distance = 14): Lamp {
+    const lamp: Lamp = { position: position.clone(), color: new THREE.Color(color), intensity, distance };
+    this.lamps.push(lamp);
+    this.syncLampPool();
+    return lamp;
+  }
+
+  removeLamp(lamp: Lamp) {
+    const i = this.lamps.indexOf(lamp);
+    if (i >= 0) this.lamps.splice(i, 1);
+    this.syncLampPool();
+  }
+
+  /** Pool size = min(lamps, budget); changing it recompiles lit materials. */
+  private syncLampPool() {
+    const want = Math.min(this.lamps.length, this.maxLampLights);
+    while (this.lampLights.length > want) {
+      const l = this.lampLights.pop()!;
+      this.scene.remove(l);
+      l.dispose();
+    }
+    while (this.lampLights.length < want) {
+      const l = new THREE.PointLight(0xffffff, 0, 10, 2);
+      l.castShadow = false;
+      this.lampLights.push(l);
+      this.scene.add(l);
+    }
+    this.frame = 0;
+  }
+
+  /** Hands the light pool to the lamps nearest the camera. */
+  private assignLamps(camera: THREE.Camera) {
+    const n = this.lampLights.length;
+    if (!n) return;
+    const order = this.lampOrder;
+    const cp = camera.position;
+    order.length = 0;
+    for (const l of this.lamps) order.push(l);
+    // Rank by distance beyond each lamp's own reach.
+    const reach = (l: Lamp) => l.position.distanceTo(cp) - l.distance;
+    if (order.length > n) order.sort((a, b) => reach(a) - reach(b));
+    for (let i = 0; i < n; i++) {
+      const light = this.lampLights[i];
+      const lamp = order[i];
+      light.position.copy(lamp.position);
+      light.color.copy(lamp.color);
+      light.distance = lamp.distance;
+      // Lamps about to lose their slot are already faded out, so swaps don't pop.
+      const fade = order.length > n ? THREE.MathUtils.clamp(1 - reach(lamp) / 20, 0, 1) : 1;
+      light.intensity = lamp.intensity * fade;
+      light.updateMatrixWorld();
+    }
   }
 
   private makeDust() {
@@ -287,14 +393,41 @@ export class Atmosphere {
   }
 
   /** Per render of the main scene (scene.onBeforeRender). */
-  update(camera: THREE.Camera) {
+  update(camera: THREE.Camera, renderer?: THREE.WebGLRenderer) {
     const t = ((typeof performance !== "undefined" ? performance.now() : 0) - this.t0) / 1000;
     this.windTime.value = t;
     this.skyMat.uniforms.time.value = t;
     if (this.dustMat) this.dustMat.uniforms.time.value = t;
     if (!(camera as THREE.PerspectiveCamera).isPerspectiveCamera) return;
-    this.fitShadow(camera);
+    const frame = this.frame++;
+    if (frame % 6 === 0) this.assignLamps(camera);
+    this.updateShadow(camera, renderer, frame);
     for (const fn of this.frameHooks) fn(camera);
+  }
+
+  /**
+   * Shadow caching: with shadowInterval > 1 the sun's map (and its fitted
+   * frustum, so map and matrix always agree) is only re-rendered every Nth
+   * frame, or at once when the view swings or moves far enough that the
+   * cached box would no longer cover what's on screen.
+   */
+  private updateShadow(camera: THREE.Camera, renderer: THREE.WebGLRenderer | undefined, frame: number) {
+    const sm = renderer?.shadowMap;
+    if (!sm || this.shadowInterval <= 1) {
+      if (sm) sm.autoUpdate = true;
+      this.fitShadow(camera);
+      return;
+    }
+    sm.autoUpdate = false;
+    camera.getWorldDirection(this.fwd);
+    const turned = this.fwd.dot(this.lastFitFwd) < 0.97;
+    const moved = camera.position.distanceToSquared(this.lastFitPos) > (this.extent * 0.08) ** 2;
+    if (frame % this.shadowInterval === 0 || turned || moved) {
+      this.lastFitFwd.copy(this.fwd);
+      this.lastFitPos.copy(camera.position);
+      this.fitShadow(camera);
+      sm.needsUpdate = true;
+    }
   }
 
   /** Extra per-frame work (e.g. foliage tile culling), run with the main camera. */
@@ -355,6 +488,8 @@ export class Atmosphere {
 
   dispose() {
     this.removeDust();
+    this.lamps.length = 0;
+    this.syncLampPool();
     this.scene.remove(this.sky, this.hemi, this.sun, this.sun.target);
     this.sky.geometry.dispose();
     this.skyMat.dispose();

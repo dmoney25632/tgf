@@ -63,6 +63,7 @@ export class HUD {
   private readonly scopeEl: HTMLDivElement;
   private readonly hurtEl: HTMLDivElement;
   private readonly lowHpEl: HTMLDivElement;
+  private readonly vignetteEl: HTMLDivElement;
   private readonly indicators: { el: HTMLDivElement; t: number; angle: number }[] = [];
   private hurtLevel = 0;
   /** Scoreboard title (mode name). */
@@ -79,8 +80,8 @@ export class HUD {
       "position:absolute;inset:0;pointer-events:none;user-select:none;color:#f2efe6;font-family:var(--font-geist-mono),ui-monospace,monospace;text-shadow:0 1px 2px rgba(0,0,0,.65);",
       container,
     );
-    // Vignette (cheap, works on every quality preset).
-    div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.38) 100%);", this.root);
+    // Vignette for the low preset (post-processed presets draw their own).
+    this.vignetteEl = div("position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.38) 100%);", this.root);
     this.lowHpEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 35%,rgba(120,0,0,.55) 100%);", this.root);
     this.hurtEl = div("position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(200,20,10,.5) 100%);", this.root);
 
@@ -146,13 +147,18 @@ export class HUD {
     this.root.appendChild(this.debug);
   }
 
+  setVignette(on: boolean) {
+    this.vignetteEl.style.display = on ? "block" : "none";
+  }
+
   frame(f: HudFrame, dt: number) {
     // Crosshair gap = projected spread cone + a little extra on hit flash.
     const px = Math.round((Math.tan((f.spreadDeg * Math.PI) / 180) / Math.tan((f.fovDeg * Math.PI) / 360)) * (f.viewportH / 2)) + 5;
-    const opacity = Math.max(0, 1 - f.crosshairHide * 1.8).toFixed(2);
+    const op = Math.round(Math.max(0, 1 - f.crosshairHide * 1.8) * 100);
     this.crossFlash = Math.max(0, this.crossFlash - dt);
-    const color = this.crossFlash > 0 ? "#ff5a4a" : "#f2efe6";
-    const key = `${px}|${opacity}|${color}`;
+    const flash = this.crossFlash > 0;
+    // Numeric key: no string building on idle frames.
+    const key = px * 1000 + op * 2 + (flash ? 1 : 0);
     const scoped = f.scope > 0.9;
     if (this.last.scoped !== scoped) {
       this.last.scoped = scoped;
@@ -162,8 +168,8 @@ export class HUD {
     }
     if (this.last.cross !== key) {
       this.last.cross = key;
-      this.crosshair.style.opacity = opacity;
-      this.crosshair.style.color = color;
+      this.crosshair.style.opacity = String(op / 100);
+      this.crosshair.style.color = flash ? "#ff5a4a" : "#f2efe6";
       const [u, d, l, r] = this.hairs;
       u.style.top = `${-px - 10}px`;
       d.style.top = `${px}px`;
@@ -200,9 +206,9 @@ export class HUD {
       this.last.weapon = f.weaponName;
       this.weaponName.textContent = `${f.weaponName} · ${f.weaponKind}`;
     }
-    const slotKey = `${f.slot}|${f.slotNames.join()}`;
-    if (this.last.slots !== slotKey) {
-      this.last.slots = slotKey;
+    if (this.last.slots !== f.slotNames || this.last.slot !== f.slot) {
+      this.last.slots = f.slotNames;
+      this.last.slot = f.slot;
       this.slots.innerHTML = f.slotNames
         .map((n, i) => `<span style="opacity:${i === f.slot ? 1 : 0.4};${i === f.slot ? "color:#f0b44a" : ""}">${i + 1} ${n}</span>`)
         .join("");
@@ -220,7 +226,7 @@ export class HUD {
       if (reloadPct >= 0) this.reloadFill.style.width = `${reloadPct}%`;
     }
 
-    const hpKey = `${Math.round(f.health)}|${f.maxHealth}|${Math.round(f.armor)}`;
+    const hpKey = Math.round(f.health) * 1e6 + f.maxHealth * 1e3 + Math.round(f.armor);
     if (this.last.health !== hpKey) {
       this.last.health = hpKey;
       const frac = Math.max(0, f.health / f.maxHealth);
