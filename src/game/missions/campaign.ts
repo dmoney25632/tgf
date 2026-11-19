@@ -98,13 +98,13 @@ export const CAMPAIGN: MissionDef[] = [
         safeRadius: 7,
         radio: [
           { speaker: ATLAS, text: "Cache is north-east, by the olive container. Set a charge and back off." },
-          { speaker: HALDEN, text: "Rotors. Somebody brought a gunship.", at: 11 },
+          { speaker: HALDEN, text: "Rotors. Somebody brought a gunship.", at: 7 },
         ],
         waves: [
           { at: 2, type: "rifleman", count: 4, from: [...DF_N, ...DF_E] },
           { at: 18, type: "rusher", count: 2, from: DF_N },
         ],
-        air: [{ at: 10, insert: { x: 30, z: -40, troops: 3 }, orbit: { x: 0, z: -6, radius: 24, seconds: 30 }, bearing: -0.8 }],
+        air: [{ at: 6, insert: { x: 30, z: -40, troops: 3 }, orbit: { x: 0, z: -6, radius: 24, seconds: 30 }, bearing: -0.8 }],
         done: [{ speaker: KESTREL, text: "That's a lot of secondaries. Cache is gone." }],
       },
       {
@@ -172,7 +172,7 @@ export const CAMPAIGN: MissionDef[] = [
           { at: 2, type: "rifleman", count: 5, from: [...CF_E, ...CF_N] },
           { at: 9, type: "armored", count: 1, from: [{ x: 44, z: 0 }] },
         ],
-        air: [{ at: 15, insert: { x: 30, z: -42, troops: 4 }, orbit: { x: 10, z: -10, radius: 22, seconds: 35 }, bearing: -0.5 }],
+        air: [{ at: 6, insert: { x: 30, z: -42, troops: 4 }, orbit: { x: 10, z: -10, radius: 22, seconds: 35 }, bearing: -0.5 }],
         done: [{ speaker: ATLAS, text: "Pressure's dropping across the field. Now find Orsk." }],
       },
       {

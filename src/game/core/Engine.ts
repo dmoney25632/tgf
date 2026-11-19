@@ -11,6 +11,9 @@ import { loadMap, type LoadedMap, type MapDef } from "../world/MapLoader";
 import { KESTREL_YARD } from "../world/maps/kestrelYard";
 import { DUSTFALL_OUTPOST } from "../world/maps/dustfallOutpost";
 import { getMap } from "../world/maps/registry";
+import { MissionGameMode } from "../missions/MissionGameMode";
+import { getMission } from "../missions/campaign";
+import type { MissionConfig } from "../missions/types";
 import { EffectsPool } from "../effects/EffectsPool";
 import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
@@ -27,8 +30,9 @@ import { SurvivalGameMode, type SurvivalConfig } from "../survival/SurvivalGameM
 export type { GameSettings };
 
 export type EngineOptions = {
-  mode?: "range" | "survival";
+  mode?: "range" | "survival" | "mission";
   survival?: SurvivalConfig;
+  mission?: MissionConfig;
   map?: MapDef;
   /** Map by registry id (world/maps/registry.ts); `map` wins when both are set. */
   mapId?: string;
@@ -114,7 +118,7 @@ export class GameEngine {
     const survival = opts.mode === "survival";
 
     const preset = QUALITY[this.settings.quality];
-    const picked = opts.map ?? getMap(opts.mapId);
+    const picked = opts.map ?? getMap(opts.mission ? getMission(opts.mission.missionId)?.mapId : opts.mapId);
     const mapDef = picked && (!survival || picked.survival) ? picked : survival ? DUSTFALL_OUTPOST : KESTREL_YARD;
     this.map = loadMap(this.scene, mapDef, preset);
     this.viewmodel = new WeaponViewmodel(null);
@@ -203,7 +207,8 @@ export class GameEngine {
       },
     };
     this.respawn();
-    this.mode = survival && opts.survival ? new SurvivalGameMode(ctx, opts.survival) : new RangeMode(ctx);
+    this.mode =
+      survival && opts.survival ? new SurvivalGameMode(ctx, opts.survival) : opts.mode === "mission" && opts.mission ? new MissionGameMode(ctx, opts.mission) : new RangeMode(ctx);
     this.lastYaw = this.player.yaw;
     this.lastPitch = this.player.pitch;
 
@@ -260,9 +265,13 @@ export class GameEngine {
     return this.mode instanceof SurvivalGameMode ? this.mode : null;
   }
 
+  get mission(): MissionGameMode | null {
+    return this.mode instanceof MissionGameMode ? this.mode : null;
+  }
+
   /** Range only: back to the start line with full ammo. */
   respawn() {
-    if (this.mode instanceof SurvivalGameMode) return;
+    if (this.mode instanceof SurvivalGameMode || this.mode instanceof MissionGameMode) return;
     const s = this.map.def.spawns[0];
     this.player.spawn(this.tmpA.set(s.x, s.y ?? 0, s.z), s.yaw);
     this.weapons.resetAmmo();

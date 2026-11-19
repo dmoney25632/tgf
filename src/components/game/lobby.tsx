@@ -22,6 +22,8 @@ export type LobbyChoice = {
   startWave: number;
   /** Survival map id (world/maps/registry). */
   map?: string;
+  /** Story mission id (game/missions/campaign); set by the missions screen. */
+  mission?: string;
 };
 
 export const DEFAULT_CHOICE: LobbyChoice = {
@@ -260,6 +262,9 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
               <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 gap-2 text-base font-bold tracking-wide")}>
                 Deploy {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
               </button>
+              <Link href="/missions" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-12")}>
+                Missions
+              </Link>
               <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
                 Dashboard
               </Link>
