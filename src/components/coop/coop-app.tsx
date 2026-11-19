@@ -54,12 +54,15 @@ export function CoopApp({
   callsign,
   transport: kind,
   allowLocal = false,
+  devParams,
 }: {
   userId: string | null;
   callsign: string;
   transport: "supabase" | "local";
   /** Dev builds may opt into the loopback with ?transport=local even when Supabase is configured. */
   allowLocal?: boolean;
+  /** DEV harness: query-string overrides (autohost/autojoin/autolaunch/lag/jitter/loss) instead of the URL. */
+  devParams?: string;
 }) {
   const [stage, setStage] = useState<Stage>("menu");
   const [code, setCode] = useState("");
@@ -90,7 +93,7 @@ export function CoopApp({
     } catch {
       // Storage blocked: defaults.
     }
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(devParams ?? window.location.search);
     const local = kind === "local" || (allowLocal && params.get("transport") === "local");
     const room = normalizeRoomCode(params.get("room") ?? "");
     queueMicrotask(() => {
@@ -103,7 +106,7 @@ export function CoopApp({
         if (h || j) setAuto({ code: (h ?? j)!, host: !!h, launchAt: Number(params.get("autolaunch")) || 0 });
       }
     });
-  }, [kind, allowLocal]);
+  }, [kind, allowLocal, devParams]);
 
   const hostMeta = peers.find((p) => p.host) ?? null;
   const roomSettings = isHost ? settings : (hostMeta?.room ?? DEFAULT_SETTINGS);
@@ -163,7 +166,7 @@ export function CoopApp({
       let t: NetTransport;
       if (useLocal) {
         const { LocalTransport } = await import("@/game/net/localTransport");
-        const q = new URLSearchParams(window.location.search);
+        const q = new URLSearchParams(devParams ?? window.location.search);
         t = new LocalTransport(id, roomCode, { latencyMs: Number(q.get("lag")) || 0, jitterMs: Number(q.get("jitter")) || 0, loss: Number(q.get("loss")) || 0 });
       } else {
         const client = getBrowserClient();

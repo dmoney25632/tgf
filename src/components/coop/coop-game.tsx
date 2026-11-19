@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameEngine, GameSettings } from "@/game/core/Engine";
+import type { GameEngine } from "@/game/core/Engine";
+import { loadSettings } from "@/game/ui/Settings";
+import { useInputDevice } from "@/components/game/gamepad";
 import type { EngineEvent, MatchSummary } from "@/game/core/GameMode";
 import type { SurvivalGameMode } from "@/game/survival/SurvivalGameMode";
 import type { CoopSurvivalNet } from "@/game/net/CoopSurvivalNet";
@@ -17,18 +19,6 @@ import { MatchSummaryView } from "@/components/game/match-summary";
 
 export type CoopLaunch = { matchId: string; roster: RosterEntry[]; settings: RoomSettings; hostId: string };
 export type CoopLoadout = { operator: OperatorId; primary: WeaponId; secondary: WeaponId };
-
-const SETTINGS_KEY = "tgf.iron-horizon.settings";
-
-function loadSettings(): GameSettings {
-  const fallback: GameSettings = { sensitivity: 1, adsSensitivity: 1, quality: detectQuality(), volume: 0.8 };
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_KEY);
-    return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<GameSettings>) } : fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 /** One online co-op survival match. The engine + net layer load lazily. */
 export function CoopGame({
@@ -54,6 +44,7 @@ export function CoopGame({
   const [saved, setSaved] = useState("");
   const [mode, setMode] = useState<SurvivalGameMode | null>(null);
   const isHost = launch.hostId === transport.selfId;
+  const dev = useInputDevice();
 
   const onEvent = useCallback((e: EngineEvent) => {
     if (e.type === "shop") setShopOpen(e.open);
@@ -77,7 +68,7 @@ export function CoopGame({
         const s = launch.settings;
         engine = new GameEngine(hostRef.current, {
           callsign,
-          settings: loadSettings(),
+          settings: loadSettings(detectQuality()),
           mode: "survival",
           map: coopMap(s.mapId),
           loadout: [loadout.primary, loadout.secondary],
@@ -97,7 +88,7 @@ export function CoopGame({
         engine.start();
         engineRef.current = engine;
         setMode(engine.survival);
-        if (process.env.NODE_ENV !== "production") Object.assign(window, { __tgf: engine, __tgfNet: net });
+        if (process.env.NODE_ENV !== "production") Object.assign(window, { __tgf: engine, __tgfNet: net, [isHost ? "__tgfHost" : "__tgfClient"]: { engine, net } });
         setReady(true);
       })
       .catch((e: unknown) => {
@@ -109,14 +100,14 @@ export function CoopGame({
       engine?.dispose();
       engineRef.current = null;
     };
-  }, [launch, transport, loadout, callsign, onEvent]);
+  }, [launch, transport, loadout, callsign, onEvent, isHost]);
 
-  const resumeFromShop = (r: boolean) => {
+  const resumeFromShop = (r: boolean, via?: "pad") => {
     if (!mode) return;
     if (r) mode.readyUp();
     else mode.closeShop();
     setShopOpen(false);
-    engineRef.current?.lock();
+    engineRef.current?.lock(via);
   };
 
   const showPause = !locked && !shopOpen && !summary;
@@ -125,7 +116,7 @@ export function CoopGame({
   return (
     <div className="fixed inset-0 bg-black">
       <div ref={hostRef} className="absolute inset-0" />
-      {shopOpen && mode && <ShopOverlay mode={mode} onResume={resumeFromShop} />}
+      {shopOpen && mode && <ShopOverlay mode={mode} dev={dev} onResume={resumeFromShop} />}
       {summary && <MatchSummaryView s={summary} saved={saved} onAgain={onExit} onLobby={onExit} />}
       {showPause && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
