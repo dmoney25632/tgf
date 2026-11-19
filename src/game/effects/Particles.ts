@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+const UPLOAD = ["position", "color", "alpha", "size", "seed", "age"] as const;
+
 /**
  * Visual style of a particle pool:
  *   glow  — additive soft dot (sparks, embers)
@@ -223,13 +225,15 @@ export class ParticleSystem {
     // Keep the live window tight so idle pools cost nothing.
     if (maxAlive === 0 && this.next === 0) this.live = 0;
     this.geometry.setDrawRange(0, Math.max(maxAlive, 1));
+    // Upload only the touched window, and nothing at all once idle.
+    if (n === 0) return;
     const a = this.geometry.attributes;
-    a.position.needsUpdate = true;
-    a.color.needsUpdate = true;
-    a.alpha.needsUpdate = true;
-    a.size.needsUpdate = true;
-    a.seed.needsUpdate = true;
-    a.age.needsUpdate = true;
+    for (const k of UPLOAD) {
+      const attr = a[k] as THREE.BufferAttribute;
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, n * attr.itemSize);
+      attr.needsUpdate = true;
+    }
   }
 
   dispose() {
