@@ -137,6 +137,8 @@ export type QualityPreset = {
   hdri: boolean;
   /** Floating dust motes near the camera. */
   dustMotes: boolean;
+  /** Re-render the sun shadow map every N frames (1 = every frame). */
+  shadowUpdateInterval?: number;
 };
 
 export const QUALITY: Record<QualityName, QualityPreset> = {
@@ -204,6 +206,54 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     dustMotes: true,
   },
 };
+
+/**
+ * Adaptive quality (RenderPipeline): when the smoothed frame time stays over
+ * budget, step down one level; after a long stretch on budget, try one level
+ * up again (backing off each time an upgrade fails). The budget follows the
+ * display: 1000 / min(measured refresh, maxTargetFps) × `overBudget`.
+ * Steps never toggle shadows on/off or other shader defines, so stepping
+ * causes no shader recompiles.
+ */
+export const ADAPTIVE = {
+  enabled: true,
+  /** Never chase more than this many fps (caps the budget on 240 Hz panels). */
+  maxTargetFps: 144,
+  /** Never let the budget drop below this many fps (slow panels / throttled rAF). */
+  minTargetFps: 50,
+  /** Frame time above budget × this counts as over budget. */
+  overBudget: 1.2,
+  /** Seconds over budget before stepping down. */
+  degradeAfter: 2.5,
+  /** Seconds on budget before trying a step up (doubles after each failed try). */
+  upgradeAfter: 10,
+  /** Ignore the first seconds after a quality change (uploads, compiles). */
+  settleTime: 3,
+} as const;
+
+/** Number of adaptive levels below the chosen preset. */
+export const ADAPTIVE_LEVELS = 7;
+
+/**
+ * The preset after `level` adaptive step-downs (0 = unchanged). Order: the
+ * most expensive passes go first (AO, shadow redraw rate), then resolution.
+ */
+export function adaptivePreset(base: QualityPreset, level: number): QualityPreset {
+  if (level <= 0) return base;
+  const q: QualityPreset = { ...base };
+  if (level >= 1) q.ambientOcclusion = false;
+  if (level >= 2) q.shadowUpdateInterval = Math.max(2, base.shadowUpdateInterval ?? 1);
+  if (level >= 3) q.resolutionScale = base.resolutionScale * 0.85;
+  if (level >= 4) q.msaaSamples = 0;
+  if (level >= 5) q.shadowMapSize = Math.max(512, base.shadowMapSize / 2);
+  if (level >= 6) {
+    q.resolutionScale = base.resolutionScale * 0.7;
+    q.bloom = false;
+    q.shadowUpdateInterval = Math.max(3, base.shadowUpdateInterval ?? 1);
+  }
+  if (level >= 7) q.resolutionScale = base.resolutionScale * 0.55;
+  return q;
+}
 
 /** Pick a sensible default for the device. */
 export function detectQuality(): QualityName {

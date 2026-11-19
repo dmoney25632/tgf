@@ -103,7 +103,8 @@ export class GameEngine {
     const preset = QUALITY[this.settings.quality];
     this.map = loadMap(this.scene, opts.map ?? (survival ? DUSTFALL_OUTPOST : KESTREL_YARD), preset);
     this.viewmodel = new WeaponViewmodel(null);
-    this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
+    this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun, preset);
+    this.pipeline.onPixelRatioChange = () => this.resize();
     this.viewmodel.scene.environment = this.pipeline.envMap;
 
     this.input = new Input(this.pipeline.canvas);
@@ -479,6 +480,7 @@ export class GameEngine {
       d.fps = `${this.fps}  (${this.frameMs.toFixed(2)} ms cpu)`;
       d.quality = this.settings.quality;
       d["draw calls"] = `${r.calls}  tris ${r.triangles}`;
+      d.render = this.pipeline.debugSummary;
       d.position = `${p.position.x.toFixed(2)} ${p.position.y.toFixed(2)} ${p.position.z.toFixed(2)}`;
       d.velocity = `${p.velocity.x.toFixed(2)} ${p.velocity.y.toFixed(2)} ${p.velocity.z.toFixed(2)}`;
       d.speed = `${p.speed.toFixed(2)} m/s`;
