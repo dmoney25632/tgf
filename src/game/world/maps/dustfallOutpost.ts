@@ -218,6 +218,17 @@ for (const [x, z] of [[37, -37.5], [38.9, -35.6], [-37, 37.5], [-38.9, 35.6]]) B
 B({ x: 37.5, z: -5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "barrier" });
 B({ x: 37.5, z: 5.3, w: 1.6, h: 1.1, d: 0.45, color: BARRIER, style: "barrier", rotY: Math.PI });
 
+// Armoured patrol truck parked by the south track (cover; drawn by the dressing).
+B({ x: 6.2, z: -39, w: 2.5, h: 2.6, d: 6.0, color: 0xb6a47c, surface: "metal", style: "hidden", tag: "mrap" });
+// Fuel tank on saddles by the generator.
+B({ x: 29.6, z: 19.5, w: 1.4, h: 1.7, d: 3.2, color: 0x7d8466, surface: "metal", style: "tank", tag: "fuel" });
+// Sandbagged fighting positions (dog-leg walls) outside the north and south walls.
+for (const [x, z, s] of [[7.5, 40, 1], [-8, -40, -1]] as const) {
+  B({ x, z, w: 4.2, h: 1.05, d: 0.9, color: SANDBAG, surface: "sand", style: "sandbags", tag: "trench" });
+  B({ x: x - 2.55 * s, z: z - 0.8 * s, w: 0.9, h: 1.05, d: 2.5, color: SANDBAG, surface: "sand", style: "sandbags", tag: "trench" });
+  B({ x: x + 3.7 * s, z: z + 0.75 * s, w: 3.2, h: 1.05, d: 0.9, color: SANDBAG, surface: "sand", style: "sandbags", tag: "trench" });
+}
+
 const perches = [
   { x: -43, y: 6, z: -43 },
   { x: 43, y: 6, z: -43 },

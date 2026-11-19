@@ -264,6 +264,8 @@ export function railing(B: MeshBuilder, a: THREE.Vector3, b: THREE.Vector3, h: n
   const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
   B.box(mat, mid.x, a.y + h, mid.z, len, 0.04, 0.05, tint, { rotY: yaw, group });
   B.box(mat, mid.x, a.y + 0.1, mid.z, len, 0.03, 0.03, tint, { rotY: yaw, group });
+  // Sparse (backdrop) railings read better with a mid rail between the posts.
+  if (spacing > 0.4) B.box(mat, mid.x, a.y + h * 0.55, mid.z, len, 0.03, 0.03, tint, { rotY: yaw, group });
   const n = Math.max(1, Math.round(len / spacing));
   for (let i = 0; i <= n; i++) {
     const p = a.clone().lerp(b, i / n);

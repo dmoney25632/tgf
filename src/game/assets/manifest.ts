@@ -87,6 +87,7 @@ export const EXTRA_MATERIAL_TEXTURES = {
   decal: null,
   frond: null,
   glow: null,
+  signs: null,
 } as const satisfies Record<string, string | null>;
 
 export type ExtraMaterialName = keyof typeof EXTRA_MATERIAL_TEXTURES;

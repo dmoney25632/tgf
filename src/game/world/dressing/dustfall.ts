@@ -7,11 +7,14 @@ import { qualityName, worldDetail } from "../quality";
 import { palms, type PalmPlacement } from "../Palms";
 import { smokeColumns } from "../Smoke";
 import { SHED } from "../maps/dustfallOutpost";
-import { facades, spall, PLASTER_TINTS } from "../architecture/Building";
+import { facades, silhouette, spall } from "../architecture/Building";
 import {
   acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, paintLine, pendantLamp, pipeRail, rod, wall, wallDecal, waterTank,
 } from "../architecture/kit";
 import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/debris";
+import { gasBottles, patrolTruck } from "../architecture/vehicles";
+import { postSign, roadArrow, signGantry } from "../architecture/signs";
+import { camoNets, type NetSpec } from "../CamoNet";
 import { town } from "./town";
 import {
   band, clearOf, concertina, decorBox, fbm2, fence, pallets, poleLine, scatterTrees, smoothstep, tyre, wireSpan,
@@ -307,8 +310,9 @@ export const dustfall: Dressing = (kit) => {
     for (let i = 0; i < 5; i++) groundDecal(B, i < 3 ? "oil" : "tracks", x0 + 2 + r() * (x1 - x0 - 4), z0 + 2 + r() * (z1 - z0 - 4), 1.5 + r() * 1.5, 1.5 + r() * 1.5, r() * 6, 0xffffff);
     props.place("steel_frame_shelves_01", { x: 25.6, y: 0, z: 23.1, rotY: Math.PI, fit: [2, 2.1, 0.6] });
     props.place("steel_frame_shelves_01", { x: 10.6, y: 0, z: 23.1, rotY: Math.PI, fit: [2, 2.1, 0.6] });
-    for (const [px, pz] of [[23.4, 23.0], [23.9, 22.7], [24.3, 23.2]]) props.place("propane_tank", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1 });
-    for (const [px, pz] of [[13.2, 22.9], [13.6, 23.0], [16.5, 13.0]]) props.place("plastic_jerrycan", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1 });
+    // Photoscans at 5-7k tris each: one of each everywhere, the rest on high.
+    [[23.4, 23.0], [23.9, 22.7], [24.3, 23.2]].forEach(([px, pz], i) => props.place("propane_tank", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1, tier: i ? 2 : 0 }));
+    [[13.2, 22.9], [13.6, 23.0], [16.5, 13.0]].forEach(([px, pz], i) => props.place("plastic_jerrycan", { x: px, y: 0, z: pz, rotY: r() * 6, scale: 1, tier: i ? 2 : 0 }));
     if (free(26, 20.5, 1)) pallets(B, 26, 20.5, 0.1, 3, r);
     if (free(10.4, 14.4, 1)) pallets(B, 10.4, 14.4, -0.2, 2, r);
   }
@@ -330,7 +334,14 @@ export const dustfall: Dressing = (kit) => {
   }
   tagged("supply").forEach((c, i) => {
     if (i % 2) return;
-    props.place("wooden_crate_01", { x: c.x + (r() - 0.5) * 0.2, y: c.h, z: c.z + (r() - 0.5) * 0.2, scale: 1.15, rotY: r() * 6 }, (bb, g) => bb.box("wood", c.x, c.h + 0.19, c.z, 0.9, 0.38, 0.46, 0xc9b896, { group: g }));
+    // Small slatted crate on top (procedural: the scan was 6.6k tris).
+    const cx = c.x + (r() - 0.5) * 0.2, cz = c.z + (r() - 0.5) * 0.2, yaw = r() * 6, tint = 0xb8a882;
+    B.box("wood", cx, c.h + 0.2, cz, 0.86, 0.38, 0.5, tint, { rotY: yaw });
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    for (const s of [-1, 1]) {
+      const ox = s * 0.26 * sn, oz = s * 0.26 * cs;
+      for (const yy of [0.06, 0.34]) B.box("wood", cx + ox, c.h + yy, cz + oz, 0.9, 0.06, 0.03, 0x9a8a68, { rotY: yaw });
+    }
   });
   // Burnt-out vehicles on their colliders.
   for (const w of tagged("wreck")) burntCar(B, w.x, w.z, w.w > w.d ? 0 : Math.PI / 2, "pickup", Math.round(w.x * 13 + w.z), "decor");
@@ -563,6 +574,20 @@ export const dustfall: Dressing = (kit) => {
   }
   burntCar(B, -32, ROAD_Z + 1.2, 0.2, "sedan", 51, "far", height(-32, ROAD_Z + 1.2));
   burntCar(B, 46, ROAD_Z - 1.5, Math.PI + 0.3, "pickup", 52, "far", height(46, ROAD_Z - 1.5));
+  // Overhead destination gantry, a traffic island with keep-right sign,
+  // roundabout and warning signs, a chevron board and painted lane arrows.
+  // (Invented place names only.)
+  signGantry(B, -62, ROAD_Z, 9.6, height, 1, "far");
+  postSign(B, "warning", -36, ROAD_Z + 5.4, Math.PI / 2, height(-36, ROAD_Z + 5.4), 1.0, 0, "far");
+  postSign(B, "roundabout", -104, ROAD_Z + 5.4, Math.PI / 2, height(-104, ROAD_Z + 5.4), 0.85, 0.04, "far");
+  B.box("concrete", -92, height(-92, ROAD_Z) + 0.12, ROAD_Z, 7, 0.26, 1.3, 0xb8b4aa, { group: "far" });
+  for (const dx of [-3.3, 3.3]) B.box("concrete", -92 + dx, height(-92 + dx, ROAD_Z) + 0.12, ROAD_Z, 0.5, 0.26, 1.0, 0xc8c4ba, { group: "far" });
+  postSign(B, "arrow", -88.9, ROAD_Z, Math.PI / 2, height(-88.9, ROAD_Z) + 0.25, 0.7, 0, "far");
+  postSign(B, "chevron", 118, ROAD_Z - 5.4, -Math.PI / 2, height(118, ROAD_Z - 5.4), 0.8, 0, "far");
+  roadArrow(B, -76, ROAD_Z + 1.9, -Math.PI / 2, height);
+  roadArrow(B, -48, ROAD_Z + 1.9, -Math.PI / 2, height);
+  roadArrow(B, -106, ROAD_Z - 1.9, Math.PI / 2, height, -1);
+  roadArrow(B, -20, ROAD_Z - 1.9, Math.PI / 2, height);
 
   // ---- The town beyond the berm -------------------------------------------------------
   const roadKeep = { x0: -400, x1: 400, z0: ROAD_Z - 6, z1: ROAD_Z + 6 };
@@ -586,7 +611,7 @@ export const dustfall: Dressing = (kit) => {
     const w = 10 + r() * 14, dd = 10 + r() * 14;
     let gy = Infinity;
     for (const [sx, sz] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) gy = Math.min(gy, height(x + sx * w, z + sz * dd));
-    B.box("plaster", x, gy + (5 + r() * 16) / 2, z, w, 5 + r() * 16, dd, new THREE.Color(PLASTER_TINTS[i % PLASTER_TINTS.length]).multiplyScalar(0.85), { group: "far" });
+    silhouette(B, x, z, w, dd, 6 + r() * 16, gy, 5000 + i);
   }
   // Two water towers and a tall chimney as landmarks.
   for (const [x, z, h] of [[-128, 96, 24], [150, -64, 21]] as const) {
@@ -633,7 +658,7 @@ export const dustfall: Dressing = (kit) => {
       const [x, z] = ring();
       if (!clearOf(boxes, x, z, 0.4) || nearSpawn(x, z, 3) || track(x, z) > 0.4) continue;
       const k = placed % 10;
-      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 2), tier: k < 3 ? 0 : k < 6 ? 1 : 2 });
+      props.place(id, { x, y: 0, z, scale: scale(), rotY: r() * 6.28, variant: Math.floor(r() * 2), tier: k < 3 ? 0 : k < 5 ? 1 : 2 });
       placed++;
     }
   };
@@ -650,6 +675,28 @@ export const dustfall: Dressing = (kit) => {
   const palmList: PalmPlacement[] = [...t.palms];
   for (const p of tagged("tree")) palmList.push({ x: p.x, y: 0, z: p.z, height: 8 + r() * 3, rot: r() * 6, lean: (r() - 0.5) * 0.2 });
   extras.push(palms(palmList, kit.materials, kit.windTime));
+
+  // ---- Patrol truck, fuel, gas, fighting positions, camo nets -------------------------
+  for (const m of tagged("mrap")) patrolTruck(B, m.x, m.z, m.d > m.w ? -Math.PI / 2 : 0);
+  for (const f of tagged("fuel")) {
+    groundDecal(B, "oil", f.x - 0.9, f.z + 0.4, 1.6, 2.4, 0.2, 0xffffff);
+    cable(B, new THREE.Vector3(f.x - 0.5, 0.35, f.z + 1.5), new THREE.Vector3(26.4, 0.4, 25.2), 0.25);
+    gasBottles(B, f.x - 0.2, f.z - 2.6, Math.PI / 2, 4, 23);
+  }
+  gasBottles(B, -7.3, -6.75, 0, 5, 17);
+  for (const t of tagged("trench")) {
+    // Dug, trampled earth round the bags and a spoil line behind.
+    groundDecal(B, "baseDirt", t.x, t.z, t.w + 1.8, t.d + 1.8, 0, 0xb8a888);
+    groundDecal(B, "specks", t.x, t.z - Math.sign(t.z) * 1.1, t.w + 0.6, 1.2, 0, 0xc0b49a);
+  }
+  const nets: NetSpec[] = [
+    { corners: [[-28.6, -28.6], [-22.8, -28.6], [-22.8, -23.6], [-28.6, -23.6]], height: 2.9, drape: 0.7 },
+    { corners: [[4.0, -42.6], [8.4, -42.6], [8.4, -35.4], [4.0, -35.4]], height: 3.9, drape: 0.9 },
+  ];
+  for (const n of nets) for (const [x, z] of n.corners) rod(B, new THREE.Vector3(x, -0.1, z), new THREE.Vector3(x + (r() - 0.5) * 0.1, n.height + 0.05, z + (r() - 0.5) * 0.1), 0.05, 0x6e5a40, "decor", "wood");
+  pallets(B, -26.6, -26.4, 0.3, 2, r);
+  pallets(B, -24.6, -25.2, -0.2, 1, r);
+  extras.push(camoNets(nets, kit.windTime, height));
 
   // ---- Distant smoke columns --------------------------------------------------------
   const smoke = [

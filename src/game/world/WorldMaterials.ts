@@ -34,7 +34,162 @@ const DEFS: Record<ExtraMaterialName, ExtraDef> = {
   decal: { tile: 1, roughness: 1, metalness: 0, normalScale: 0, placeholder: 0x202020 },
   frond: { tile: 1, roughness: 0.9, metalness: 0, normalScale: 0, placeholder: 0x6a7040 },
   glow: { tile: 1, roughness: 0.5, metalness: 0, normalScale: 0, placeholder: 0xffe2b0 },
+  signs: { tile: 1, roughness: 0.55, metalness: 0.2, normalScale: 0, placeholder: 0x406050 },
 };
+
+/**
+ * Road-sign atlas (1024 × 512): overhead gantry board on top, then a
+ * roundabout disc, a roundabout-ahead warning triangle, a keep-right
+ * arrow disc and a chevron bend board. All names are invented.
+ */
+export const SIGN = {
+  gantry: [0, 0, 1024, 300],
+  roundabout: [0, 300, 212, 512],
+  warning: [212, 300, 424, 512],
+  arrow: [424, 300, 636, 512],
+  chevron: [636, 300, 1024, 512],
+} as const satisfies Record<string, readonly [number, number, number, number]>;
+export type SignKind = keyof typeof SIGN;
+/** UV rect [u0, v0, u1, v1] of a sign in the atlas. */
+export function signRect(kind: SignKind): [number, number, number, number] {
+  const [x0, y0, x1, y1] = SIGN[kind];
+  return [(x0 + 2) / 1024, 1 - (y1 - 2) / 512, (x1 - 2) / 1024, 1 - (y0 + 2) / 512];
+}
+
+function makeSigns(): HTMLCanvasElement {
+  const [c, g] = canvas(1024, 512);
+  const r = seeded(77);
+  g.fillStyle = "#6a6a64";
+  g.fillRect(0, 0, 1024, 512);
+  // --- Gantry board: green, white border, three destinations with arrows.
+  g.fillStyle = "#1d5a3c";
+  g.fillRect(4, 4, 1016, 292);
+  g.strokeStyle = "#e8eee8";
+  g.lineWidth = 8;
+  g.strokeRect(16, 16, 992, 268);
+  g.fillStyle = "#eef2ee";
+  g.font = "bold 66px Arial, Helvetica, sans-serif";
+  g.textBaseline = "middle";
+  const line = (y: number, arrow: string, name: string, km: string) => {
+    g.textAlign = "left";
+    g.fillText(arrow, 44, y);
+    g.fillText(name, 130, y);
+    g.textAlign = "right";
+    g.fillText(km, 980, y);
+  };
+  line(70, "\u2191", "MARROW JCT", "9");
+  line(150, "\u2190", "DUSTFALL", "4");
+  line(230, "\u2192", "KESTREL RIDGE", "27");
+  // --- Roundabout disc: blue with three chasing arrows.
+  const disc = (cx: number, cy: number, rad: number) => {
+    g.fillStyle = "#1f4f9a";
+    g.beginPath();
+    g.arc(cx, cy, rad, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "#e8ecf2";
+    g.lineWidth = 6;
+    g.beginPath();
+    g.arc(cx, cy, rad - 6, 0, Math.PI * 2);
+    g.stroke();
+  };
+  const ringArrows = (cx: number, cy: number, rad: number, col: string) => {
+    g.strokeStyle = col;
+    g.fillStyle = col;
+    g.lineWidth = rad * 0.2;
+    for (let k = 0; k < 3; k++) {
+      const a0 = (k * Math.PI * 2) / 3 - Math.PI / 2, a1 = a0 + 1.5;
+      g.beginPath();
+      g.arc(cx, cy, rad * 0.55, a0, a1);
+      g.stroke();
+      const tx = cx + Math.cos(a1) * rad * 0.55, ty = cy + Math.sin(a1) * rad * 0.55;
+      const dx = -Math.sin(a1), dy = Math.cos(a1);
+      g.beginPath();
+      g.moveTo(tx + dx * rad * 0.28, ty + dy * rad * 0.28);
+      g.lineTo(tx + Math.cos(a1) * rad * 0.22, ty + Math.sin(a1) * rad * 0.22);
+      g.lineTo(tx - Math.cos(a1) * rad * 0.22, ty - Math.sin(a1) * rad * 0.22);
+      g.fill();
+    }
+  };
+  g.clearRect(0, 300, 212, 212);
+  disc(106, 406, 100);
+  ringArrows(106, 406, 100, "#eef2f6");
+  // --- Warning triangle (roundabout ahead).
+  g.clearRect(212, 300, 212, 212);
+  g.fillStyle = "#c42a22";
+  g.beginPath();
+  g.moveTo(318, 308);
+  g.lineTo(416, 500);
+  g.lineTo(220, 500);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#f2efe6";
+  g.beginPath();
+  g.moveTo(318, 346);
+  g.lineTo(386, 480);
+  g.lineTo(250, 480);
+  g.closePath();
+  g.fill();
+  ringArrows(318, 438, 56, "#1c1c1c");
+  // --- Keep-right arrow disc.
+  g.clearRect(424, 300, 212, 212);
+  disc(530, 406, 100);
+  g.save();
+  g.translate(530, 406);
+  g.rotate(Math.PI / 4);
+  g.fillStyle = "#eef2f6";
+  g.fillRect(-14, -10, 28, 70);
+  g.beginPath();
+  g.moveTo(-44, -6);
+  g.lineTo(0, -60);
+  g.lineTo(44, -6);
+  g.fill();
+  g.restore();
+  // --- Chevron bend board.
+  g.fillStyle = "#16161a";
+  g.fillRect(640, 304, 380, 204);
+  g.fillStyle = "#e8c22a";
+  for (let k = 0; k < 4; k++) {
+    const x0 = 690 + k * 86;
+    g.beginPath();
+    g.moveTo(x0 + 52, 324);
+    g.lineTo(x0, 406);
+    g.lineTo(x0 + 52, 488);
+    g.lineTo(x0 + 82, 488);
+    g.lineTo(x0 + 30, 406);
+    g.lineTo(x0 + 82, 324);
+    g.closePath();
+    g.fill();
+  }
+  // Weathering: dust from the top, rust runs, peeled spots and bullet holes.
+  const dust = g.createLinearGradient(0, 0, 0, 512);
+  dust.addColorStop(0, "rgba(190,170,130,0.28)");
+  dust.addColorStop(0.5, "rgba(190,170,130,0.08)");
+  dust.addColorStop(1, "rgba(190,170,130,0.22)");
+  g.globalCompositeOperation = "source-atop";
+  g.fillStyle = dust;
+  g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 26; i++) {
+    const x = r() * 1024, y = r() * 512;
+    const run = g.createLinearGradient(x, y, x, y + 40 + r() * 80);
+    run.addColorStop(0, "rgba(110,60,30,0.5)");
+    run.addColorStop(1, "rgba(110,60,30,0)");
+    g.fillStyle = run;
+    g.fillRect(x, y, 3 + r() * 4, 120);
+  }
+  for (let i = 0; i < 40; i++) {
+    const x = r() * 1024, y = r() * 512, rad = 2 + r() * 4;
+    g.fillStyle = "rgba(200,200,190,0.9)";
+    g.beginPath();
+    g.arc(x, y, rad + 2.5, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = "rgba(15,15,15,1)";
+    g.beginPath();
+    g.arc(x, y, rad, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalCompositeOperation = "source-over";
+  return c;
+}
 
 /** Ground decals overlay the terrain; wall decals sit 1-2 cm proud. Both use the atlas below. */
 export const DECAL = {
@@ -397,6 +552,11 @@ export class WorldMaterials {
         return new THREE.MeshStandardMaterial({ ...base, map: this.tex(makeChainlink(), true), alphaTest: 0.5, side: THREE.DoubleSide });
       case "frond":
         return new THREE.MeshStandardMaterial({ ...base, map: this.tex(makeFrond(), true), alphaTest: 0.45, side: THREE.DoubleSide });
+      case "signs": {
+        const m = new THREE.MeshStandardMaterial({ ...base, map: this.tex(makeSigns(), true), alphaTest: 0.5 });
+        m.map!.wrapS = m.map!.wrapT = THREE.ClampToEdgeWrapping;
+        return m;
+      }
       case "glow":
         // Lamp bulbs and lit panels: unlit warm emissive, picked up by bloom.
         return new THREE.MeshStandardMaterial({ ...base, color: 0x000000, emissive: 0xffe2b0, emissiveIntensity: 3.2 });
