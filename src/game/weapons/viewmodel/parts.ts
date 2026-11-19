@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { type GeoBuilder, type P2, circle, extrude, latheZ, place, rrect, shape, slot } from "./geo";
-import type { ViewmodelMaterials } from "./materials";
+import type { Surf, ViewmodelMaterials } from "./materials";
 
 /** Builder + materials, passed to every part function. */
 export type Kit = { b: GeoBuilder; m: ViewmodelMaterials };
@@ -11,7 +11,7 @@ export type Kit = { b: GeoBuilder; m: ViewmodelMaterials };
  */
 
 /** Picatinny-style rail: dovetail base + cross-slotted teeth. Top surface at yTop. */
-export function rail(k: Kit, mat: THREE.Material, z0: number, z1: number, yTop: number, w = 0.021, x = 0) {
+export function rail(k: Kit, mat: Surf, z0: number, z1: number, yTop: number, w = 0.021, x = 0) {
   const yb = yTop - 0.0076;
   const hw = w / 2;
   k.b.section(mat, [[-hw + 0.002, yb], [hw - 0.002, yb], [hw, yb + 0.0022], [hw - 0.002, yb + 0.0043], [-hw + 0.002, yb + 0.0043], [-hw, yb + 0.0022]], z0, z1, { bev: 0.0005, x });
@@ -24,7 +24,7 @@ export function rail(k: Kit, mat: THREE.Material, z0: number, z1: number, yTop: 
 }
 
 /** Rail along the side of a part (rotated 90° about Z). */
-export function sideRail(k: Kit, mat: THREE.Material, z0: number, z1: number, xOut: number, y: number, w = 0.019) {
+export function sideRail(k: Kit, mat: Surf, z0: number, z1: number, xOut: number, y: number, w = 0.019) {
   const s = Math.sign(xOut);
   const len = Math.abs(z1 - z0);
   const n = Math.max(1, Math.floor(len / 0.01));
@@ -34,7 +34,7 @@ export function sideRail(k: Kit, mat: THREE.Material, z0: number, z1: number, xO
 }
 
 /** Side plate with M-LOK-style slots. */
-export function slottedPlate(k: Kit, mat: THREE.Material, z0: number, z1: number, y0: number, y1: number, x: number, thick: number, slots: number, slotLen = 0.03) {
+export function slottedPlate(k: Kit, mat: Surf, z0: number, z1: number, y0: number, y1: number, x: number, thick: number, slots: number, slotLen = 0.03) {
   const holes: P2[][] = [];
   const zFront = Math.min(z0, z1);
   const zBack = Math.max(z0, z1);
@@ -48,7 +48,7 @@ export function slottedPlate(k: Kit, mat: THREE.Material, z0: number, z1: number
 }
 
 /** Bottom plate with slots (shape drawn in (x, z), extruded along Y). */
-export function slottedFloor(k: Kit, mat: THREE.Material, z0: number, z1: number, w: number, y: number, thick: number, slots: number) {
+export function slottedFloor(k: Kit, mat: Surf, z0: number, z1: number, w: number, y: number, thick: number, slots: number) {
   const zFront = Math.min(z0, z1);
   const zBack = Math.max(z0, z1);
   const pitch = (zBack - zFront) / slots;
@@ -65,19 +65,19 @@ export function slottedFloor(k: Kit, mat: THREE.Material, z0: number, z1: number
 }
 
 /** Hollow-ish tube (outer + inner wall) along Z. */
-export function tube(k: Kit, mat: THREE.Material, ro: number, ri: number, z0: number, z1: number, x: number, y: number, seg = 18, bev = 0.0012) {
+export function tube(k: Kit, mat: Surf, ro: number, ri: number, z0: number, z1: number, x: number, y: number, seg = 18, bev = 0.0012) {
   const zf = Math.min(z0, z1);
   const zb = Math.max(z0, z1);
   k.b.lathe(mat, [[ri, zb], [ro - bev, zb], [ro, zb - bev], [ro, zf + bev], [ro - bev, zf], [ri, zf], [ri, zb]], x, y, { seg });
 }
 
 /** Barrel with a slight taper from r0 (rear) to r1 (front). */
-export function barrel(k: Kit, mat: THREE.Material, zRear: number, zFront: number, y: number, r0: number, r1: number) {
+export function barrel(k: Kit, mat: Surf, zRear: number, zFront: number, y: number, r0: number, r1: number) {
   k.b.lathe(mat, [[0, zRear], [r0, zRear], [r0, zRear - 0.02], [r1, zFront + 0.002], [r1 - 0.0012, zFront], [r1 * 0.45, zFront], [r1 * 0.45, zFront + 0.006], [0, zFront + 0.006]], 0, y, { seg: 16 });
 }
 
 /** Three-port muzzle brake (lathe body + dark side ports). */
-export function muzzleBrake(k: Kit, mat: THREE.Material, zRear: number, y: number, r: number, len: number) {
+export function muzzleBrake(k: Kit, mat: Surf, zRear: number, y: number, r: number, len: number) {
   const zf = zRear - len;
   k.b.lathe(mat, [
     [0, zRear], [r * 0.8, zRear], [r * 0.8, zRear - 0.004], [r, zRear - 0.006], [r, zf + 0.004], [r - 0.002, zf], [r * 0.45, zf], [r * 0.45, zf + 0.004], [0, zf + 0.004],
@@ -91,7 +91,7 @@ export function muzzleBrake(k: Kit, mat: THREE.Material, zRear: number, y: numbe
 }
 
 /** Birdcage-style flash hider (prongs). */
-export function flashHider(k: Kit, mat: THREE.Material, zRear: number, y: number, r: number, len: number) {
+export function flashHider(k: Kit, mat: Surf, zRear: number, y: number, r: number, len: number) {
   const zf = zRear - len;
   k.b.lathe(mat, [[0, zRear], [r * 0.85, zRear], [r, zRear - 0.004], [r, zRear - len * 0.35], [r * 0.9, zRear - len * 0.4], [0, zRear - len * 0.4]], 0, y, { seg: 14 });
   for (let i = 0; i < 4; i++) {
@@ -101,7 +101,7 @@ export function flashHider(k: Kit, mat: THREE.Material, zRear: number, y: number
 }
 
 /** Trigger guard loop + curved trigger blade. Guard top at yTop, trigger at zt. */
-export function triggerGroup(k: Kit, mat: THREE.Material, trigMat: THREE.Material, zBack: number, zFront: number, yTop: number, depth = 0.022, thick = 0.011) {
+export function triggerGroup(k: Kit, mat: Surf, trigMat: Surf, zBack: number, zFront: number, yTop: number, depth = 0.022, thick = 0.011) {
   const yb = yTop - depth;
   const outer: P2[] = [[zBack, yTop], [zBack + 0.002, yb + 0.006], [zBack - 0.006, yb], [zFront + 0.004, yb], [zFront, yb + 0.004], [zFront, yTop]];
   const inner: P2[] = [[zBack - 0.004, yTop + 0.001], [zBack - 0.004, yb + 0.008], [zBack - 0.009, yb + 0.0035], [zFront + 0.006, yb + 0.0035], [zFront + 0.0035, yb + 0.006], [zFront + 0.0035, yTop + 0.001]];
@@ -124,7 +124,7 @@ export function triggerGroup(k: Kit, mat: THREE.Material, trigMat: THREE.Materia
  * Pistol grip with finger ridges, drawn from the top attach point running
  * down/back at `rake` radians. Returns the grip axis (top → bottom) for the hand.
  */
-export function pistolGrip(k: Kit, mat: THREE.Material, zTop: number, yTop: number, len: number, rake: number, depth = 0.034, thick = 0.03) {
+export function pistolGrip(k: Kit, mat: Surf, zTop: number, yTop: number, len: number, rake: number, depth = 0.034, thick = 0.03) {
   const dz = Math.sin(rake);
   const dy = -Math.cos(rake);
   const pts: P2[] = [];
@@ -150,7 +150,7 @@ export function pistolGrip(k: Kit, mat: THREE.Material, zTop: number, yTop: numb
 }
 
 /** Curved box magazine (local origin = top centre). Body below y = 0. */
-export function boxMag(k: Kit, mat: THREE.Material, depth: number, len: number, curve: number, width: number, opts: { ribs?: boolean; rounds?: THREE.Material; plate?: THREE.Material; window?: boolean } = {}) {
+export function boxMag(k: Kit, mat: Surf, depth: number, len: number, curve: number, width: number, opts: { ribs?: boolean; rounds?: Surf; plate?: Surf; window?: boolean } = {}) {
   const n = 8;
   const back: P2[] = [];
   const front: P2[] = [];
@@ -182,7 +182,7 @@ export function boxMag(k: Kit, mat: THREE.Material, depth: number, len: number, 
 }
 
 /** Collapsible stock body (side profile) + rubber pad. */
-export function stock(k: Kit, mat: THREE.Material, pad: THREE.Material, z0: number, yTop: number, len: number, h: number, thick = 0.036) {
+export function stock(k: Kit, mat: Surf, pad: Surf, z0: number, yTop: number, len: number, h: number, thick = 0.036) {
   const z1 = z0 + len;
   const pts: P2[] = [
     [z0, yTop - 0.003], [z0 + len * 0.35, yTop + 0.004], [z1 - 0.004, yTop + 0.004], [z1, yTop], [z1, yTop - h], [z1 - 0.012, yTop - h - 0.003],
@@ -336,7 +336,7 @@ export function foldedIrons(k: Kit, zRear: number, zFront: number, railTop: numb
 }
 
 /** Aperture rear sight with protective ears; aperture centred on the sight line. */
-export function apertureRear(k: Kit, mat: THREE.Material, z: number, baseY: number, ringR = 0.0042) {
+export function apertureRear(k: Kit, mat: Surf, z: number, baseY: number, ringR = 0.0042) {
   const { b } = k;
   const hole = circle(ringR * 0.55, 0, 0, 14);
   b.section(mat, circle(ringR + 0.003, 0, 0, 16), z + 0.002, z - 0.002, { bev: 0.0006, holes: [hole] });
@@ -346,7 +346,7 @@ export function apertureRear(k: Kit, mat: THREE.Material, z: number, baseY: numb
 }
 
 /** Front post with wings; post tip exactly on the sight line. */
-export function frontPost(k: Kit, mat: THREE.Material, z: number, baseY: number, insert?: THREE.Material) {
+export function frontPost(k: Kit, mat: Surf, z: number, baseY: number, insert?: Surf) {
   const { b } = k;
   b.box(mat, 0.0024, -baseY, 0.0028, 0, baseY / 2, z, { bev: 0.0004 });
   for (const sx of [-1, 1]) b.profile(mat, [[z + 0.006, baseY], [z - 0.006, baseY], [z - 0.004, 0.002], [z + 0.004, 0.002]], 0.0026, sx * 0.0072, { bev: 0.0005 });
@@ -355,12 +355,12 @@ export function frontPost(k: Kit, mat: THREE.Material, z: number, baseY: number,
 }
 
 /** Rotate a lathe-around-Z geometry part to run along X (helpers for pins). */
-export function pinX(k: Kit, mat: THREE.Material, r: number, len: number, x: number, y: number, z: number) {
+export function pinX(k: Kit, mat: Surf, r: number, len: number, x: number, y: number, z: number) {
   k.b.add(mat, latheZ([[0, len / 2], [r, len / 2], [r, -len / 2], [0, -len / 2]], 8), place(x, y, z, { ry: Math.PI / 2 }));
 }
 
 /** Small flat-faced cylinder pointing along ±X (buttons, screws). */
-export function buttonX(k: Kit, mat: THREE.Material, r: number, h: number, x: number, y: number, z: number) {
+export function buttonX(k: Kit, mat: Surf, r: number, h: number, x: number, y: number, z: number) {
   const s = Math.sign(x) || 1;
   k.b.add(mat, latheZ([[0, 0], [r, 0], [r, -h * 0.8], [r * 0.8, -h], [0, -h]], 10), place(x, y, z, { ry: -s * Math.PI / 2 }));
 }
