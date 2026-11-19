@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { MODELS, type ModelId } from "../assets/manifest";
 import { loadModel, releaseModel, type PreparedModel } from "../assets/AssetLoader";
 import type { MeshBuilder } from "./MeshBuilder";
+import type { QualityName } from "../config";
+import { disposeProxy, shadowProxies, solidCaster, type ShadowSource } from "./ShadowProxy";
 
 export type PropPlacement = {
   x: number;
@@ -17,7 +19,11 @@ export type PropPlacement = {
   variant?: number;
   /** Push down into the ground (m), for rocks. */
   sink?: number;
+  /** Lowest preset that draws it: 0 = all (default), 1 = medium and up, 2 = high only. */
+  tier?: 0 | 1 | 2;
 };
+
+const TIER: Record<QualityName, number> = { low: 0, medium: 1, high: 2 };
 
 type Fallback = (b: MeshBuilder, group: string) => void;
 
@@ -31,6 +37,10 @@ export class ModelPlacer {
   private readonly placements = new Map<ModelId, PropPlacement[]>();
   private readonly instanced: THREE.InstancedMesh[] = [];
   private readonly loaded: PreparedModel[] = [];
+  private readonly proxies: THREE.Mesh[] = [];
+  /** Per instanced mesh: instances allowed at tier 0, 1, 2 (instances are sorted by tier). */
+  private readonly tierCounts = new Map<THREE.InstancedMesh, [number, number, number]>();
+  private tier = 2;
   private disposed = false;
   triangles = 0;
 
@@ -51,14 +61,36 @@ export class ModelPlacer {
 
   /** Starts loading; swaps fallbacks for instanced models as each arrives. */
   start(parent: THREE.Object3D, groups: Map<string, THREE.Mesh[]>) {
+    const pending: Promise<void>[] = [];
     for (const [id, list] of this.placements) {
-      void loadModel(id).then((model) => {
-        if (this.disposed || !model) return;
-        this.loaded.push(model);
-        this.instantiate(parent, id, model, list);
-        for (const m of groups.get(`model:${id}`) ?? []) m.visible = false;
-      });
+      pending.push(
+        loadModel(id).then((model) => {
+          if (this.disposed || !model) return;
+          this.loaded.push(model);
+          this.instantiate(parent, id, model, list);
+          for (const m of groups.get(`model:${id}`) ?? []) m.visible = false;
+        }),
+      );
     }
+    // Once everything is in, fold the props' shadow casting into one draw per side.
+    void Promise.all(pending).then(() => {
+      if (this.disposed) return;
+      const casters: { side: THREE.Side; src: ShadowSource }[] = [];
+      const m = new THREE.Matrix4();
+      for (const mesh of this.instanced) {
+        if (!mesh.castShadow || !solidCaster(mesh.material)) continue;
+        const side = (mesh.material as THREE.Material).side;
+        for (let i = 0; i < mesh.count; i++) {
+          mesh.getMatrixAt(i, m);
+          casters.push({ side, src: { geometry: mesh.geometry, matrix: m.clone() } });
+        }
+        mesh.castShadow = false;
+      }
+      for (const proxy of shadowProxies(casters, "props")) {
+        parent.add(proxy);
+        this.proxies.push(proxy);
+      }
+    });
   }
 
   private instantiate(parent: THREE.Object3D, id: ModelId, model: PreparedModel, list: PropPlacement[]) {
@@ -76,7 +108,9 @@ export class ModelPlacer {
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
-    for (const [v, places] of byVariant) {
+    for (const [v, unsorted] of byVariant) {
+      const places = unsorted.slice().sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0));
+      const counts = [0, 1, 2].map((t) => places.filter((p) => (p.tier ?? 0) <= t).length) as [number, number, number];
       const variant = model.variants[v];
       variant.bounds.getSize(size);
       variant.bounds.getCenter(center);
@@ -101,6 +135,9 @@ export class ModelPlacer {
         mesh.receiveShadow = true;
         mesh.computeBoundingSphere();
         mesh.name = `prop:${id}`;
+        this.tierCounts.set(mesh, counts);
+        mesh.count = counts[this.tier];
+        mesh.visible = mesh.count > 0;
         parent.add(mesh);
         this.instanced.push(mesh);
         this.triangles += ((part.geometry.index ? part.geometry.index.count : part.geometry.attributes.position.count) / 3) * matrices.length;
@@ -108,8 +145,18 @@ export class ModelPlacer {
     }
   }
 
+  /** Shows only the placements whose tier the preset allows. */
+  setQuality(name: QualityName) {
+    this.tier = TIER[name];
+    for (const [mesh, counts] of this.tierCounts) {
+      mesh.count = counts[this.tier];
+      mesh.visible = mesh.count > 0;
+    }
+  }
+
   dispose() {
     this.disposed = true;
+    for (const p of this.proxies) disposeProxy(p);
     for (const m of this.instanced) {
       m.removeFromParent();
       m.dispose();

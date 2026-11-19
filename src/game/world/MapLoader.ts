@@ -9,6 +9,7 @@ import { MeshBuilder } from "./MeshBuilder";
 import { WorldMaterials, type WorldMat } from "./WorldMaterials";
 import { qualityName, worldDetail } from "./quality";
 import { ModelPlacer } from "./Props";
+import { disposeProxy, shadowProxies, solidCaster, type ShadowSource } from "./ShadowProxy";
 import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
 import { buildTerrain } from "./Terrain";
 import { Foliage } from "./Foliage";
@@ -269,6 +270,20 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
       }
     }
   }
+  // Static casters → one shadow-only mesh per face side (saves ~30 shadow draws).
+  const casters: { side: THREE.Side; src: ShadowSource }[] = [];
+  for (const [group, list] of groups) {
+    if (group !== "solid" && group !== "decor") continue;
+    for (const mesh of list) {
+      if (!mesh.castShadow || !solidCaster(mesh.material)) continue;
+      casters.push({ side: (mesh.material as THREE.Material).side, src: { geometry: mesh.geometry, matrix: mesh.matrixWorld } });
+      mesh.castShadow = false;
+    }
+  }
+  for (const proxy of shadowProxies(casters, "static")) {
+    root.add(proxy);
+    disposables.push({ dispose: () => disposeProxy(proxy) });
+  }
   props.start(root, groups);
   disposables.push(props);
 
@@ -286,6 +301,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
     foliage.setQuality(q);
     const name = qualityName(q);
     clutterDistance = worldDetail(name).clutterDistance;
+    props.setQuality(name);
     for (const x of plan.extras ?? []) x.setQuality?.(name);
   };
   setQuality(quality);
