@@ -113,6 +113,7 @@ export class GameEngine {
     const preset = QUALITY[this.settings.quality];
     this.map = loadMap(this.scene, opts.map ?? (survival ? DUSTFALL_OUTPOST : KESTREL_YARD), preset);
     this.viewmodel = new WeaponViewmodel(null);
+    this.viewmodel.setSun(this.map.sun ?? null);
     this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
     this.viewmodel.scene.environment = this.pipeline.envMap;
 
