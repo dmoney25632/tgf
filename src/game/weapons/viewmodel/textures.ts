@@ -7,9 +7,13 @@ import * as THREE from "three";
  *
  *   R, G — tangent-space normal X / Y (Z is reconstructed in the shader)
  *   B    — wear mask: scratches / scuffs that cut through paint to metal
+ *          (wood layer: late-wood grain darkness, used as an albedo mask)
  *   A    — roughness variation (0.5 = neutral): fingerprints, polish, grime
  *
  * Generated on the CPU from pre-baked lattice noise (no DOM canvas needed).
+ * In the browser the work is sliced across frames (a few ms each) so it
+ * never stalls startup: the array starts neutral (flat normal, mid
+ * roughness, no wear) and each layer is uploaded as soon as it is done.
  */
 
 export const DETAIL_SIZE = 1024;
@@ -22,12 +26,16 @@ export const LAYER = {
   glove: 4,
   knurl: 5,
   rubber: 6,
+  wood: 7,
 } as const;
 export type LayerName = keyof typeof LAYER;
 const LAYERS = Object.keys(LAYER).length;
 
 const S = DETAIL_SIZE;
 const N = S * S;
+
+/** A slice of texture work; yields a layer index when that layer is finished. */
+type Work<T = void> = Generator<number | void, T, unknown>;
 
 /** Deterministic hash → [0, 1). */
 function hash(x: number, y: number, seed: number) {
@@ -41,7 +49,7 @@ function hash(x: number, y: number, seed: number) {
  * Tileable value noise: a random lattice of (S / cell)² points, smoothstep-
  * interpolated into `out` (added with weight `amp`).
  */
-function addNoise(out: Float32Array, cell: number, amp: number, seed: number, sx = 1, sy = 1) {
+function* addNoise(out: Float32Array, cell: number, amp: number, seed: number, sx = 1, sy = 1): Work {
   const nx = Math.max(1, Math.round(S / (cell * sx)));
   const ny = Math.max(1, Math.round(S / (cell * sy)));
   const lat = new Float32Array(nx * ny);
@@ -49,6 +57,7 @@ function addNoise(out: Float32Array, cell: number, amp: number, seed: number, sx
   const cx = S / nx;
   const cy = S / ny;
   for (let y = 0; y < S; y++) {
+    if ((y & 127) === 127) yield;
     const fy = y / cy;
     const y0 = Math.floor(fy);
     let ty = fy - y0;
@@ -71,12 +80,12 @@ function addNoise(out: Float32Array, cell: number, amp: number, seed: number, sx
   }
 }
 
-function fbm(cell: number, octaves: number, seed: number, sx = 1, sy = 1) {
+function* fbm(cell: number, octaves: number, seed: number, sx = 1, sy = 1): Work<Float32Array> {
   const out = new Float32Array(N);
   let amp = 0.5;
   let norm = 0;
   for (let o = 0; o < octaves && cell >= 1; o++) {
-    addNoise(out, cell, amp, seed + o * 31, sx, sy);
+    yield* addNoise(out, cell, amp, seed + o * 31, sx, sy);
     norm += amp;
     amp *= 0.5;
     cell /= 2;
@@ -86,11 +95,12 @@ function fbm(cell: number, octaves: number, seed: number, sx = 1, sy = 1) {
 }
 
 /** Cellular (Worley F1) distance in cell units, tileable. */
-function worley(cell: number, seed: number, jitter = 0.8) {
+function* worley(cell: number, seed: number, jitter = 0.8): Work<Float32Array> {
   const out = new Float32Array(N);
   const n = Math.round(S / cell);
   const c = S / n;
   for (let y = 0; y < S; y++) {
+    if ((y & 31) === 31) yield;
     const gy = Math.floor(y / c);
     for (let x = 0; x < S; x++) {
       const gx = Math.floor(x / c);
@@ -141,9 +151,10 @@ function scratches(h: Float32Array, mask: Float32Array, count: number, seed: num
 }
 
 /** Height → packed RGBA layer (normal XY, wear mask, roughness variation). */
-function pack(dst: Uint8Array, offset: number, h: Float32Array, strength: number, mask: Float32Array | null, rough: Float32Array) {
+function* pack(dst: Uint8Array, offset: number, h: Float32Array, strength: number, mask: Float32Array | null, rough: Float32Array): Work {
   const at = (x: number, y: number) => h[((y + S) % S) * S + ((x + S) % S)];
   for (let y = 0; y < S; y++) {
+    if ((y & 127) === 127) yield;
     for (let x = 0; x < S; x++) {
       const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
       const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
@@ -158,27 +169,23 @@ function pack(dst: Uint8Array, offset: number, h: Float32Array, strength: number
   }
 }
 
-let cache: THREE.DataArrayTexture | null = null;
-
-/** The shared detail texture array (built once per page). */
-export function detailArray(): THREE.DataArrayTexture {
-  if (cache) return cache;
-  const data = new Uint8Array(N * 4 * LAYERS);
+/** Fills every layer of `data`, one slice at a time. */
+function* generate(data: Uint8Array): Work {
   const off = (l: number) => l * N * 4;
 
   // ---- Metal: machining grain, tool marks, scratches, fingerprints ---------
   {
-    const grain = fbm(6, 3, 3);
-    const lines = fbm(3, 2, 9, 1, 40); // stretched → linear machining marks
+    const grain = yield* fbm(6, 3, 3);
+    const lines = yield* fbm(3, 2, 9, 1, 40); // stretched → linear machining marks
     const h = new Float32Array(N);
     const mask = new Float32Array(N);
     for (let i = 0; i < N; i++) h[i] = grain[i] * 0.35 + lines[i] * 0.25;
     scratches(h, mask, 260, 77, 20, 160, 0.9);
     scratches(h, mask, 90, 78, 60, 260, 0.5, 0.1);
     // Fingerprints: clusters of concentric arcs → oily, lower roughness.
-    const r = fbm(96, 4, 21);
-    const prints = worley(220, 5, 0.9);
-    const smudge = fbm(48, 3, 61);
+    const r = yield* fbm(96, 4, 21);
+    const prints = yield* worley(220, 5, 0.9);
+    const smudge = yield* fbm(48, 3, 61);
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const i = y * S + x;
@@ -187,30 +194,32 @@ export function detailArray(): THREE.DataArrayTexture {
         r[i] = 0.5 + (r[i] - 0.5) * 0.7 - ridges * 0.22 - Math.max(0, smudge[i] - 0.62) * 0.6 - mask[i] * 0.25;
       }
     }
-    pack(data, off(LAYER.metal), h, 4.5, mask, r);
+    yield* pack(data, off(LAYER.metal), h, 4.5, mask, r);
+    yield LAYER.metal;
   }
 
   // ---- Polymer: pebbled injection-mould texture + scuffs -------------------
   {
-    const peb = worley(7, 41, 0.9);
+    const peb = yield* worley(7, 41, 0.9);
     const h = new Float32Array(N);
-    const low = fbm(64, 3, 43);
+    const low = yield* fbm(64, 3, 43);
     for (let i = 0; i < N; i++) h[i] = Math.min(1, peb[i]) * 0.5 + low[i] * 0.2;
     const mask = new Float32Array(N);
     scratches(h, mask, 140, 91, 10, 70, 0.4);
-    const scuff = fbm(40, 4, 55);
-    const r = fbm(80, 3, 57);
+    const scuff = yield* fbm(40, 4, 55);
+    const r = yield* fbm(80, 3, 57);
     for (let i = 0; i < N; i++) {
       mask[i] = Math.max(mask[i] * 0.8, Math.max(0, scuff[i] - 0.6) * 2);
       r[i] = 0.5 + (r[i] - 0.5) * 0.5 + (peb[i] - 0.4) * 0.15;
     }
-    pack(data, off(LAYER.polymer), h, 3.2, mask, r);
+    yield* pack(data, off(LAYER.polymer), h, 3.2, mask, r);
+    yield LAYER.polymer;
   }
 
   // ---- Stipple: aggressive raised dots (grip panels) -----------------------
   {
-    const d = worley(9, 5, 0.75);
-    const fine = fbm(4, 2, 7);
+    const d = yield* worley(9, 5, 0.75);
+    const fine = yield* fbm(4, 2, 7);
     const h = new Float32Array(N);
     const r = new Float32Array(N);
     for (let i = 0; i < N; i++) {
@@ -218,14 +227,15 @@ export function detailArray(): THREE.DataArrayTexture {
       h[i] = Math.sqrt(bump) + fine[i] * 0.15;
       r[i] = 0.5 + (bump > 0.5 ? -0.08 : 0.06);
     }
-    pack(data, off(LAYER.stipple), h, 5, null, r);
+    yield* pack(data, off(LAYER.stipple), h, 5, null, r);
+    yield LAYER.stipple;
   }
 
   // ---- Fabric: 2/1 twill weave + slubs (sleeves, slings) -------------------
   {
     const h = new Float32Array(N);
-    const slub = fbm(24, 3, 91, 1, 4);
-    const fuzz = fbm(4, 2, 93);
+    const slub = yield* fbm(24, 3, 91, 1, 4);
+    const fuzz = yield* fbm(4, 2, 93);
     const P = 8; // texels per thread
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
@@ -240,23 +250,26 @@ export function detailArray(): THREE.DataArrayTexture {
         h[i] = (over ? 0.6 + warp * 0.4 * (0.8 + slub[i] * 0.4) : 0.3 + weft * 0.35) + fuzz[i] * 0.12;
       }
     }
-    const r = fbm(64, 3, 95);
+    yield;
+    const r = yield* fbm(64, 3, 95);
     for (let i = 0; i < N; i++) r[i] = 0.5 + (r[i] - 0.5) * 0.4;
-    pack(data, off(LAYER.fabric), h, 2.6, null, r);
+    yield* pack(data, off(LAYER.fabric), h, 2.6, null, r);
+    yield LAYER.fabric;
   }
 
   // ---- Glove: synthetic leather grain + scuffed wear on the palm -----------
   {
-    const cells = worley(12, 17, 1);
-    const fine = fbm(5, 3, 19);
+    const cells = yield* worley(12, 17, 1);
+    const fine = yield* fbm(5, 3, 19);
     const h = new Float32Array(N);
     for (let i = 0; i < N; i++) h[i] = Math.min(1, cells[i] * 1.2) * 0.45 + fine[i] * 0.25;
     const mask = new Float32Array(N);
-    const sc = fbm(56, 4, 23);
+    const sc = yield* fbm(56, 4, 23);
     for (let i = 0; i < N; i++) mask[i] = Math.max(0, sc[i] - 0.58) * 2.2;
-    const r = fbm(40, 3, 29);
+    const r = yield* fbm(40, 3, 29);
     for (let i = 0; i < N; i++) r[i] = 0.5 + (r[i] - 0.5) * 0.5 - mask[i] * 0.12 + (cells[i] < 0.25 ? 0.05 : 0);
-    pack(data, off(LAYER.glove), h, 2.4, mask, r);
+    yield* pack(data, off(LAYER.glove), h, 2.4, mask, r);
+    yield LAYER.glove;
   }
 
   // ---- Knurl: diamond knurling (knobs, turrets, suppressor caps, cord) -----
@@ -270,19 +283,66 @@ export function detailArray(): THREE.DataArrayTexture {
         h[y * S + x] = 1 - Math.max(a, b) * 2;
       }
     }
-    const r = fbm(64, 2, 33);
+    yield;
+    const r = yield* fbm(64, 2, 33);
     for (let i = 0; i < N; i++) r[i] = 0.5 + (r[i] - 0.5) * 0.4;
-    pack(data, off(LAYER.knurl), h, 3.5, null, r);
+    yield* pack(data, off(LAYER.knurl), h, 3.5, null, r);
+    yield LAYER.knurl;
   }
 
   // ---- Rubber: fine matte grain --------------------------------------------
   {
-    const h = fbm(5, 3, 71);
-    const r = fbm(48, 3, 73);
+    const h = yield* fbm(5, 3, 71);
+    const r = yield* fbm(48, 3, 73);
     for (let i = 0; i < N; i++) r[i] = 0.5 + (r[i] - 0.5) * 0.3;
-    pack(data, off(LAYER.rubber), h, 1.8, null, r);
+    yield* pack(data, off(LAYER.rubber), h, 1.8, null, r);
+    yield LAYER.rubber;
   }
 
+  // ---- Wood: flat-sawn grain (rings warped by noise), pores, varnish -------
+  {
+    const warp = yield* fbm(160, 3, 101, 4, 1);
+    const fine = yield* fbm(3, 2, 103, 24, 1); // long thin pores along X
+    const fig = yield* fbm(40, 3, 105, 3, 1);
+    const h = new Float32Array(N);
+    const g = new Float32Array(N);
+    const r = new Float32Array(N);
+    const rings = 22; // per tile, must be an integer to tile
+    for (let y = 0; y < S; y++) {
+      if ((y & 127) === 127) yield;
+      for (let x = 0; x < S; x++) {
+        const i = y * S + x;
+        const t = (y / S) * rings + (warp[i] - 0.5) * 3.2 + (fig[i] - 0.5) * 0.6;
+        const ring = t - Math.floor(t);
+        const late = Math.min(1, Math.max(0, (ring - 0.62) / 0.3));
+        const pore = Math.max(0, fine[i] - 0.58) * 2.4;
+        g[i] = Math.min(1, late * 0.75 + pore * 0.35 + (fig[i] - 0.5) * 0.3 + 0.12);
+        h[i] = 0.5 - late * 0.12 - pore * 0.25;
+        r[i] = 0.5 + pore * 0.35 - late * 0.06;
+      }
+    }
+    yield* pack(data, off(LAYER.wood), h, 2.2, g, r);
+    yield LAYER.wood;
+  }
+}
+
+let cache: THREE.DataArrayTexture | null = null;
+let job = 0;
+
+/**
+ * The shared detail texture array (one per page). Returned immediately; in a
+ * browser its layers fill in over the next frames (~4 ms of work per frame),
+ * elsewhere (tests) it is generated synchronously.
+ */
+export function detailArray(): THREE.DataArrayTexture {
+  if (cache) return cache;
+  const data = new Uint8Array(N * 4 * LAYERS);
+  // Neutral texel: flat normal (0.5, 0.5), no wear, mid roughness.
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = 128;
+    data[i + 1] = 128;
+    data[i + 3] = 128;
+  }
   const tex = new THREE.DataArrayTexture(data, S, S, LAYERS);
   tex.format = THREE.RGBAFormat;
   tex.type = THREE.UnsignedByteType;
@@ -294,10 +354,32 @@ export function detailArray(): THREE.DataArrayTexture {
   tex.colorSpace = THREE.NoColorSpace;
   tex.needsUpdate = true;
   cache = tex;
+
+  const gen = generate(data);
+  if (typeof window === "undefined" || typeof requestAnimationFrame !== "function") {
+    while (!gen.next().done);
+    return tex;
+  }
+  const id = ++job;
+  const step = () => {
+    if (id !== job) return; // disposed meanwhile
+    const until = performance.now() + 4;
+    do {
+      const r = gen.next();
+      if (r.done) return;
+      if (typeof r.value === "number") {
+        tex.addLayerUpdate(r.value);
+        tex.needsUpdate = true;
+      }
+    } while (performance.now() < until);
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
   return tex;
 }
 
 export function disposeDetailArray() {
+  job++;
   cache?.dispose();
   cache = null;
 }

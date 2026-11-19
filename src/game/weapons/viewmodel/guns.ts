@@ -333,8 +333,8 @@ function buildShotgun(k: Kit): GunSpec {
   pinX(k, m.steel, 0.0024, 0.035, 0, -0.068, 0.02);
   triggerGroup(k, m.steel, m.steel, 0.058, 0.008, -0.075, 0.022, 0.012);
   buttonX(k, m.bright, 0.004, 0.004, 0.009, -0.078, 0.052);
-  const grip = pistolGrip(k, m.polymerOlive, 0.074, -0.074, 0.098, 0.36, 0.035, 0.031);
-  stock(k, m.polymerOlive, m.rubber, 0.078, -0.022, 0.26, 0.112, 0.04);
+  const grip = pistolGrip(k, m.wood, 0.074, -0.074, 0.098, 0.36, 0.035, 0.031);
+  stock(k, m.wood, m.rubber, 0.078, -0.022, 0.26, 0.112, 0.04);
   // Side saddle with four shells.
   b.box(m.polymer, 0.004, 0.046, 0.09, -0.0195, -0.045, -0.06, { bev: 0.0012 });
   for (let i = 0; i < 4; i++) {
@@ -360,7 +360,7 @@ function buildShotgun(k: Kit): GunSpec {
   g.pump.position.set(0, 0, -0.3);
   g.root.add(g.pump);
   b.into(g.pump);
-  b.section(m.polymerOlive, rrect(0.05, 0.046, 0.017, 0, -0.06, 4), 0.07, -0.07, { bev: 0.003, bevSeg: 2, seg: 4 });
+  b.section(m.wood, rrect(0.05, 0.046, 0.017, 0, -0.06, 4), 0.07, -0.07, { bev: 0.003, bevSeg: 2, seg: 4 });
   for (let i = 0; i < 7; i++) {
     for (const sx of [-1, 1]) b.box(m.polymer, 0.0016, 0.026, 0.004, sx * 0.025, -0.063, -0.05 + i * 0.016, { bev: 0.0004 });
     b.box(m.polymer, 0.026, 0.0016, 0.004, 0, -0.083, -0.05 + i * 0.016, { bev: 0.0004 });
@@ -695,7 +695,7 @@ function buildRevolver(k: Kit): GunSpec {
   b.box(m.steel, 0.009, 0.004, 0.012, -0.0138, -0.03, 0.014, { bev: 0.0012 });
   pinX(k, m.steel, 0.0022, 0.027, 0, -0.03, 0.03);
   triggerGroup(k, m.stainless, m.steel, 0.012, -0.03, -0.079, 0.022, 0.0105);
-  const grip = pistolGrip(k, m.rubber, 0.034, -0.072, 0.098, 0.42, 0.038, 0.034);
+  const grip = pistolGrip(k, m.wood, 0.034, -0.072, 0.098, 0.42, 0.038, 0.034);
   // Full-lug barrel, vent rib, ramp front sight, crown.
   b.profile(m.stainless, [[-0.052, -0.006], [-0.214, -0.006], [-0.217, -0.009], [-0.217, -0.05], [-0.21, -0.054], [-0.075, -0.054], [-0.06, -0.047], [-0.054, -0.047]], 0.024, 0, { bev: 0.0025, bevSeg: 2 });
   const vents: P2[][] = [];
