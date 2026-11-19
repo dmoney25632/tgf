@@ -1,52 +1,36 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameEngine, GameSettings } from "@/game/core/Engine";
+import type { GameEngine } from "@/game/core/Engine";
 import type { EngineEvent, MatchSummary } from "@/game/core/GameMode";
 import type { SurvivalGameMode } from "@/game/survival/SurvivalGameMode";
-import { detectQuality, QUALITY, type QualityName } from "@/game/config";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import type { LoadTracker } from "@/game/ui/LoadProgress";
+import { detectQuality } from "@/game/config";
+import { loadSettings, sanitizeSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { saveMatch } from "@/app/play/[gameId]/actions";
 import { DEFAULT_CHOICE, Lobby, type LobbyChoice } from "./lobby";
 import { ShopOverlay } from "./shop-overlay";
 import { MatchSummaryView } from "./match-summary";
+import { LoadingScreen } from "./loading-screen";
+import { PauseMenu } from "./pause-menu";
+import { useGamepadNav, useInputDevice } from "./gamepad";
 
-const CONTROLS: [string, string][] = [
-  ["WASD", "Move"],
-  ["Shift", "Sprint"],
-  ["C / Ctrl", "Crouch (toggle / hold)"],
-  ["C while sprinting", "Slide"],
-  ["Space", "Jump"],
-  ["LMB / RMB", "Fire / Aim"],
-  ["R", "Reload"],
-  ["V", "Knife"],
-  ["G", "Frag grenade"],
-  ["1-2 · Q · Wheel", "Switch weapon"],
-  ["F", "Interact / revive / armory"],
-  ["N", "Ready up (between waves)"],
-  ["Tab", "Scoreboard"],
-  ["F3", "Debug overlay"],
-];
-
-const SETTINGS_KEY = "tgf.iron-horizon.settings";
 const LOBBY_KEY = "tgf.iron-horizon.lobby";
 
-function load<T>(key: string, fallback: T): T {
+function loadLobby(): LobbyChoice {
   try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<T>) } : fallback;
+    const raw = window.localStorage.getItem(LOBBY_KEY);
+    return raw ? { ...DEFAULT_CHOICE, ...(JSON.parse(raw) as Partial<LobbyChoice>) } : DEFAULT_CHOICE;
   } catch {
-    return fallback;
+    return DEFAULT_CHOICE;
   }
 }
 
-function save(key: string, value: unknown) {
+function saveLobby(value: LobbyChoice) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    window.localStorage.setItem(LOBBY_KEY, JSON.stringify(value));
   } catch {
-    // Storage blocked (private mode etc.) — preferences just won't persist.
+    // Storage blocked (private mode etc.) — picks just won't persist.
   }
 }
 
@@ -61,7 +45,7 @@ export function IronHorizonClient({ callsign }: { callsign: string }) {
 
   useEffect(() => {
     // Restore the last lobby picks after mount (localStorage isn't available during SSR).
-    const restored = load(LOBBY_KEY, DEFAULT_CHOICE);
+    const restored = loadLobby();
     queueMicrotask(() => setChoice(restored));
   }, []);
 
@@ -73,7 +57,7 @@ export function IronHorizonClient({ callsign }: { callsign: string }) {
         callsign={callsign}
         initial={choice}
         onDeploy={(c) => {
-          save(LOBBY_KEY, c);
+          saveLobby(c);
           setChoice(c);
           setRun((r) => r + 1);
           setInGame(true);
@@ -93,18 +77,32 @@ export function IronHorizonClient({ callsign }: { callsign: string }) {
   );
 }
 
+const MIN_LOADING_MS = 1300;
+const MAX_LOADING_MS = 20000;
+
 function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; choice: LobbyChoice; onAgain: () => void; onLobby: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const loadRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const [ready, setReady] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [deployed, setDeployed] = useState(false);
+  const [loadGone, setLoadGone] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [lockError, setLockError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<GameSettings | null>(null);
+  const [mapName, setMapName] = useState(choice.mode === "survival" ? "Dustfall Outpost" : "Kestrel Yard");
   const [shopOpen, setShopOpen] = useState(false);
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [saved, setSaved] = useState("");
   const [survivalMode, setSurvivalMode] = useState<SurvivalGameMode | null>(null);
+  const dev = useInputDevice();
   const survival = choice.mode === "survival";
+  const objective = survival
+    ? "Hold the compound against escalating waves. Armories and ammo crates open between waves; squadmates revive you if you go down."
+    : `Operator ${callsign}. Zero your weapons on pop-up targets (they reset after 2.5 s) and steel plates out to 70 m.`;
 
   const onEvent = useCallback((e: EngineEvent) => {
     if (e.type === "shop") setShopOpen(e.open);
@@ -130,11 +128,52 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
   useEffect(() => {
     let cancelled = false;
     let engine: GameEngine | null = null;
-    const initial = load<GameSettings>(SETTINGS_KEY, { sensitivity: 1, adsSensitivity: 1, quality: detectQuality(), volume: 0.8 });
+    let tracker: LoadTracker | null = null;
+    let raf = 0;
+    let shown = 0;
+    let engineAt = 0;
+    const t0 = performance.now();
+    const initial = loadSettings(detectQuality());
 
-    import("@/game/core/Engine")
-      .then(({ GameEngine }) => {
+    // Progress: module download (estimated) → real asset loads through the
+    // three.js loading manager → done. Timed fallback when nothing loads
+    // (everything cached) and a hard cap so a stuck request never blocks play.
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const now = performance.now();
+      let target: number;
+      let finished = false;
+      if (!engineAt || !tracker) target = 0.3 * (1 - Math.exp(-(now - t0) / 1400));
+      else {
+        const s = tracker.snapshot();
+        const since = now - engineAt;
+        let frac: number;
+        if (s.started && s.total > 0) {
+          frac = s.loaded / s.total;
+          finished = s.loaded >= s.total && s.idleMs > 350;
+        } else {
+          frac = Math.min(1, Math.max(0, (since - 250) / 800));
+          finished = since > 1100;
+        }
+        if (since > MAX_LOADING_MS) finished = true;
+        target = finished && now - t0 > MIN_LOADING_MS ? 1 : 0.32 + 0.6 * frac;
+      }
+      shown = Math.max(shown, shown + (target - shown) * 0.16);
+      if (target === 1 && shown > 0.995) shown = 1;
+      setProgress((p) => (Math.abs(p - shown) >= 0.004 || shown === 1 ? shown : p));
+      if (shown === 1) {
+        cancelAnimationFrame(raf);
+        tracker?.dispose();
+        tracker = null;
+        setLoaded(true);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+
+    Promise.all([import("@/game/core/Engine"), import("@/game/ui/LoadProgress")])
+      .then(([{ GameEngine }, { trackAssetLoading }]) => {
         if (cancelled || !hostRef.current) return;
+        tracker = trackAssetLoading();
         engine = new GameEngine(hostRef.current, {
           callsign,
           settings: initial,
@@ -149,12 +188,21 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
             squad: choice.squad,
             startWave: choice.startWave,
           },
-          onLockChange: setLocked,
+          onLockChange: (engaged) => {
+            setLocked(engaged);
+            if (engaged) {
+              setDeployed(true);
+              setLockError(false);
+            }
+          },
+          onLockError: () => setLockError(true),
           onEvent,
         });
+        engineAt = performance.now();
         engine.start();
         engineRef.current = engine;
-        setSettings(initial);
+        setSettings(engine.settings ? { ...engine.settings } : initial);
+        setMapName(engine.mapName);
         setSurvivalMode(engine.survival);
         if (process.env.NODE_ENV !== "production") (window as unknown as { __tgf?: GameEngine }).__tgf = engine;
         setReady(true);
@@ -162,6 +210,7 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
       .catch((e: unknown) => {
         console.error(e);
         const msg = e instanceof Error ? e.message : String(e);
+        cancelAnimationFrame(raf);
         setError(
           /webgl|context/i.test(msg)
             ? "Couldn't start 3D graphics. Enable hardware acceleration or try a recent Chrome, Edge or Firefox."
@@ -171,19 +220,26 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(raf);
+      tracker?.dispose();
       engine?.dispose();
       engineRef.current = null;
     };
   }, [callsign, choice, onEvent]);
 
-  const update = (patch: Partial<GameSettings>) => {
-    if (!settings) return;
-    // Side effects stay out of the state updater (StrictMode runs updaters twice).
-    const next = { ...settings, ...patch };
-    engineRef.current?.applySettings(patch);
-    save(SETTINGS_KEY, next);
-    setSettings(next);
-  };
+  const update = useCallback(
+    (patch: Partial<GameSettings>) => {
+      if (!settings) return;
+      // Side effects stay out of the state updater (StrictMode runs updaters twice).
+      const next = sanitizeSettings({ ...settings, ...patch });
+      engineRef.current?.applySettings(patch);
+      saveSettings(next);
+      setSettings(next);
+    },
+    [settings],
+  );
+
+  const resume = useCallback((via?: "pad") => engineRef.current?.lock(via), []);
 
   const fullscreen = async () => {
     try {
@@ -197,140 +253,61 @@ function GameView({ callsign, choice, onAgain, onLobby }: { callsign: string; ch
     engineRef.current?.lock();
   };
 
-  const resumeFromShop = (ready: boolean) => {
+  const resumeFromShop = (ready: boolean, via?: "pad") => {
     const s = survivalMode;
     if (!s) return;
     if (ready) s.readyUp();
     else s.closeShop();
     setShopOpen(false);
-    engineRef.current?.lock();
+    engineRef.current?.lock(via);
   };
 
-  const showPause = !locked && !shopOpen && !summary;
+  const canDeploy = ready && loaded && !deployed && !error;
+  useGamepadNav(loadRef, { onStart: () => resume("pad") }, canDeploy);
+
+  const showPause = deployed && !locked && !shopOpen && !summary;
 
   return (
     <div className="fixed inset-0 bg-black">
       <div ref={hostRef} className="absolute inset-0" />
 
-      {shopOpen && survivalMode && <ShopOverlay mode={survivalMode} onResume={resumeFromShop} />}
+      {!loadGone && (
+        <div ref={loadRef}>
+          <LoadingScreen
+            mapName={mapName}
+            modeLabel={survival ? "Survival" : "Training"}
+            objective={objective}
+            progress={progress}
+            ready={canDeploy}
+            leaving={deployed}
+            dev={dev}
+            error={error}
+            notice={lockError && !deployed ? "The browser didn't capture the mouse — click again to deploy." : undefined}
+            onDeploy={(e) => resume(e.nativeEvent.isTrusted ? undefined : "pad")}
+            onGone={() => setLoadGone(true)}
+          />
+        </div>
+      )}
+
+      {shopOpen && survivalMode && <ShopOverlay mode={survivalMode} dev={dev} onResume={resumeFromShop} />}
 
       {summary && <MatchSummaryView s={summary} saved={saved} onAgain={onAgain} onLobby={onLobby} />}
 
-      {showPause && (
-        <div className="absolute inset-0 flex items-center justify-center overflow-y-auto bg-black/55 px-4 py-6 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-neutral-950/90 p-6 text-neutral-100">
-            <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">
-              Iron Horizon · {survival ? "Survival" : "Training"}
-            </p>
-            <h1 className="mt-1 text-2xl font-bold">{survival ? "Dustfall Outpost" : "Kestrel Yard — Firing Range"}</h1>
-            <p className="mt-1 text-sm text-neutral-400">
-              {survival
-                ? "Hold the compound. Armories (F) and ammo crates open between waves. Squadmates revive you if you go down."
-                : `Operator ${callsign}. Targets reset after 2.5 s. Steel plates hang at 70 m.`}
-            </p>
-
-            {error ? (
-              <p className="mt-4 text-sm text-red-400">{error}</p>
-            ) : (
-              <div className="mt-5 flex gap-2">
-                <button
-                  type="button"
-                  disabled={!ready}
-                  onClick={() => engineRef.current?.lock()}
-                  className={cn(buttonVariants({ size: "lg" }), "h-11 flex-1 text-base")}
-                >
-                  {ready ? "Click to deploy" : "Loading…"}
-                </button>
-                <button
-                  type="button"
-                  disabled={!ready}
-                  onClick={fullscreen}
-                  className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11")}
-                  title="Fullscreen also lets Ctrl crouch safely"
-                >
-                  Fullscreen
-                </button>
-              </div>
-            )}
-
-            {settings && (
-              <div className="mt-6 grid gap-4 text-sm">
-                <Slider label="Sensitivity" value={settings.sensitivity} min={0.2} max={3} step={0.05} onChange={(v) => update({ sensitivity: v })} />
-                <Slider
-                  label="ADS sensitivity"
-                  value={settings.adsSensitivity}
-                  min={0.3}
-                  max={2}
-                  step={0.05}
-                  onChange={(v) => update({ adsSensitivity: v })}
-                />
-                <Slider label="Volume" value={settings.volume} min={0} max={1} step={0.05} onChange={(v) => update({ volume: v })} />
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-neutral-400">Quality</span>
-                  <div className="flex flex-wrap gap-1">
-                    {(Object.keys(QUALITY) as QualityName[]).map((q) => (
-                      <button
-                        key={q}
-                        type="button"
-                        onClick={() => update({ quality: q })}
-                        className={cn(buttonVariants({ variant: settings.quality === q ? "default" : "outline", size: "sm" }), "min-w-16")}
-                      >
-                        {QUALITY[q].label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-              {CONTROLS.map(([k, v]) => (
-                <div key={k} className="contents">
-                  <dt className="font-mono text-neutral-300">{k}</dt>
-                  <dd className="text-neutral-500">{v}</dd>
-                </div>
-              ))}
-            </dl>
-
-            <div className="mt-6 flex gap-2">
-              {!survival && (
-                <button
-                  type="button"
-                  disabled={!ready}
-                  onClick={() => engineRef.current?.respawn()}
-                  className={cn(buttonVariants({ variant: "outline" }), "flex-1")}
-                >
-                  Reset position
-                </button>
-              )}
-              <button type="button" onClick={onLobby} className={cn(buttonVariants({ variant: "outline" }), "flex-1")}>
-                {survival ? "Abandon to lobby" : "Lobby"}
-              </button>
-              <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost" }), "flex-1")}>
-                Exit to dashboard
-              </Link>
-            </div>
-          </div>
-        </div>
+      {showPause && settings && (
+        <PauseMenu
+          survival={survival}
+          mapName={mapName}
+          objective={objective}
+          settings={settings}
+          onSettings={update}
+          dev={dev}
+          lockError={lockError}
+          onResume={resume}
+          onRespawn={survival ? undefined : () => engineRef.current?.respawn()}
+          onLobby={onLobby}
+          onFullscreen={fullscreen}
+        />
       )}
     </div>
-  );
-}
-
-function Slider(props: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
-  return (
-    <label className="flex items-center justify-between gap-3">
-      <span className="w-32 shrink-0 text-neutral-400">{props.label}</span>
-      <input
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={props.value}
-        onChange={(e) => props.onChange(Number(e.target.value))}
-        className="flex-1 accent-amber-400"
-      />
-      <span className="w-12 text-right font-mono tabular-nums">{props.value.toFixed(2)}</span>
-    </label>
   );
 }

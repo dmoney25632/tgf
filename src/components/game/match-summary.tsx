@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRef } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MatchSummary } from "@/game/core/GameMode";
 import { ENEMIES, type EnemyType } from "@/game/survival/config";
+import { PAD_FOCUS_CSS, useGamepadNav } from "./gamepad";
 
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -21,6 +23,8 @@ export function MatchSummaryView({
   onAgain: () => void;
   onLobby: () => void;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useGamepadNav(rootRef, { onY: onAgain, onBack: onLobby });
   const acc = s.shotsFired ? ((s.shotsHit / s.shotsFired) * 100).toFixed(1) : "0.0";
   // Only waves actually played this run count — skipped waves don't earn score.
   const cleared = Math.max(0, s.wavesSurvived - (s.startWave - 1));
@@ -35,8 +39,9 @@ export function MatchSummaryView({
   const waves = `Cleared ${cleared} wave${cleared === 1 ? "" : "s"}${skipped} · reached wave ${s.wavesSurvived + (s.victory ? 0 : 1)}${s.waveTarget ? ` of ${s.waveTarget}` : " (endless)"} in ${fmtTime(s.seconds)}.`;
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center overflow-y-auto bg-black/70 px-4 py-6 backdrop-blur">
-      <div className="w-full max-w-3xl rounded-xl border border-white/10 bg-neutral-950/95 p-6 text-neutral-100">
+    <div ref={rootRef} className="absolute inset-0 z-20 flex animate-in items-center justify-center overflow-y-auto bg-black/70 px-4 py-6 backdrop-blur duration-500 fade-in">
+      <style>{PAD_FOCUS_CSS}</style>
+      <div className="w-full max-w-3xl animate-in rounded-xl duration-500 slide-in-from-bottom-4 border border-white/10 bg-neutral-950/95 p-6 text-neutral-100">
         <p className="font-mono text-[11px] tracking-[0.3em] text-neutral-500 uppercase">
           {s.map} · {s.difficulty} · {s.operator}
         </p>
@@ -67,7 +72,7 @@ export function MatchSummaryView({
         </div>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <button type="button" onClick={onAgain} className={cn(buttonVariants({ size: "lg" }), "h-11 flex-1")}>
+          <button type="button" data-nav-default onClick={onAgain} className={cn(buttonVariants({ size: "lg" }), "h-11 flex-1")}>
             Play again
           </button>
           <button type="button" onClick={onLobby} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11 flex-1")}>
