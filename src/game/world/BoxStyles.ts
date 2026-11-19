@@ -18,6 +18,8 @@ export const DEFAULT_MATERIAL: Record<Surface, MaterialName> = {
   steel: "metal_dark",
   flesh: "plain",
   armor: "plain",
+  dirt: "ground",
+  glass: "plain",
 };
 
 /** Bullet-impact surface for a material (merged meshes carry it in userData). */
