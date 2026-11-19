@@ -23,11 +23,11 @@ type StdLook = {
 };
 export const STD_LOOKS: readonly StdLook[] = [
   { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "long", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 1 },
-  { hat: "cap", eyes: "shades", goggles: false, sleeves: "rolled", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 2 },
+  { hat: "cap", eyes: "none", goggles: false, sleeves: "rolled", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 2 },
   { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "assault", cover: "none", shemagh: true, headset: true, beard: 0 },
-  { hat: "none", eyes: "shades", goggles: false, sleeves: "tank", rig: "chest", pack: "none", cover: "none", shemagh: false, headset: false, beard: 2 },
+  { hat: "none", eyes: "none", goggles: false, sleeves: "tank", rig: "chest", pack: "none", cover: "none", shemagh: false, headset: false, beard: 2 },
   { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "hydration", cover: "balaclava", shemagh: false, headset: true, beard: 1 },
-  { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "rolled", rig: "chest", pack: "assault", cover: "none", shemagh: false, headset: true, beard: 1 },
+  { hat: "helmet", eyes: "shades", goggles: false, sleeves: "rolled", rig: "chest", pack: "assault", cover: "none", shemagh: false, headset: true, beard: 1 },
 ];
 
 /** What the scanned head should look like (null: the kit hides the face entirely). */
@@ -68,7 +68,105 @@ export type BodyBuild = {
   w: number;
   /** Scanned-face spec; null when the kit hides the face (and at LOD > 0 the sculpted head is used). */
   face: FaceSpec | null;
+  /** See-through eyewear lenses (head space), split out at LOD 0 so they can be drawn transparent. */
+  lens: { geo: THREE.BufferGeometry; kind: "clear" | "dark" } | null;
 };
+
+/** Eyewear sits on the scan's midline (its eyes are centred 3.5 mm left of the bone axis). */
+const EYEWEAR_X = -0.0035;
+
+/**
+ * Two ballistic-glasses lenses on a wrap ellipsoid in front of the eyes, the
+ * rim around each, and the bridge / hinge blocks. Head-bone space.
+ */
+function eyewear() {
+  const C = new THREE.Vector3(EYEWEAR_X, 0.135, 0), R = new THREE.Vector3(0.076, 0.058, 0.102);
+  const onWrap = (phi: number, y: number, lift = 0) => {
+    const k = Math.sqrt(Math.max(0, 1 - ((y - C.y) / R.y) ** 2));
+    const p = new THREE.Vector3(C.x + R.x * k * Math.sin(phi), y, C.z + R.z * k * Math.cos(phi));
+    const n = new THREE.Vector3((p.x - C.x) / (R.x * R.x), (p.y - C.y) / (R.y * R.y), (p.z - C.z) / (R.z * R.z)).normalize();
+    return { p: p.addScaledVector(n, lift), n };
+  };
+  // Lens outline in normalised (U across, outward positive; V up) -> (phi, y).
+  const shape = (s: number, U: number, V: number) => {
+    const top = 0.1525 - 0.0015 * U;
+    const bot = 0.1195 + 0.004 * U * U + 0.011 * Math.max(0, -U) ** 1.6; // raised over the nose
+    return { phi: s * (0.37 + 0.33 * U), y: (top + bot) / 2 + ((top - bot) / 2) * V };
+  };
+  const SEG = QUALITY.lod ? 14 : 28, RINGS = QUALITY.lod ? [0.5, 1] : [0.34, 0.68, 1];
+  const ring = (rho: number, a: number) => {
+    const c = Math.cos(a), sn = Math.sin(a);
+    return [rho * Math.sign(c) * Math.abs(c) ** 0.55, rho * Math.sign(sn) * Math.abs(sn) ** 0.55];
+  };
+  const lp: number[] = [], ln: number[] = [], li: number[] = [];
+  const rp: number[] = [];
+  for (const s of [1, -1]) {
+    // Lens: centre fan + rings.
+    const base = lp.length / 3;
+    const c0 = shape(s, 0, 0);
+    const w0 = onWrap(c0.phi, c0.y);
+    lp.push(w0.p.x, w0.p.y, w0.p.z);
+    ln.push(w0.n.x, w0.n.y, w0.n.z);
+    for (const rho of RINGS) {
+      for (let i = 0; i < SEG; i++) {
+        const [U, V] = ring(rho, (i / SEG) * Math.PI * 2);
+        const q = shape(s, U, V);
+        const w = onWrap(q.phi, q.y);
+        lp.push(w.p.x, w.p.y, w.p.z);
+        ln.push(w.n.x, w.n.y, w.n.z);
+      }
+    }
+    // Facing +Z: the winding flips with the mirrored side.
+    const tri = (a: number, b: number, c: number) => (s > 0 ? li.push(a, b, c) : li.push(a, c, b));
+    for (let i = 0; i < SEG; i++) tri(base, base + 1 + i, base + 1 + ((i + 1) % SEG));
+    for (let r = 0; r < RINGS.length - 1; r++) {
+      const r0 = base + 1 + r * SEG, r1 = r0 + SEG;
+      for (let i = 0; i < SEG; i++) {
+        const j = (i + 1) % SEG;
+        tri(r0 + i, r1 + i, r1 + j);
+        tri(r0 + i, r1 + j, r0 + j);
+      }
+    }
+    // Rim: a small rectangular section swept round the outline; heavier brow bar on top.
+    const sec: THREE.Vector3[][] = [];
+    for (let i = 0; i < SEG; i++) {
+      const [U, V] = ring(1, (i / SEG) * Math.PI * 2);
+      const q = shape(s, U, V), qo = shape(s, U * 1.1, V * 1.18);
+      const w = onWrap(q.phi, q.y), wo = onWrap(qo.phi, qo.y);
+      const out = wo.p.clone().sub(w.p).normalize();
+      const wd = V > 0.55 ? 0.0034 : 0.0015;
+      const f = 0.0015, bk = 0.0009;
+      sec.push([
+        w.p.clone().addScaledVector(out, -0.0005).addScaledVector(w.n, f),
+        w.p.clone().addScaledVector(out, wd).addScaledVector(w.n, f),
+        w.p.clone().addScaledVector(out, wd).addScaledVector(w.n, -bk),
+        w.p.clone().addScaledVector(out, -0.0005).addScaledVector(w.n, -bk),
+      ]);
+    }
+    for (let i = 0; i < SEG; i++) {
+      const A = sec[i], B = sec[(i + 1) % SEG];
+      for (let k = 0; k < 4; k++) {
+        const a0 = A[k], a1 = A[(k + 1) % 4], b0 = B[k], b1 = B[(k + 1) % 4];
+        const quad = s > 0 ? [a0, b1, b0, a0, a1, b1] : [a0, b0, b1, a0, b1, a1];
+        for (const v of quad) rp.push(v.x, v.y, v.z);
+      }
+    }
+  }
+  const lenses = new THREE.BufferGeometry();
+  lenses.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
+  lenses.setAttribute("normal", new THREE.Float32BufferAttribute(ln, 3));
+  lenses.setIndex(li);
+  const rims = new THREE.BufferGeometry();
+  rims.setAttribute("position", new THREE.Float32BufferAttribute(rp, 3));
+  rims.computeVertexNormals();
+  // Bridge over the nose and the hinge blocks at the outer top corners.
+  const br = onWrap(0, 0.1475, 0.0012).p;
+  const hinge = [1, -1].map((s) => {
+    const q = shape(s, 1.05, 0.75);
+    return { s, p: onWrap(q.phi, q.y, -0.002).p };
+  });
+  return { lenses, rims, bridge: T(br.x, br.y, br.z), hinges: hinge.map(({ s, p }) => T(p.x, p.y, p.z - 0.002, 0, s * 0.9)) };
+}
 
 function camoFor(hex: number): CamoStyle {
   const hsl = { h: 0, s: 0, l: 0 };
@@ -379,11 +477,25 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
       add("head", rbox(0.021, 0.042, 0.026, 6, 3, 0.3), balaclava ? knit : skin, T(0, 0.112, 0.103, -0.28), balaclava ? undefined : (_p, _n, c) => void c.multiplyScalar(0.95));
     }
   }
-  const glasses = (lensP: Paint, frameP: Paint) => {
-    // Wraparound lens, bridge and temple arms back to the ears.
-    add("head", new THREE.SphereGeometry(1, 16, 5, Math.PI / 2 - 0.8, 1.6, Math.PI / 2 - 0.32, 0.6), lensP, T(0, 0.135, 0.0, 0, 0, 0, 0.075, 0.056, 0.106)); // curved both ways so it catches a sky gradient
-    add("head", new THREE.CylinderGeometry(1, 1, 1, 14, 1, true, -0.8, 1.6), frameP, T(0, 0.149, 0.0, 0, 0, 0, 0.075, 0.005, 0.105));
-    for (const s of [1, -1]) add("head", rbox(0.004, 0.005, 0.075, 4, 4, 0), frameP, sided(s, T(-0.077, 0.146, 0.03, 0, -0.1)));
+  let lensOut: BodyBuild["lens"] = null;
+  const glasses = (kind: "clear" | "dark", frameP: Paint) => {
+    // Two shaped, wrap-curved lenses in a rimmed frame, bridge, hinges and
+    // temple arms. Near the camera the lenses are a separate see-through
+    // mesh (eyes visible behind clear lenses); further out they are baked
+    // into the body as tinted glass.
+    const { lenses, rims, bridge, hinges } = eyewear();
+    add("head", rims, frameP);
+    add("head", rbox(0.014, 0.0045, 0.004, 4, 4, 0), frameP, bridge);
+    for (const h of hinges) add("head", rbox(0.006, 0.009, 0.012, 4, 4, 0), frameP, h);
+    for (const s of [1, -1]) {
+      const a = new THREE.Vector3(s * 0.0485 + EYEWEAR_X, 0.149, 0.071);
+      const b = new THREE.Vector3(s * 0.073 + EYEWEAR_X, 0.145, -0.022);
+      const len = a.distanceTo(b);
+      const m = new THREE.Matrix4().lookAt(a, b, new THREE.Vector3(0, 1, 0)).setPosition(a.clone().lerp(b, 0.5));
+      add("head", rbox(0.003, 0.006, len, 4, 4, 0), frameP, m);
+    }
+    if (scan) lensOut = { geo: lenses, kind };
+    else add("head", lenses, kind === "clear" ? lensClear : lensDark);
   };
   const headset = (overCap: boolean) => {
     for (const s of [1, -1]) {
@@ -467,8 +579,8 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
   } else {
     headTop = 0.24; // bare head
   }
-  if (std?.eyes === "glasses") glasses(lensClear, poly);
-  else if (std?.eyes === "shades") glasses(lensDark, metal);
+  if (lod < 2 && std?.eyes === "glasses") glasses("clear", poly);
+  else if (lod < 2 && std?.eyes === "shades") glasses("dark", metal);
   if (std?.shemagh || kit === "sniper") {
     // Scarf bunched round the neck, face left open.
     const cloth = paint(mix(look.uniform, 0xa89a78, 0.6), SURF.nylon, 0.97);
@@ -655,6 +767,7 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
     elite: { armR: eb(1), armL: eb(-1), head: stripe.merge()! },
     w,
     face,
+    lens: lensOut,
     hit: {
       head: { size: [big, headTop - 0.025, big + 0.02], at: [0, (headTop + 0.015 + 0.04) / 2, 0.008] },
       spine: { size: [0.37 * hw, 0.48, 0.3 * hw], at: [0, 0.17, 0.012] },

@@ -4,7 +4,7 @@ import type { HitPart, Hittable } from "../core/types";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { buildBody, STD_LOOKS, withQuality, type BodyBuild, type FaceSpec, type HitDims, type LookDef } from "./humanoid/body";
 import { disposeHeads, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
-import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, uberMaterial } from "./humanoid/materials";
+import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
 
@@ -18,7 +18,7 @@ export type HumanoidLook = LookDef;
 // whole soldier (uniform, kit, skin, rifle) is one draw call. Geometry is
 // built once per (kit, palette, variant) and LOD, and shared.
 //
-//   LOD 0 (< 16 m): full body + scanned face (+ ghillie)      2-3 draws
+//   LOD 0 (< 16 m): full body + scanned face (+ lenses | ghillie) 2-3 draws
 //   LOD 1 (< 40 m): body without small parts, sculpted head    1-2 draws
 //   LOD 2 (40 m+):  coarse body, single material               1 draw
 // ---------------------------------------------------------------------------
@@ -36,6 +36,8 @@ type SoldierGeo = {
   hit: BodyBuild["hit"];
   w: number;
   face: FaceSpec | null;
+  /** Transparent eyewear lenses, head-bone skinned (LOD 0 only). */
+  lens: { geo: THREE.BufferGeometry; kind: "clear" | "dark" } | null;
   /** Death-settle contacts: bbox face centres of each bone's geometry. */
   boxes: [BoneName, THREE.Box3][];
   tris: [number, number, number];
@@ -119,7 +121,7 @@ function soldierGeo(look: LookDef, variant: number): SoldierGeo {
     b.elite.armR.dispose();
     b.elite.head.dispose();
   }
-  const out: SoldierGeo = { near, mid, far, ghillie, elite, hit: b0.hit, w: b0.w, face: b0.face, boxes, tris: [triCount(near), triCount(mid), triCount(far)] };
+  const out: SoldierGeo = { near, mid, far, ghillie, elite, hit: b0.hit, w: b0.w, face: b0.face, lens: b0.lens ? { geo: skinnedHead(b0.lens.geo), kind: b0.lens.kind } : null, boxes, tris: [triCount(near), triCount(mid), triCount(far)] };
   geoCache.set(key, out);
   return out;
 }
@@ -146,6 +148,7 @@ export function disposeHumanoidCache() {
     s.mid.dispose();
     s.far.dispose();
     s.ghillie?.dispose();
+    s.lens?.geo.dispose();
     s.elite.dispose();
   });
   gunCache.forEach((g) => g.geo.dispose());
@@ -377,6 +380,7 @@ export class Humanoid {
       onHeadReady((hg) => {
         nearBody.geometry = geo.near;
         near.add(skinned(skinnedHead(hg), faceMaterial(fl), true));
+        if (geo.lens) near.add(skinned(geo.lens.geo, lensMaterial(geo.lens.kind), false));
       });
     }
     this.eliteMesh = skinned(geo.elite, eliteMaterial(), false);
