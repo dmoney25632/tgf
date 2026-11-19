@@ -38,6 +38,12 @@ export const TEXTURE_SETS: Record<string, TextureSetEntry> = {
   brown_mud_leaves_01: { maps: FULL },
   weathered_planks: { maps: FULL },
   fabric044: { maps: ["albedo", "normal", "roughness"] },
+  worn_plaster_wall: { maps: FULL },
+  rough_plaster_brick_02: { maps: FULL },
+  worn_asphalt: { maps: FULL },
+  rubble: { maps: FULL },
+  damaged_concrete_floor: { maps: FULL },
+  rusty_corrugated_iron: { maps: FULL },
 };
 
 /**
@@ -64,6 +70,26 @@ export const MATERIAL_TEXTURES = {
 
 export type MaterialName = keyof typeof MATERIAL_TEXTURES;
 
+/**
+ * World-only materials built by world/WorldMaterials (not part of the shared
+ * render MaterialLibrary). Photo-backed ones name their texture set here;
+ * null = generated on a canvas at load time.
+ */
+export const EXTRA_MATERIAL_TEXTURES = {
+  plaster: "worn_plaster_wall",
+  plaster_damaged: "rough_plaster_brick_02",
+  asphalt: "worn_asphalt",
+  rubble: "rubble",
+  concrete_broken: "damaged_concrete_floor",
+  corrugated_rust: "rusty_corrugated_iron",
+  cloth: null,
+  chainlink: null,
+  decal: null,
+  frond: null,
+} as const satisfies Record<string, string | null>;
+
+export type ExtraMaterialName = keyof typeof EXTRA_MATERIAL_TEXTURES;
+
 /** Optional HDRI sky. Set to null to always use the procedural sky. */
 export const HDRI: { file: string } | null = { file: "hdri/overcast_soil_puresky_2k.hdr" };
 
@@ -79,7 +105,18 @@ export type ModelId =
   | "rock_moss_set_01"
   | "shrub_03"
   | "fern_02"
-  | "weed_plant_02";
+  | "weed_plant_02"
+  | "covered_car"
+  | "old_tyre"
+  | "trashbag"
+  | "plastic_jerrycan"
+  | "propane_tank"
+  | "utility_box_01"
+  | "rollershutter_door"
+  | "steel_frame_shelves_01"
+  | "metal_office_desk"
+  | "plastic_monobloc_chair_01"
+  | "hanging_industrial_lamp";
 
 export type ModelEntry = {
   /** Path under ASSET_BASE. */
@@ -114,6 +151,17 @@ export const MODELS: Record<ModelId, ModelEntry> = {
   shrub_03: model("shrub_03", 8287, "nodes", false),
   fern_02: model("fern_02", 6232, "nodes", false),
   weed_plant_02: model("weed_plant_02", 11116, "nodes", false),
+  covered_car: model("covered_car", 12592, "whole"),
+  old_tyre: model("old_tyre", 2880, "whole"),
+  trashbag: model("trashbag", 4482, "whole", false),
+  plastic_jerrycan: model("plastic_jerrycan", 7348, "whole", false),
+  propane_tank: model("propane_tank", 5238, "whole"),
+  utility_box_01: model("utility_box_01", 4404, "whole"),
+  rollershutter_door: model("rollershutter_door", 552, "whole", false),
+  steel_frame_shelves_01: model("steel_frame_shelves_01", 4348, "whole"),
+  metal_office_desk: model("metal_office_desk", 6898, "whole"),
+  plastic_monobloc_chair_01: model("plastic_monobloc_chair_01", 3356, "whole", false),
+  hanging_industrial_lamp: model("hanging_industrial_lamp", 9530, "whole", false),
 };
 
 export const textureUrl = (set: string, kind: TextureMapKind) => `${ASSET_BASE}/textures/${set}/${kind}.jpg`;

@@ -14,7 +14,8 @@ import type { MapBox, MapDef } from "../MapLoader";
  */
 const BRICK = 0xd8cfc6;
 const CONCRETE = 0xc8c4b8;
-const PLASTER = 0xc9c2b2;
+const PLASTER = 0xd8ccb4;
+const OPS_PLASTER = 0xe2d4b8;
 const SAND = 0xb8ab94; // berm timber tint
 const SANDBAG = 0xc4b48e;
 const RUST = 0xc27c55;
@@ -37,7 +38,8 @@ const GATE = 7;
 const WALL_H = 3.2;
 for (const side of [-1, 1]) {
   const seg = R - GATE / 2;
-  const wall = { h: WALL_H, color: BRICK, mat: "brick", tag: "wall" } as const;
+  // Plastered masonry; drawn by the dressing (broken crown, spalls), the box is the collider.
+  const wall = { h: WALL_H, color: BRICK, mat: "plaster", tag: "wall", style: "hidden", surface: "concrete" } as const;
   // North/South walls (along x).
   B({ x: -(GATE / 2 + seg / 2), z: side * R, w: seg, d: 0.7, ...wall });
   B({ x: GATE / 2 + seg / 2, z: side * R, w: seg, d: 0.7, ...wall });
@@ -46,12 +48,12 @@ for (const side of [-1, 1]) {
   B({ x: side * R, z: GATE / 2 + seg / 2, w: 0.7, d: seg, ...wall });
   // Gate pillars.
   for (const g of [-1, 1]) {
-    B({ x: g * (GATE / 2 + 0.5), z: side * R, w: 1.1, h: 3.8, d: 1.1, color: CONCRETE, mat: "concrete", tag: "pillar" });
-    B({ x: side * R, z: g * (GATE / 2 + 0.5), w: 1.1, h: 3.8, d: 1.1, color: CONCRETE, mat: "concrete", tag: "pillar" });
+    B({ x: g * (GATE / 2 + 0.5), z: side * R, w: 1.1, h: 3.8, d: 1.1, color: PLASTER, mat: "plaster", tag: "pillar" });
+    B({ x: side * R, z: g * (GATE / 2 + 0.5), w: 1.1, h: 3.8, d: 1.1, color: PLASTER, mat: "plaster", tag: "pillar" });
   }
 }
 // Corner guard posts.
-for (const sx of [-1, 1]) for (const sz of [-1, 1]) B({ x: sx * R, z: sz * R, w: 2, h: 4.2, d: 2, color: CONCRETE, mat: "concrete", tag: "corner" });
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) B({ x: sx * R, z: sz * R, w: 2, h: 4.2, d: 2, color: PLASTER, mat: "plaster", tag: "corner" });
 
 // Outer berm (map bounds) — timber-revetted earth embankment.
 const OUT = 49;
@@ -62,7 +64,7 @@ for (const side of [-1, 1]) {
 
 // ---- Central ops building (12 × 10, doors N/S, windows E/W) ---------------------
 const OW = 12, OD = 10, OH = 3.2, T = 0.35;
-const ops = { color: PLASTER, mat: "concrete_dirty", tag: "ops" } as const;
+const ops = { color: OPS_PLASTER, mat: "plaster", tag: "ops" } as const;
 // North + south walls with 2.4 m doors.
 for (const z of [-OD / 2, OD / 2]) {
   B({ x: -3.6, z, w: 4.8, h: OH, d: T, ...ops });
@@ -81,11 +83,11 @@ for (const x of [-OW / 2, OW / 2]) {
 }
 B({ x: 0, z: 0, w: OW + 0.4, h: 0.3, d: OD + 0.4, y: OH, color: CONCRETE, mat: "concrete", tag: "roof" }); // roof
 // Interior: desks, a map table and lockers.
-B({ x: -3.5, z: -2.5, w: 2.2, h: 0.85, d: 1, color: WOOD, surface: "wood", tag: "desk" });
-B({ x: 3.5, z: 2.5, w: 2.2, h: 0.85, d: 1, color: WOOD, surface: "wood", tag: "desk" });
+B({ x: -3.5, z: -2.5, w: 2.2, h: 0.85, d: 1, color: WOOD, surface: "metal", tag: "desk", style: "model", model: "metal_office_desk" });
+B({ x: 3.5, z: 2.5, w: 2.2, h: 0.85, d: 1, color: WOOD, surface: "metal", tag: "desk", style: "model", model: "metal_office_desk", rotY: Math.PI });
 B({ x: 0, z: 0, w: 2.6, h: 0.95, d: 1.6, color: OLIVE, surface: "metal", tag: "table" });
-B({ x: -5.4, z: 3.5, w: 0.6, h: 2, d: 2, color: STEEL, surface: "metal", mat: "metal_dark", tag: "locker" });
-B({ x: 5.4, z: -3.5, w: 0.6, h: 2, d: 2, color: STEEL, surface: "metal", mat: "metal_dark", tag: "locker" });
+B({ x: -5.4, z: 3.5, w: 0.6, h: 2, d: 2, color: STEEL, surface: "metal", mat: "metal_dark", tag: "locker", style: "model", model: "steel_frame_shelves_01", rotY: Math.PI / 2 });
+B({ x: 5.4, z: -3.5, w: 0.6, h: 2, d: 2, color: STEEL, surface: "metal", mat: "metal_dark", tag: "locker", style: "model", model: "steel_frame_shelves_01", rotY: -Math.PI / 2 });
 
 // ---- Watchtower (NW) with stairs up to a 3.9 m deck -----------------------------
 const TX = -20, TZ = -20;
@@ -109,6 +111,16 @@ B({ x: 21.8, z: 19.2, w: 2.4, h: 1.1, d: 4.8, y: 2.6, color: OLIVE, surface: "me
 const crateSteps = [0.43, 0.86, 1.29, 1.72, 2.15];
 // Crate steps (each within the 0.45 m step-up) running west of the stack.
 crateSteps.forEach((h, i) => B({ x: 11.2 + i * 1.2, z: 18.6, w: 1.2, h, d: 1.4, color: WOOD, surface: "wood", style: "crate" }));
+
+// ---- Warehouse shed over the container yard (SE): steel columns + high roof ----------
+// Slender columns are real colliders; the roof deck (7 m up) stops bullets from above.
+export const SHED = { x0: 9, x1: 27, z0: 12, z1: 24, h: 7 };
+for (const x of [9, 15, 21, 27]) for (const z of [SHED.z0, SHED.z1]) B({ x, z, w: 0.3, h: SHED.h, d: 0.3, color: 0x6a6c6a, surface: "metal", mat: "metal_dark", tag: "steelcol", style: "hidden" });
+B({ x: (SHED.x0 + SHED.x1) / 2, z: (SHED.z0 + SHED.z1) / 2, y: SHED.h + 0.35, w: SHED.x1 - SHED.x0 + 1.2, h: 0.12, d: SHED.z1 - SHED.z0 + 1.2, color: 0x8a7a6a, surface: "metal", tag: "shedroof", style: "hidden" });
+
+// A covered car parked by the ops building, a burnt-out sedan outside the NW wall.
+B({ x: 17.5, z: 1.5, w: 1.9, h: 1.45, d: 4.4, color: 0xffffff, surface: "metal", style: "model", model: "covered_car", tag: "car", rotY: 0.04 });
+B({ x: -38, z: -35, w: 4.4, h: 1.35, d: 1.9, color: 0xffffff, surface: "metal", style: "hidden", tag: "burntcar" });
 
 // ---- Containers & cover around the yard -------------------------------------------
 const containers: [number, number, number, number, number][] = [
@@ -189,9 +201,8 @@ const rocks: [number, number, number, number, number][] = [
   [40, -28, 3, 1.4, 3], [-38, 28, 3, 1.5, 4], [-30, -40, 4, 1.8, 2], [30, 40, 3, 2.2, 3],
 ];
 for (const [x, z, w, h, d] of rocks) B({ x, z, w, h, d, color: ROCK, surface: "sand", style: "rock" });
-B({ x: 40, z: -2, w: 4.5, h: 1.8, d: 2.2, color: 0x9a8a7a, surface: "metal", mat: "metal_rust", tag: "wreck" }); // burnt truck
-B({ x: 40.2, z: -2, w: 1.6, h: 1.0, d: 2.0, y: 1.8, color: 0x8a7a6a, surface: "metal", mat: "metal_rust", tag: "wreck-cab" });
-B({ x: -40, z: 6, w: 2.2, h: 1.8, d: 4.5, color: 0x9a8a7a, surface: "metal", mat: "metal_rust", tag: "wreck" });
+B({ x: 40, z: -2, w: 5.1, h: 1.6, d: 2.0, color: 0x9a8a7a, surface: "metal", style: "hidden", tag: "wreck" }); // burnt-out pickups
+B({ x: -40, z: 6, w: 2.0, h: 1.6, d: 5.1, color: 0x9a8a7a, surface: "metal", style: "hidden", tag: "wreck" });
 
 // Lone trees between the wall and the berm (trunk colliders; canopy drawn by the dressing).
 for (const [x, z] of [[-38, -27], [38, 27], [27, -38], [-27, 38]]) B({ x, z, w: 0.6, h: 3, d: 0.6, color: WOOD, surface: "wood", style: "hidden", tag: "tree" });

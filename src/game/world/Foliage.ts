@@ -13,6 +13,9 @@ export type FoliageSpec = {
   grassBounds: number;
   trees: TreePlacement[];
   bushes: BushPlacement[];
+  /** Waist-high dry grass density 0..1 (scattered within ±tallGrassBounds). */
+  tallGrass?(x: number, z: number): number;
+  tallGrassBounds?: number;
 };
 
 /** Deterministic RNG. */
@@ -27,10 +30,9 @@ export function rng(seed: number) {
   };
 }
 
-/** Grass clump: 6 tapered, leaning blades (18 tris), unit height, up-facing normals. */
-function makeGrassClump(r: () => number) {
+/** Grass clump: `blades` tapered, leaning blades (3 tris each), unit height, up-facing normals. */
+function makeGrassClump(r: () => number, blades = 6) {
   const pos: number[] = [], col: number[] = [], nor: number[] = [], idx: number[] = [];
-  const blades = 6;
   for (let b = 0; b < blades; b++) {
     const a = r() * Math.PI * 2;
     const off = r() * 0.14;
@@ -228,11 +230,13 @@ export class Foliage {
   private readonly tiles: GrassTile[] = [];
   private readonly trees: { mesh: THREE.InstancedMesh; total: number }[] = [];
   private bushes: { mesh: THREE.InstancedMesh; total: number } | null = null;
+  private tall: { mesh: THREE.InstancedMesh; total: number } | null = null;
+  private readonly tallFade = { value: 90 };
   private readonly disposables: { dispose(): void }[] = [];
   private readonly fadeFar = { value: 50 };
   private grassDistance = 50;
   private readonly tmp = new THREE.Vector3();
-  triangles = { grass: 0, trees: 0, bushes: 0 };
+  triangles = { grass: 0, trees: 0, bushes: 0, tallGrass: 0 };
 
   constructor(
     spec: FoliageSpec,
@@ -260,7 +264,7 @@ export class Foliage {
     grassMat.onBeforeCompile = windHook(windTime, this.fadeFar, 0.35, 1.0, true);
     grassMat.customProgramCacheKey = () => "ih-grass";
     this.disposables.push(grassMat);
-    const T = 20;
+    const T = 25;
     const B = spec.grassBounds;
     const maxPerM2 = 1.5;
     for (let tz = -B; tz < B; tz += T) {
@@ -292,6 +296,47 @@ export class Foliage {
         mesh.computeBoundingBox();
         this.tiles.push({ mesh, total: mats.length, box: new THREE.Box3(new THREE.Vector3(tx, -1, tz), new THREE.Vector3(tx + T, 2, tz + T)) });
         this.group.add(mesh);
+      }
+    }
+
+    // ---- Tall dry grass (one instanced mesh, faded with distance in the shader) --
+    if (spec.tallGrass && spec.tallGrassBounds) {
+      const tb = spec.tallGrassBounds;
+      const mats: THREE.Matrix4[] = [];
+      const cols: THREE.Color[] = [];
+      const gold = new THREE.Color(0xd2b46e), straw = new THREE.Color(0xb89a5a), pale = new THREE.Color(0xe0cc94);
+      const tries = Math.round((2 * tb) * (2 * tb) * 0.9);
+      for (let i = 0; i < tries; i++) {
+        const x = (r() * 2 - 1) * tb, z = (r() * 2 - 1) * tb;
+        const dns = spec.tallGrass(x, z);
+        if (dns <= 0 || r() > dns || blocked(x, z)) continue;
+        q.setFromAxisAngle(up, r() * Math.PI * 2);
+        const w = 0.9 + r() * 0.7;
+        s.set(w, 0.95 + r() * 0.6, w);
+        p.set(x, height(x, z) - 0.03, z);
+        mats.push(new THREE.Matrix4().compose(p, q, s));
+        cols.push(gold.clone().lerp(r() < 0.5 ? straw : pale, r()).multiplyScalar(0.85 + r() * 0.25));
+      }
+      if (mats.length) {
+        const tallClump = makeGrassClump(rng(4242), 9);
+        this.disposables.push(tallClump);
+        const tallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+        tallMat.name = "ih-tallgrass";
+        tallMat.onBeforeCompile = windHook(windTime, this.tallFade, 0.5, 0.8, true);
+        tallMat.customProgramCacheKey = () => "ih-tallgrass";
+        this.disposables.push(tallMat);
+        const order = mats.map((_, i) => i).sort(() => r() - 0.5);
+        const mesh = new THREE.InstancedMesh(tallClump, tallMat, mats.length);
+        order.forEach((src, i) => {
+          mesh.setMatrixAt(i, mats[src]);
+          mesh.setColorAt(i, cols[src]);
+        });
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        this.group.add(mesh);
+        this.tall = { mesh, total: mats.length };
+        this.triangles.tallGrass = mats.length * (tallClump.index!.count / 3);
       }
     }
 
@@ -384,6 +429,8 @@ export class Foliage {
     const td = Math.min(1, 0.4 + d * 0.6);
     for (const t of this.trees) t.mesh.count = Math.max(1, Math.floor(t.total * td));
     if (this.bushes) this.bushes.mesh.count = Math.floor(this.bushes.total * Math.min(1, 0.3 + d * 0.7));
+    if (this.tall) this.tall.mesh.count = Math.floor(this.tall.total * Math.min(1, 0.35 + d * 0.65));
+    this.tallFade.value = q.grassDistance * 2;
   }
 
   /** Hides grass tiles beyond the fade distance (cheap CPU cull). */
@@ -400,6 +447,7 @@ export class Foliage {
     for (const t of this.tiles) t.mesh.dispose();
     for (const t of this.trees) t.mesh.dispose();
     this.bushes?.mesh.dispose();
+    this.tall?.mesh.dispose();
     for (const d of this.disposables) d.dispose();
     this.group.removeFromParent();
   }
