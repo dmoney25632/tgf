@@ -40,6 +40,8 @@ export class AgentManager {
   reviver: Agent | null = null;
   /** Running squad revive progress for the player (0..1 handled by PlayerState). */
   playerTargets: Combatant[] = [];
+  /** [coop] Host only: remote human players the AI can target, and a shot counter for snapshots. Null in solo. */
+  net: { targets: Combatant[]; onShot(ag: Agent): void } | null = null;
 
   private readonly laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
   private readonly laserMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 0.3, 0.2), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
@@ -279,6 +281,7 @@ export class AgentManager {
     if (ag.team === "enemy") {
       if (this.player.targetable) list.push(this.player);
       for (const s of this.squad) if (s.targetable) list.push(s);
+      if (this.net) for (const r of this.net.targets) if (r.targetable) list.push(r); // [coop]
     } else {
       for (const e of this.active) if (e.alive) list.push(e);
     }
@@ -739,6 +742,7 @@ export class AgentManager {
     const dist = muzzle.distanceTo(this.b);
     if (dist > w.range) return;
     ag.model.fire();
+    this.net?.onShot(ag); // [coop]
 
     const hit = Math.random() < this.hitChance(ag, t, dist);
     const fall = THREE.MathUtils.lerp(1, w.falloff, Math.min(1, dist / w.range));

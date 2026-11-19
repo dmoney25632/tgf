@@ -360,12 +360,14 @@ export class GameEngine {
       this.grenades.update(dt, this.camera.position, this.player.yaw, this.player.pitch, this.player.velocity);
     }
 
-    this.mode.update(playing ? dt : 0, playing);
+    // [coop] An online match never pauses: the host keeps simulating and clients keep syncing behind menus.
+    const live = playing || this.opts.survival?.net !== undefined;
+    this.mode.update(live ? dt : 0, playing);
 
     this.updateFov(dt);
     this.handleMoveEvents();
     this.updateViewmodel(dt);
-    this.effects.update(playing ? dt : 0);
+    this.effects.update(live ? dt : 0);
 
     this.camera.getWorldDirection(this.forward);
     this.sfx.setListener(this.camera.position, this.forward);
