@@ -278,7 +278,7 @@ function createGlass() {
       .replace(
         "#include <opaque_fragment>",
         `float vmFr = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 4.0);
-diffuseColor.a = clamp(mix(diffuseColor.a, 0.9, vmFr) + dot(outgoingLight, vec3(0.3)) * 0.35, 0.0, 1.0);
+diffuseColor.a = clamp(mix(diffuseColor.a, 0.55, vmFr) + dot(outgoingLight, vec3(0.3)) * 0.12, 0.0, 1.0);
 #include <opaque_fragment>`,
       );
   };
