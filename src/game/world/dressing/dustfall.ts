@@ -15,6 +15,7 @@ import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/deb
 import { gasBottles, patrolTruck } from "../architecture/vehicles";
 import { postSign, roadArrow, signGantry } from "../architecture/signs";
 import { camoNets, type NetSpec } from "../CamoNet";
+import { helicopter } from "../Helicopter";
 import { town } from "./town";
 import {
   band, clearOf, concertina, decorBox, fbm2, fence, pallets, poleLine, scatterTrees, smoothstep, tyre, wireSpan,
@@ -697,6 +698,8 @@ export const dustfall: Dressing = (kit) => {
   pallets(B, -26.6, -26.4, 0.3, 2, r);
   pallets(B, -24.6, -25.2, -0.2, 1, r);
   extras.push(camoNets(nets, kit.windTime, height));
+  // A distant helicopter on a slow loop round the town.
+  extras.push(helicopter(kit.windTime, new THREE.Vector2(0, 0), 190, 70));
 
   // ---- Distant smoke columns --------------------------------------------------------
   const smoke = [
