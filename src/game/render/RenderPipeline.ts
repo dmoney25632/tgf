@@ -39,7 +39,7 @@ const POST = {
   vignette: 0.32,
   grain: 0.028,
   chromaticAberration: 0.0035,
-  shafts: 0.55,
+  shafts: 0.3,
 };
 
 const f = (n: number) => n.toFixed(5);
@@ -165,13 +165,15 @@ uniform sampler2D tScene;
 uniform sampler2D tDepth;
 uniform vec2 sunUv;
 uniform float aspect;
+uniform float threshold;
 varying vec2 vUv;
 void main() {
 	float sky = step( 1.0, texture2D( tDepth, vUv ).x );
 	vec3 c = texture2D( tScene, vUv ).rgb;
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-	float around = smoothstep( 0.75, 0.0, length( ( vUv - sunUv ) * vec2( aspect, 1.0 ) ) );
-	gl_FragColor = vec4( vec3( sky * around * min( l, 4.0 ) ), 1.0 );
+	float around = smoothstep( 0.55, 0.0, length( ( vUv - sunUv ) * vec2( aspect, 1.0 ) ) );
+	// Only sky brighter than the horizon haze casts rays (overcast stays subtle).
+	gl_FragColor = vec4( vec3( sky * around * around * min( max( l - threshold, 0.0 ), 4.0 ) ), 1.0 );
 }`;
 
 /** Radial blur toward the sun (run twice with shrinking steps). */
@@ -384,7 +386,7 @@ export class RenderPipeline {
   private readonly quad = new FullScreenQuad();
   private aoMat: THREE.ShaderMaterial | null = null;
   private readonly aoBlurMat = shader(AO_BLUR_FRAG, { tAO: { value: null } });
-  private readonly maskMat = shader(SHAFT_MASK_FRAG, { tScene: { value: null }, tDepth: { value: null }, sunUv: { value: new THREE.Vector2() }, aspect: { value: 1 } });
+  private readonly maskMat = shader(SHAFT_MASK_FRAG, { tScene: { value: null }, tDepth: { value: null }, sunUv: { value: new THREE.Vector2() }, aspect: { value: 1 }, threshold: { value: 0.5 } });
   private readonly radialMat = shader(SHAFT_BLUR_FRAG, { tIn: { value: null }, sunUv: { value: new THREE.Vector2() }, stepScale: { value: 1 } });
   private readonly downMat = shader(DOWN_FRAG, { tIn: { value: null }, texel: { value: new THREE.Vector2() }, karis: { value: 0 } });
   private readonly upMat = (() => {
@@ -639,7 +641,7 @@ export class RenderPipeline {
     );
     if (fxaa) {
       // FXAA, then grain on top so the AA doesn't smear it.
-      const frag = FXAAShader.fragmentShader.replace(
+      const frag = `uniform float time;\nuniform float grain;\n${FXAAShader.fragmentShader}`.replace(
         "gl_FragColor = ApplyFXAA( tDiffuse, resolution.xy, vUv );",
         `gl_FragColor = ApplyFXAA( tDiffuse, resolution.xy, vUv );
 			float n = fract( sin( dot( gl_FragCoord.xy + fract( time * 7.13 ) * 113.0, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) - 0.5;
@@ -711,6 +713,8 @@ export class RenderPipeline {
     this.maskMat.uniforms.sunUv.value.set(sx, sy);
     this.radialMat.uniforms.sunUv.value.set(sx, sy);
     this.maskMat.uniforms.aspect.value = cam.aspect;
+    const fc = atmo.fog.color;
+    this.maskMat.uniforms.threshold.value = (fc.r * 0.2126 + fc.g * 0.7152 + fc.b * 0.0722) * 1.8;
     const sc = this.finalMat!.uniforms.shaftColor.value as THREE.Color;
     sc.copy(this.sun.color).multiplyScalar(POST.shafts * this.shaftVisibility);
     return this.shaftVisibility;
