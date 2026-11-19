@@ -216,12 +216,12 @@ export const cinderFlats: Dressing = (kit) => {
     const n = fbm2(x * 0.05, z * 0.05, 3);
     if (d < BERM) {
       const rd = roads(x, z) * (d < 46 ? 1 : 0);
-      o.gravel = 0.25 + rd * 1.2 + smoothstep(0.55, 0.7, n) * 0.3;
-      o.ground = 1.1 - rd * 0.6 + smoothstep(0.4, 0.6, fbm2(x * 0.11 + 4, z * 0.11, 2)) * 0.3;
+      o.gravel = 0.9 + rd * 1.2 + smoothstep(0.55, 0.7, n) * 0.4;
+      o.ground = 0.35 - rd * 0.3 + smoothstep(0.45, 0.65, fbm2(x * 0.11 + 4, z * 0.11, 2)) * 0.35;
       o.mud = stain(x, z) * 1.6 + smoothstep(0.66, 0.78, n) * 0.25;
     } else {
-      o.gravel = 0.08;
-      o.ground = 1;
+      o.gravel = 0.7;
+      o.ground = 0.45;
       o.mud = 0;
     }
   };

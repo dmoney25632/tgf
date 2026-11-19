@@ -51,7 +51,7 @@ function buildHull() {
   // Fuselage: armoured tub + tapering nose.
   P.blob(0.78, 0.92, 3.1, G, 0, 0, 0.2, 18);
   P.blob(0.6, 0.62, 1.5, G, 0, -0.22, 2.55, 14);
-  P.box(1.3, 0.5, 4.6, GD, 0, -0.62, 0.4); // belly armour
+  P.blob(0.62, 0.3, 2.3, GD, 0, -0.58, 0.4, 12); // belly armour
   // Stepped tandem canopy (gunner front-low, pilot rear-high).
   P.blob(0.5, 0.42, 1.0, GLASS, 0, 0.42, 2.25, 14);
   P.blob(0.54, 0.5, 1.15, GLASS, 0, 0.72, 0.95, 14);
