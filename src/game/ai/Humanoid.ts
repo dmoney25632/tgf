@@ -441,7 +441,7 @@ export class Humanoid {
       const fl: FaceLook = { tone, beard, hair: face.hair, cover: face.cover, iris: IRIS[t % IRIS.length], brim: face.brim };
       onHeadReady((hg) => {
         nearBody.geometry = geo.near;
-        near.add(skinned(skinnedHead(hg), faceMaterial(fl), true));
+        near.add(skinned(skinnedHead(hg), faceMaterial(fl), false)); // 17k-tri scan: skip the shadow pass, the helmet/body shadow reads the same
         if (geo.lens) near.add(skinned(geo.lens.geo, lensMaterial(geo.lens.kind), false));
       });
     }
