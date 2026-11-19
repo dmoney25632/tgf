@@ -152,7 +152,7 @@ bReg *= 1.0 - lips;
 alb = mix( alb, bare * mix( vec3( 1.0 ), vec3( 0.88, 0.88, 0.93 ), 0.3 ), bReg * clamp( 1.0 - uBeard, 0.0, 1.0 ) * 0.85 );
 vec3 hairC = vec3( 0.05, 0.034, 0.024 ) * ( 0.55 + 0.9 * hairN2 );
 float dens = bReg * clamp( uBeard - 1.0, 0.0, 1.0 );
-alb = mix( alb, hairC, step( hairN, dens * 1.1 - 0.15 ) * 0.8 + dens * 0.15 );
+alb = mix( alb, hairC, clamp( dens * 0.6 + step( hairN, dens * 1.1 - 0.15 ) * 0.3, 0.0, 0.9 ) );
 // Scalp: hairline over the forehead, temples, above the ears, nape.
 float hl = 0.115 + smoothstep( 0.11, 0.22, dxm ) * 0.19 + smoothstep( 0.32, 0.46, dxm ) * 0.26;
 float scalp = 1.0 - smoothstep( hl - 0.012, hl + 0.012, fuv.y );
@@ -163,15 +163,16 @@ alb *= uTone;
 float under = ( 1.0 - smoothstep( 0.2, 0.36, fuv.y ) ) * ( 1.0 - smoothstep( 0.2, 0.34, dxm ) );
 alb *= 1.0 - uBrim * under * 0.4;
 // Painted open eyes (the scan's lids are closed): sclera, iris, pupil, lash line.
-float eyeL = hmEll( fuv, vec2( 0.4284, 0.2965 ), vec2( 0.029, 0.0115 ) );
-float eyeR = hmEll( fuv, vec2( 0.5716, 0.2965 ), vec2( 0.029, 0.0115 ) );
+float eyeL = hmEll( fuv, vec2( 0.4284, 0.2965 ), vec2( 0.03, 0.0135 ) );
+float eyeR = hmEll( fuv, vec2( 0.5716, 0.2965 ), vec2( 0.03, 0.0135 ) );
 float eyeD = min( eyeL, eyeR );
 vec2 ec = eyeL < eyeR ? vec2( 0.4284, 0.2965 ) : vec2( 0.5716, 0.2965 );
 float eye = 1.0 - smoothstep( 0.75, 1.0, eyeD );
 float ir = length( ( fuv - ec ) / vec2( 1.0, 0.98 ) );
-vec3 eyeC = mix( vec3( 0.34, 0.31, 0.28 ), uIris * ( 0.7 + 0.5 * hairN ), 1.0 - smoothstep( 0.0085, 0.0105, ir ) );
-eyeC = mix( eyeC, vec3( 0.006 ), 1.0 - smoothstep( 0.0032, 0.0045, ir ) );
-eyeC *= 0.55 + 0.45 * smoothstep( -0.012, 0.004, fuv.y - ec.y ); // upper-lid shadow
+vec3 eyeC = mix( vec3( 0.46, 0.43, 0.40 ), uIris * ( 0.7 + 0.5 * hairN ), 1.0 - smoothstep( 0.0105, 0.0125, ir ) );
+eyeC = mix( eyeC, vec3( 0.006 ), 1.0 - smoothstep( 0.0042, 0.0055, ir ) );
+eyeC = mix( eyeC, vec3( 2.0 ), 1.0 - smoothstep( 0.0, 0.0022, length( fuv - ec - vec2( 0.004, -0.004 ) ) ) ); // catch-light
+eyeC *= 0.7 + 0.3 * smoothstep( -0.012, 0.004, fuv.y - ec.y ); // upper-lid shadow
 float lash = smoothstep( 0.6, 1.0, eyeD ) * ( 1.0 - smoothstep( 1.0, 1.6, eyeD ) ) * step( fuv.y, ec.y + 0.002 );
 alb = mix( alb, eyeC, eye );
 alb = mix( alb, vec3( 0.02, 0.015, 0.012 ), lash * 0.8 );
@@ -225,7 +226,7 @@ export function faceMaterial(look: FaceLook) {
         .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n" + FRAG_ROUGH)
         .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", "mapN.xy *= normalScale * ( 1.0 - hmEye ) * ( 1.0 - hmCloth * 0.6 );"));
   };
-  m.customProgramCacheKey = () => "iron-horizon-face-v1";
+  m.customProgramCacheKey = () => "iron-horizon-face-v2";
   materials.set(key, m);
   return m;
 }

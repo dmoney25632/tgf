@@ -23,10 +23,10 @@ type StdLook = {
 };
 export const STD_LOOKS: readonly StdLook[] = [
   { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "long", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 1 },
-  { hat: "cap", eyes: "none", goggles: false, sleeves: "rolled", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 2 },
-  { hat: "helmet", eyes: "none", goggles: true, sleeves: "long", rig: "plates", pack: "assault", cover: "none", shemagh: true, headset: true, beard: 0 },
+  { hat: "cap", eyes: "shades", goggles: false, sleeves: "rolled", rig: "plates", pack: "hydration", cover: "none", shemagh: false, headset: true, beard: 2 },
+  { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "assault", cover: "none", shemagh: true, headset: true, beard: 0 },
   { hat: "none", eyes: "shades", goggles: false, sleeves: "tank", rig: "chest", pack: "none", cover: "none", shemagh: false, headset: false, beard: 2 },
-  { hat: "helmet", eyes: "none", goggles: true, sleeves: "long", rig: "plates", pack: "hydration", cover: "balaclava", shemagh: false, headset: true, beard: 1 },
+  { hat: "helmet", eyes: "glasses", goggles: true, sleeves: "long", rig: "plates", pack: "hydration", cover: "balaclava", shemagh: false, headset: true, beard: 1 },
   { hat: "helmet", eyes: "glasses", goggles: false, sleeves: "rolled", rig: "chest", pack: "assault", cover: "none", shemagh: false, headset: true, beard: 1 },
 ];
 
@@ -159,7 +159,7 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
   const inked = paint(0xffffff, SURF.tattoo, 0.55);
   const webbing = paint(look.vest, SURF.molle, 0.88);
   const lensClear = paint(0x4a5560, SURF.hard, 0.08, 0.85); // smoked, reflective
-  const lensDark = paint(0x2c2a26, SURF.hard, 0.05, 0.95); // mirrored shades
+  const lensDark = paint(0x46484a, SURF.hard, 0.12, 0.7); // mirrored shades
   const glove = paint(mix(look.vest, 0x1c1b19, 0.6), SURF.nylon, 0.82);
   const boot = paint(mix(look.vest, 0x3b3226, 0.55), SURF.hard, 0.72);
   const sole = paint(0x151413, SURF.hard, 0.9);
@@ -381,7 +381,7 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
   }
   const glasses = (lensP: Paint, frameP: Paint) => {
     // Wraparound lens, bridge and temple arms back to the ears.
-    add("head", new THREE.CylinderGeometry(1, 1, 1, 14, 1, true, -0.78, 1.56), lensP, T(0, 0.135, 0.0, 0, 0, 0, 0.074, 0.026, 0.104));
+    add("head", new THREE.SphereGeometry(1, 16, 5, Math.PI / 2 - 0.8, 1.6, Math.PI / 2 - 0.32, 0.6), lensP, T(0, 0.135, 0.0, 0, 0, 0, 0.075, 0.056, 0.106)); // curved both ways so it catches a sky gradient
     add("head", new THREE.CylinderGeometry(1, 1, 1, 14, 1, true, -0.8, 1.6), frameP, T(0, 0.149, 0.0, 0, 0, 0, 0.075, 0.005, 0.105));
     for (const s of [1, -1]) add("head", rbox(0.004, 0.005, 0.075, 4, 4, 0), frameP, sided(s, T(-0.077, 0.146, 0.03, 0, -0.1)));
   };
