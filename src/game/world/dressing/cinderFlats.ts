@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { rng, type BushPlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
-import type { MaterialName } from "../../assets/manifest";
+import type { WorldMat as MaterialName } from "../WorldMaterials";
 import type { MeshBuilder } from "../MeshBuilder";
 import { LIGHTS, PUMPJACKS, RACK, TANKS } from "../maps/cinderFlats";
 import { band, clearOf, concertina, fbm2, pallets, poleLine, rubble, smoothstep, tyre, type Dressing, type PoleSpot } from "./common";
@@ -232,6 +232,9 @@ export const cinderFlats: Dressing = (kit) => {
   for (const b of boxes) if (b.tag === "pipeX" || b.tag === "pipeZ") pipeRun(B, b, r);
   pipeRack(B);
   for (const l of LIGHTS) lightTower(B, l);
+  // Two real lights: the shack interior and the console glow.
+  kit.addLamp?.(new THREE.Vector3(0, 2.4, 0), 0xffe2b0, 4, 9);
+  kit.addLamp?.(new THREE.Vector3(-3, 1.4, -2.2), 0x7ad8ff, 1.5, 4);
 
   // Control shack: door frames, a sun canopy over the south door, antenna mast, stencil band.
   for (const z of [-3.5, 3.5]) {
