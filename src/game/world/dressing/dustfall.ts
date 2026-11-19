@@ -9,7 +9,7 @@ import { smokeColumns } from "../Smoke";
 import { SHED } from "../maps/dustfallOutpost";
 import { facades, spall, PLASTER_TINTS } from "../architecture/Building";
 import {
-  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, pendantLamp, pipeRail, rod, wall, wallDecal, waterTank,
+  acUnit, awning, cable, chainlink, dish, downpipe, groundDecal, groundPatch, groundStrip, paintLine, pendantLamp, pipeRail, rod, wall, wallDecal, waterTank,
 } from "../architecture/kit";
 import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/debris";
 import { town } from "./town";
@@ -65,10 +65,12 @@ export const dustfall: Dressing = (kit) => {
     const n2 = fbm2(x * 0.17 + 9, z * 0.17, 2);
     const t = track(x, z);
     if (d < R) {
-      // Dusty packed yard: gravel and grit where vehicles run, dried mud patches.
-      o.gravel = 0.6 + t * 0.9 + smoothstep(0.5, 0.65, n2) * 0.35;
-      o.ground = 0.35 + smoothstep(29, 31.5, d) * 1.0 + smoothstep(0.5, 0.65, n) * 0.5;
-      o.mud = smoothstep(0.58, 0.72, n2) * 0.8 + t * 0.3;
+      // Dusty packed yard: gravel where vehicles run, loose dirt blotches,
+      // dried mud pans; three noise scales so it never reads as one plane.
+      const n3 = fbm2(x * 0.11 - 5, z * 0.11 + 3, 3);
+      o.gravel = 0.3 + t * 1.2 + smoothstep(0.47, 0.6, n2) * 0.9;
+      o.ground = 0.2 + smoothstep(29, 31.5, d) * 1.0 + smoothstep(0.45, 0.6, n) * 1.0;
+      o.mud = smoothstep(0.55, 0.68, n3) * 1.2 + t * 0.35;
     } else if (d < BERM) {
       o.gravel = t * 0.6 + 0.25;
       o.ground = 1 - t * 0.75;
@@ -247,7 +249,7 @@ export const dustfall: Dressing = (kit) => {
   for (const [gx, gz] of [[-6, 2.2], [-3.4, 4.9], [-5.9, 5.0]]) wireSpan(B, [new THREE.Vector3(-4.8, 8.9, 3.8)], [new THREE.Vector3(gx, 3.56, gz)], 0.05);
   for (let i = 0; i < 5; i++) decorBox(kit, { x: -5.2 + i * 0.7, z: -4.65, y: 3.55, w: 0.65, h: 0.34, d: 0.4, color: 0xc4b48e, surface: "sand", style: "sandbags" });
   // Interior: hanging lamp, chairs round the map table, papers and debris on the floor.
-  pendantLamp(B, 0, 3.2, 0, 0.75, 0.75);
+  pendantLamp(B, 0, 3.2, 0, 0.8, 1.05);
   kit.addLamp?.(new THREE.Vector3(0, 2.0, 0), 0xffd6a0, 4, 9);
   for (const [cx, cz, ry] of [[-1.7, 0.4, 1.4], [1.75, -0.3, -1.7], [0.3, 1.25, 3.0], [-4.2, -1.4, 2.6]] as const) {
     props.place("plastic_monobloc_chair_01", { x: cx, y: 0, z: cz, rotY: ry, scale: 1 });
@@ -336,11 +338,25 @@ export const dustfall: Dressing = (kit) => {
   for (const c of tagged("car")) groundDecal(B, "oil", c.x, c.z + 0.8, 1.6, 1.6, 0.3, 0xffffff);
 
   // ---- Ground: broken asphalt through the gates, slabs, decals ----------------------
-  const strip = (ax: number, az: number, bx: number, bz: number, seed: number) => groundStrip(B, "asphalt", ax, az, bx, bz, 4.6, () => 0, 0xb4b0a8, seed, "decor", 0.015);
+  const strip = (ax: number, az: number, bx: number, bz: number, seed: number) => groundStrip(B, "asphalt", ax, az, bx, bz, 4.6, () => 0, 0xc8c4bc, seed, "decor", 0.015);
   strip(0, -47, 0, -7.2, 1);
   strip(0, 7.2, 0, 47, 2);
   strip(-47, 0, -9.5, 0, 3);
   strip(9.5, 0, 47, 0, 4);
+  for (const [ax, az, bx, bz] of [[0, -46, 0, -8], [0, 8, 0, 46], [-46, 0, -10, 0], [10, 0, 46, 0]] as const) {
+    const len = Math.hypot(bx - ax, bz - az), vertical = ax === bx;
+    for (let t = 0; t < len; t += 3 + r() * 3) {
+      const k = t / len;
+      const x = ax + (bx - ax) * k, z = az + (bz - az) * k;
+      for (const s of [-1, 1]) {
+        if (r() < 0.3) continue;
+        const reach = 0.8 + r() * 1.6;
+        const off = s * (2.3 + 0.3 - reach / 2);
+        groundDecal(B, "sand", vertical ? x + off : x, vertical ? z : z + off, reach + 0.8, 3 + r() * 4, (vertical ? 0 : Math.PI / 2) + (r() - 0.5) * 0.3, 0xcdbfa4);
+      }
+      if (r() < 0.15) groundStrip(B, "asphalt", x, z, vertical ? x : x + 1.5 + r() * 2, vertical ? z + 1.5 + r() * 2 : z, 1 + r() * 1.5, () => 0, 0x989490, Math.floor(r() * 1e6), "decor", 0.018);
+    }
+  }
   // Potholes / exposed base: concrete chunks and rubble patches over the asphalt.
   for (let i = 0; i < 14; i++) {
     const along = (r() * 2 - 1) * 40;
@@ -369,6 +385,54 @@ export const dustfall: Dressing = (kit) => {
     const s = kind === "burn" ? 3 + r() * 3 : kind === "puddle" ? 1.5 + r() * 2.5 : 1.5 + r() * 2;
     groundDecal(B, kind, x, z, s, s * (0.7 + r() * 0.5), r() * 6, 0xffffff);
   }
+  // ---- Yard ground: curving tyre ruts, gravel and stone patches, scuffs, stains ----
+  {
+    const yard = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z)) < R - 1;
+    // Ruts where trucks turned off the gate tracks into the shed, the motor
+    // pool and round the ops block (Catmull-Rom through hand-placed points).
+    const ruts: [number, number][][] = [
+      [[30, 1.2], [24, 2.5], [19, 6], [16.5, 10.5]],
+      [[1.2, 30], [2.4, 25], [6.5, 21], [9.5, 19.5]],
+      [[-30, -1.2], [-22, -2.4], [-15, -6.5], [-12, -12], [-12.5, -20]],
+      [[-1.2, -30], [-3, -22], [-8.5, -15.5], [-15, -14], [-22, -16]],
+      [[30, -1.2], [22, -4], [17, -9], [17.5, -16], [22, -21]],
+      [[-1.2, 30], [-4, 22], [-11, 17], [-18, 18.5]],
+    ];
+    ruts.forEach((pts, i) => {
+      const curve = new THREE.CatmullRomCurve3(pts.map(([x, z]) => new THREE.Vector3(x, 0, z)));
+      const L = curve.getLength();
+      const off = (r() - 0.5) * 0.5;
+      for (let s = 0; s < L; s += 2.3) {
+        const p = curve.getPointAt(s / L), tg = curve.getTangentAt(s / L);
+        const x = p.x - tg.z * off, z = p.z + tg.x * off;
+        if (!yard(x, z) || r() < 0.12) continue;
+        groundDecal(B, "tracks", x, z, 2.4, 2.9, Math.atan2(tg.x, tg.z), i % 2 ? 0xf0ece4 : 0xffffff);
+      }
+    });
+    // Gravel / stone patches and dark damp ground.
+    for (let i = 0; i < 26; i++) {
+      const x = (r() * 2 - 1) * (R - 3), z = (r() * 2 - 1) * (R - 3);
+      if (!free(x, z, 1) || nearSpawn(x, z, 2)) continue;
+      if (r() < 0.6) groundPatch(B, "rubble", x, z, 0.8 + r() * 1.8, 0.6 + r() * 1.4, r() * 6, 0xc8c0b0, Math.floor(r() * 1e6), 0.014);
+      else groundDecal(B, r() < 0.5 ? "baseDirt" : "puddle", x, z, 2 + r() * 3, 1.5 + r() * 2.5, r() * 6, 0xb0a898);
+    }
+    // Scuffed, trampled ground round doors, crates, terminals and the tower.
+    const busy = boxes.filter((b) => ["ammo", "supply", "station", "generator", "tower", "stair", "car"].includes(b.tag ?? "") || b.style === "crate");
+    for (const b of busy) {
+      for (let k = 0; k < 3; k++) {
+        const a = r() * 6.28, d = Math.max(b.w, b.d) * 0.5 + 0.4 + r() * 1.4;
+        const x = b.x + Math.cos(a) * d, z = b.z + Math.sin(a) * d;
+        if (!yard(x, z)) continue;
+        groundDecal(B, r() < 0.55 ? "specks" : "baseDirt", x, z, 1.2 + r() * 1.6, 1.2 + r() * 1.6, r() * 6, 0xc8beac);
+      }
+    }
+    // Stones: small loose chunks across the whole yard (merged per clutter cell).
+    for (let i = 0; i < Math.round(30 * detail.debris); i++) {
+      const x = (r() * 2 - 1) * (R - 2), z = (r() * 2 - 1) * (R - 2);
+      debrisScatter(B, x, z, 2 + r() * 3, Math.round(5 + r() * 7), 1300 + i, clutterGroup(x, z), undefined, (px, pz) => free(px, pz, 0.15) && !nearSpawn(px, pz, 1.5));
+    }
+  }
+
   // Sand drifts against the inside wall faces.
   for (let i = 0; i < 16; i++) {
     const a = (r() * 2 - 1) * 28;
@@ -471,7 +535,32 @@ export const dustfall: Dressing = (kit) => {
   chainlink(B, 34.5, 26, 34.5, 34.5, 2.0, () => 0, 34);
   chainlink(B, 34.5, 34.5, 26, 34.5, 2.0, () => 0, 35);
   // Road surface: broken asphalt along the old highway, a burnt car or two on it.
-  groundStrip(B, "asphalt", -220, ROAD_Z, 220, ROAD_Z, 7.5, height, 0xaaa69e, 41, "far", 0.06);
+  groundStrip(B, "asphalt", -220, ROAD_Z, 220, ROAD_Z, 7.5, height, 0xc8c4bc, 41, "far", 0.06);
+  {
+    // Patched, cracked, rutted tarmac with sand blown over both edges and
+    // faded paint (dashed centre line, broken edge lines).
+    const W = 7.5, g = "far";
+    for (let x = -205; x < 205; x += 5 + r() * 6) {
+      const z = ROAD_Z + (r() - 0.5) * 4;
+      const k = r();
+      if (k < 0.3) groundStrip(B, "asphalt", x, z, x + 1.5 + r() * 5, z, 1.2 + r() * 2.2, height, 0x9a968e, Math.floor(r() * 1e6), g, 0.07);
+      else if (k < 0.65) groundDecal(B, "cracks", x, z, 2.5 + r() * 2.5, 2.5 + r() * 2.5, r() * 6, 0xffffff, height, g, 0.08);
+      else if (k < 0.78) groundDecal(B, "oil", x, z, 1.4 + r() * 1.5, 1.4 + r() * 1.5, r() * 6, 0xffffff, height, g, 0.08);
+      else if (k < 0.86) groundDecal(B, "pocks", x, z, 1.5, 1.5, r() * 6, 0xffffff, height, g, 0.08);
+    }
+    for (let x = -205; x < 205; x += 5.5) {
+      for (const s of [-1, 1]) if (r() < 0.55) groundDecal(B, "tracks", x, ROAD_Z + s * (1.7 + r() * 0.3), 2.4, 5.8, Math.PI / 2 + (r() - 0.5) * 0.04, 0xffffff, height, g, 0.085);
+    }
+    for (let x = -212; x < 212; x += 3.5 + r() * 4.5) {
+      for (const s of [-1, 1]) {
+        if (r() < 0.2) continue;
+        const reach = 1 + r() * 2.2;
+        groundDecal(B, "sand", x, ROAD_Z + s * (W / 2 + 0.4 - reach / 2), reach + 1, 4 + r() * 6, Math.PI / 2 + (r() - 0.5) * 0.25, 0xb9ad94, height, g, 0.09);
+      }
+    }
+    paintLine(B, -212, ROAD_Z, 212, ROAD_Z, 0, 0.14, 3, 5, height, 61, 0xd8d4c6, g);
+    for (const s of [-1, 1]) paintLine(B, -212, ROAD_Z, 212, ROAD_Z, s * (W / 2 - 0.5), 0.12, 7, 0, height, 62 + s, 0xcfcab8, g);
+  }
   burntCar(B, -32, ROAD_Z + 1.2, 0.2, "sedan", 51, "far", height(-32, ROAD_Z + 1.2));
   burntCar(B, 46, ROAD_Z - 1.5, Math.PI + 0.3, "pickup", 52, "far", height(46, ROAD_Z - 1.5));
 

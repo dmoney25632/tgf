@@ -17,12 +17,15 @@ type ExtraDef = {
   placeholder: number;
   /** Borrow the shared world grime shader from this library material. */
   grimeFrom?: MaterialName;
+  /** Linear colour gain applied once the photo albedo arrives (e.g. sun-bleach a dark scan). */
+  gain?: [number, number, number];
 };
 
 const DEFS: Record<ExtraMaterialName, ExtraDef> = {
   plaster: { tile: 3.2, roughness: 1, metalness: 0, normalScale: 1, placeholder: 0xb8ad98, grimeFrom: "concrete" },
   plaster_damaged: { tile: 2.6, roughness: 1, metalness: 0, normalScale: 1.2, placeholder: 0xa48a74, grimeFrom: "concrete" },
-  asphalt: { tile: 4, roughness: 1, metalness: 0, normalScale: 0.8, placeholder: 0x4a4844 },
+  // The scan is fresh black tarmac; desert roads are sun-bleached, dusty grey.
+  asphalt: { tile: 4, roughness: 1, metalness: 0, normalScale: 0.9, placeholder: 0x7c7a74, gain: [2.5, 2.6, 2.95] },
   rubble: { tile: 2.4, roughness: 1, metalness: 0, normalScale: 1.3, placeholder: 0x8a8274, grimeFrom: "concrete_dirty" },
   concrete_broken: { tile: 3.5, roughness: 1, metalness: 0, normalScale: 1, placeholder: 0x7e7a72 },
   corrugated_rust: { tile: 2.2, roughness: 1, metalness: 0.35, normalScale: 1.3, placeholder: 0x7a5a42, grimeFrom: "metal_corrugated" },
@@ -294,12 +297,14 @@ function makeFrond(): HTMLCanvasElement {
   const [c, g] = canvas(W, H);
   const r = seeded(5);
   g.clearRect(0, 0, W, H);
-  for (let y = 10; y < H - 6; y += 5) {
+  // Dense, fairly wide leaflets so the alpha-tested card keeps its coverage
+  // when mipmapped at distance (thin lines vanish and leave a bare rib).
+  for (let y = 6; y < H - 6; y += 3.2) {
     const t = y / H;
-    const len = (W / 2 - 4) * Math.sin(Math.PI * Math.min(1, t * 1.15)) * (0.75 + r() * 0.25);
-    const shade = 70 + r() * 40;
-    g.strokeStyle = `rgb(${shade * 0.95},${shade * 1.08},${shade * 0.55})`;
-    g.lineWidth = 3;
+    const len = (W / 2 - 3) * Math.sin(Math.PI * Math.min(1, t * 1.05 + 0.04)) * (0.8 + r() * 0.2);
+    const shade = 92 + r() * 45;
+    g.strokeStyle = `rgb(${shade * 0.92},${shade * 1.06},${shade * 0.62})`;
+    g.lineWidth = 5;
     for (const s of [-1, 1]) {
       if (r() < 0.08) continue; // torn leaflet
       g.beginPath();
@@ -437,6 +442,7 @@ export class WorldMaterials {
         m.normalMap = mk(imgs.normal, false, place[1]);
         m.roughnessMap = mk(imgs.roughness, false, place[2]);
         m.aoMap = mk(imgs.ao, false, place[3]);
+        if (def.gain) m.color.setRGB(...def.gain);
       });
     }
     return m;
