@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { makeRoomCode } from "@/game/net/transport";
@@ -13,7 +14,15 @@ export const metadata = { title: "Co-op split screen (dev) · TGF" };
  * traffic. Click a pane to control that player. Handles for dev tools:
  * window.__tgfHost / window.__tgfClient = { engine, net }.
  */
-export default async function CoopDevPage({ searchParams }: PageProps<"/coop/dev">) {
+export default function CoopDevPage({ searchParams }: PageProps<"/coop/dev">) {
+  return (
+    <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+      <SplitScreen searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function SplitScreen({ searchParams }: { searchParams: PageProps<"/coop/dev">["searchParams"] }) {
   await connection();
   if (process.env.NODE_ENV === "production") notFound();
   const q = await searchParams;
