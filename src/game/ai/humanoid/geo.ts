@@ -9,6 +9,16 @@ import { SURF } from "./materials";
  * Runs once per (kit, palette, variant) and is cached by the caller.
  */
 
+/**
+ * Build quality, set by the caller around a build: 0 = full detail, 1 = mid
+ * range (tiny parts dropped), 2 = far (coarse tessellation, only the big
+ * shapes). Read by the primitive helpers and GeoBuilder.add.
+ */
+export const QUALITY = { lod: 0 };
+const segs = (n: number, min = 3) => (QUALITY.lod === 0 ? n : Math.max(min, Math.round(n * (QUALITY.lod === 1 ? 0.75 : 0.5))));
+/** Smallest part (bounding-box diagonal, metres) kept at each LOD. */
+const MIN_PART = [0, 0.012, 0.045];
+
 export type Paint = { color: THREE.Color; surf: number; rough: number; metal: number; emit: number };
 
 export function paint(hex: number, surf: number = SURF.hard, rough = 0.8, metal = 0, emit = 0): Paint {
@@ -33,6 +43,7 @@ export const MIRROR_X = new THREE.Matrix4().makeScale(-1, 1, 1);
 
 /** Lofted tube along +Y through superellipse rings. Optional end caps. */
 export function loft(rings: Ring[], seg: number, capBottom = true, capTop = true) {
+  seg = segs(seg, 4);
   const cols = seg + 1;
   const pos: number[] = [];
   const idx: number[] = [];
@@ -113,11 +124,11 @@ export function rbox(w: number, h: number, d: number, seg = 8, p = 4, bevel = 0.
 
 /** Simple ellipsoid. */
 export function ellipsoid(rx: number, ry: number, rz: number, ws = 10, hs = 7) {
-  return new THREE.SphereGeometry(1, ws, hs).scale(rx, ry, rz);
+  return new THREE.SphereGeometry(1, segs(ws, 4), segs(hs, 3)).scale(rx, ry, rz);
 }
 
 export function cyl(rTop: number, rBot: number, h: number, seg = 8, open = false) {
-  return new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, open);
+  return new THREE.CylinderGeometry(rTop, rBot, h, segs(seg, 4), 1, open);
 }
 
 /**
@@ -126,6 +137,8 @@ export function cyl(rTop: number, rBot: number, h: number, seg = 8, open = false
  * Adds a rolled rim (thickness) facing inward.
  */
 export function dome(rx: number, ry: number, rz: number, edge: (az: number) => number, seg = 16, rows = 6, rim = 0.012) {
+  seg = segs(seg, 8);
+  rows = segs(rows, 3);
   const cols = seg + 1;
   const pos: number[] = [];
   const idx: number[] = [];
@@ -185,6 +198,16 @@ export class GeoBuilder {
   uvOffset = new THREE.Vector2();
 
   add(src: THREE.BufferGeometry, pt: Paint, m?: THREE.Matrix4, colorFn?: ColorFn, keepUv = false) {
+    const minPart = MIN_PART[QUALITY.lod];
+    if (minPart > 0) {
+      if (!src.boundingBox) src.computeBoundingBox();
+      const bb = src.boundingBox!;
+      const sx = m ? Math.hypot(m.elements[0], m.elements[1], m.elements[2]) : 1;
+      if (Math.hypot(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) * sx < minPart) {
+        if (!src.userData.keep) src.dispose();
+        return this;
+      }
+    }
     const srcUv = keepUv ? (src.getAttribute("uv") as THREE.BufferAttribute | undefined)?.clone() : undefined;
     const g = src.clone();
     if (!g.index) {
