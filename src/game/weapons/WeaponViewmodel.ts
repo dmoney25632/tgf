@@ -4,7 +4,7 @@ import { Spring, damp } from "../core/Spring";
 import type { WeaponDef } from "./weapons";
 import type { ShellKind } from "../effects/Shells";
 import { GeoBuilder } from "./viewmodel/geo";
-import { createViewmodelMaterials, edgeWearFor, type ViewmodelMaterials } from "./viewmodel/materials";
+import { createViewmodelMaterials, type ViewmodelMaterials } from "./viewmodel/materials";
 import { GUN_BUILDERS, buildGrenade, buildKnife, type GunSpec } from "./viewmodel/guns";
 import { buildFlash, createFlashKit, type FlashKit } from "./viewmodel/flash";
 
@@ -93,6 +93,7 @@ const MAX_EJECT = 10;
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
+const tmpE = new THREE.Euler();
 const LOCKS_BACK: ModelKind[] = ["rifle", "dmr", "pistol"];
 
 /**
@@ -126,8 +127,10 @@ export class WeaponViewmodel {
   private readonly kickRoll = new Spring(160, 12);
   private readonly land = new Spring(120, 10);
 
-  private readonly sway = new THREE.Vector2();
-  private readonly swayTarget = new THREE.Vector2();
+  // Look sway: springs driven by mouse motion, so the gun lags, overshoots and settles.
+  private readonly swayYaw = new Spring(95, 12);
+  private readonly swayPitch = new Spring(95, 12);
+  private readonly swayRoll = new Spring(70, 9);
   private time = 0;
   private flashTimer = 0;
   private flashDur = 0.04;
@@ -144,30 +147,39 @@ export class WeaponViewmodel {
 
   private readonly ejections: Ejection[] = [];
 
+  // Lighting that tracks the world: sun direction / colour and env rotation.
+  private readonly key = new THREE.DirectionalLight(0xfff0da, 2.2);
+  private readonly hemi = new THREE.HemisphereLight(0xdfe7f2, 0x4a3f30, 0.35);
+  private readonly rim = new THREE.DirectionalLight(0xb8c8e6, 0.55);
+  private sun: THREE.DirectionalLight | null = null;
+  private readonly camInv = new THREE.Quaternion();
+
+  /**
+   * Dev / tooling: values merged over the per-frame state (pose a gun
+   * mid-reload, at full ADS, sprinting... without input). `null` = off.
+   */
+  debug: Partial<ViewmodelState> | null = null;
+
   constructor(envMap: THREE.Texture | null) {
     this.scene.environment = envMap;
-    this.scene.environmentIntensity = 0.55;
-    this.scene.add(new THREE.HemisphereLight(0xe6ecf5, 0x4a3f30, 0.85));
-    const key = new THREE.DirectionalLight(0xfff0da, 2.4);
-    key.position.set(0.6, 1.4, 0.7);
-    const fill = new THREE.DirectionalLight(0xc8d6ff, 0.45);
-    fill.position.set(-0.8, 0.3, 0.6);
-    const rim = new THREE.DirectionalLight(0x9ab4ff, 0.9);
-    rim.position.set(-1, 0.5, -1);
-    this.scene.add(key, fill, rim, this.flashLight, this.pivot);
+    this.scene.environmentIntensity = 0.75;
+    // Key = the world's sun (re-aimed every frame in syncView), soft sky fill,
+    // and a faint cool rim from behind to separate the gun from the scene.
+    this.key.position.set(0.5, 1.2, 0.6);
+    this.rim.position.set(-0.6, 0.35, -1);
+    this.scene.add(this.hemi, this.key, this.rim, this.flashLight, this.pivot);
 
     this.mats = createViewmodelMaterials();
     this.flashKit = createFlashKit();
-    const wear = (mat: THREE.Material) => edgeWearFor(this.mats, mat);
 
+    // Every gun is built up front (one shared material set, so no shader
+    // compiles on swap) but only the equipped one is in the scene graph.
     for (const kind of ["rifle", "smg", "shotgun", "dmr", "lmg", "pistol", "revolver"] as ModelKind[]) {
-      const b = new GeoBuilder(wear);
+      const b = new GeoBuilder(this.mats.render);
       const spec = GUN_BUILDERS[kind]({ b, m: this.mats });
       b.finish(this.disposables);
       const flash = buildFlash(this.flashKit, spec.flash, spec.flashScale, this.disposables);
       spec.muzzle.add(flash.group);
-      spec.root.visible = false;
-      this.pivot.add(spec.root);
       this.models.set(kind, {
         spec,
         flash,
@@ -182,9 +194,9 @@ export class WeaponViewmodel {
       });
     }
     this.active = this.models.get("rifle")!;
-    this.active.spec.root.visible = true;
+    this.pivot.add(this.active.spec.root);
 
-    const kb = new GeoBuilder(wear);
+    const kb = new GeoBuilder(this.mats.render);
     buildKnife({ b: kb, m: this.mats }, this.knife);
     buildGrenade({ b: kb, m: this.mats }, this.grenade);
     kb.finish(this.disposables);
@@ -197,11 +209,40 @@ export class WeaponViewmodel {
     }
   }
 
-  /** Operator-specific glove / sleeve colors. */
+  /** Operator-specific glove / sleeve colours (shader uniforms; no rebuild). */
   setOperatorColors(glove: number, sleeve: number) {
-    this.mats.glove.color.setHex(glove);
-    this.mats.gloveAccent.color.setHex(glove).multiplyScalar(0.55);
-    this.mats.sleeve.color.setHex(sleeve);
+    this.mats.tints[0].setHex(glove);
+    this.mats.tints[1].setHex(sleeve);
+  }
+
+  /**
+   * Light the viewmodel with the world's sun. Engine hook: call once after
+   * the map loads (e.g. `viewmodel.setSun(map.sun)`).
+   */
+  setSun(sun: THREE.DirectionalLight | null) {
+    this.sun = sun;
+  }
+
+  /**
+   * Re-orient image-based lighting and the key light to the world camera, so
+   * reflections and highlights on the gun match where the player is looking.
+   * Runs every frame from drainShells(); safe to call directly too.
+   */
+  syncView(worldCamera: THREE.Camera) {
+    worldCamera.getWorldQuaternion(this.camInv).invert();
+    // Env lookup must map view-space directions back to world space. three
+    // negates the euler angles (applied in the same order), so feed it the
+    // XYZ angles of the inverse rotation with the reversed (ZYX) order.
+    tmpE.setFromQuaternion(this.camInv, "XYZ");
+    this.scene.environmentRotation.set(tmpE.x, tmpE.y, tmpE.z, "ZYX");
+    this.hemi.position.set(0, 1, 0).applyQuaternion(this.camInv);
+    if (this.sun) {
+      tmpV.subVectors(this.sun.position, this.sun.target.position).normalize().applyQuaternion(this.camInv);
+      // Keep the key above the gun's horizon a little so it never goes fully flat.
+      this.key.position.copy(tmpV);
+      this.key.color.copy(this.sun.color);
+      this.key.intensity = this.sun.intensity * 1.05;
+    }
   }
 
   setAspect(aspect: number) {
@@ -213,9 +254,9 @@ export class WeaponViewmodel {
     this.def = def;
     const next = this.models.get(def.model) ?? this.models.get("rifle")!;
     if (next === this.active) return;
-    this.active.spec.root.visible = false;
+    this.pivot.remove(this.active.spec.root);
     this.active = next;
-    next.spec.root.visible = true;
+    this.pivot.add(next.spec.root);
     this.kickBack.reset();
     this.kickUp.reset();
     this.kickRise.reset();
@@ -292,6 +333,7 @@ export class WeaponViewmodel {
    * system in world space. Call once per frame after update().
    */
   drainShells(worldCamera: THREE.Camera, sink: ShellSink, groundY: number, inherit?: THREE.Vector3) {
+    this.syncView(worldCamera);
     for (const e of this.ejections) {
       if (!e.ready) continue;
       e.ready = false;
@@ -307,7 +349,8 @@ export class WeaponViewmodel {
     }
   }
 
-  update(dt: number, s: ViewmodelState) {
+  update(dt: number, state: ViewmodelState) {
+    const s = this.debug ? { ...state, ...this.debug } : state;
     this.time += dt;
     const m = this.active;
     const sp = m.spec;
@@ -321,13 +364,15 @@ export class WeaponViewmodel {
     const roll = this.kickRoll.update(dt);
     const landY = this.land.update(dt);
 
-    // ---- Sway (lags behind the mouse) --------------------------------------
-    const swayScale = 1 - s.ads * 0.85;
-    this.swayTarget.set(
-      THREE.MathUtils.clamp(-s.yawDelta * 1.6, -0.05, 0.05),
-      THREE.MathUtils.clamp(s.pitchDelta * 1.6, -0.05, 0.05),
-    );
-    this.sway.lerp(this.swayTarget, damp(9, dt));
+    // ---- Sway: the gun's inertia lags the look, overshoots, settles ---------
+    const swayScale = 1 - s.ads * 0.8;
+    const clampD = (d: number) => THREE.MathUtils.clamp(d, -0.06, 0.06);
+    this.swayYaw.impulse(-clampD(s.yawDelta) * 2.6);
+    this.swayPitch.impulse(clampD(s.pitchDelta) * 2.6);
+    this.swayRoll.impulse(-clampD(s.yawDelta) * 3.2);
+    const swayX = THREE.MathUtils.clamp(this.swayYaw.update(dt), -0.06, 0.06);
+    const swayY = THREE.MathUtils.clamp(this.swayPitch.update(dt), -0.06, 0.06);
+    const swayR = THREE.MathUtils.clamp(this.swayRoll.update(dt), -0.08, 0.08);
 
     // ---- Bob (synced to the camera's footfalls) ----------------------------
     const phase = s.bobDistance * 0.32 * Math.PI * 2;
@@ -337,10 +382,12 @@ export class WeaponViewmodel {
     const bobY = -Math.abs(Math.sin(phase)) * 0.009 * bobAmt * sprintBob;
     const bobRot = Math.cos(phase) * 0.02 * bobAmt * sprintBob;
 
-    // ---- Idle breathing ----------------------------------------------------
-    const idle = 1 - s.ads * 0.8;
-    const breath = Math.sin(this.time * 1.5) * 0.0018 * idle;
-    const breathX = Math.sin(this.time * 0.75) * 0.0012 * idle;
+    // ---- Idle breathing: slow figure-eight drift + chest rise --------------
+    const idle = (1 - s.ads * 0.75) * (1 - s.sprint);
+    const bt = this.time * 1.35;
+    const breath = (Math.sin(bt) * 0.0016 + Math.sin(bt * 0.5 + 1.1) * 0.0007) * idle;
+    const breathX = Math.sin(bt * 0.5) * 0.0011 * idle;
+    const breathRot = Math.sin(bt + 0.6) * 0.0035 * idle;
 
     // ---- Base position: hip ↔ ADS (sights land exactly on screen centre) ---
     const ease = s.ads * s.ads * (3 - 2 * s.ads);
@@ -348,7 +395,7 @@ export class WeaponViewmodel {
     g.position.lerpVectors(sp.hip, sp.ads, ease);
     // ADS path arcs slightly low so the optic rises into the eye.
     g.position.y -= Math.sin(ease * Math.PI) * 0.012;
-    g.rotation.set(0.012 * hipW, 0.035 * hipW, 0.03 * hipW);
+    g.rotation.set(sp.hipRot.x * hipW, sp.hipRot.y * hipW, sp.hipRot.z * hipW);
 
     // ---- Reset moving parts to rest ----------------------------------------
     sp.mag.position.copy(m.magRest);
@@ -462,12 +509,12 @@ export class WeaponViewmodel {
     g.visible = !(sp.scope && s.ads > 0.92);
 
     // ---- Apply layered offsets --------------------------------------------
-    g.position.x += this.sway.x * swayScale + bobX + breathX;
-    g.position.y += this.sway.y * swayScale + bobY + breath + landY + rise;
+    g.position.x += swayX * 0.35 * swayScale + bobX + breathX;
+    g.position.y += swayY * 0.35 * swayScale + bobY + breath + landY + rise;
     g.position.z += back;
-    g.rotation.x += up + this.sway.y * 2 * swayScale;
-    g.rotation.y += side + this.sway.x * 2.5 * swayScale;
-    g.rotation.z += roll + bobRot + this.sway.x * 1.5 * swayScale;
+    g.rotation.x += up + swayY * 1.6 * swayScale + breathRot;
+    g.rotation.y += side + swayX * 2 * swayScale;
+    g.rotation.z += roll + bobRot + swayR * swayScale;
 
     // ---- Muzzle flash ------------------------------------------------------
     this.flashTimer -= dt;
@@ -627,10 +674,19 @@ export class WeaponViewmodel {
     }
   }
 
-  /** Triangle / mesh counts per weapon (for tooling and the debug overlay). */
+  /**
+   * Triangle / mesh counts per weapon (for tooling and the debug overlay).
+   * `calls` = draw calls at rest (visible meshes, flash excluded).
+   */
   stats() {
-    const out: Record<string, { tris: number; meshes: number; muzzle: THREE.Vector3; ads: THREE.Vector3 }> = {};
-    for (const [k, m] of this.models) out[k] = { tris: m.tris, meshes: m.meshes, muzzle: m.spec.muzzle.position.clone(), ads: m.spec.ads.clone() };
+    const out: Record<string, { tris: number; meshes: number; calls: number; muzzle: THREE.Vector3; ads: THREE.Vector3 }> = {};
+    for (const [k, m] of this.models) {
+      let calls = 0;
+      m.spec.root.traverseVisible((o) => {
+        if ((o as THREE.Mesh).isMesh) calls++;
+      });
+      out[k] = { tris: m.tris, meshes: m.meshes, calls, muzzle: m.spec.muzzle.position.clone(), ads: m.spec.ads.clone() };
+    }
     return out;
   }
 

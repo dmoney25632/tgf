@@ -2,9 +2,10 @@ import * as THREE from "three";
 import type { ViewModelKind } from "../weapons";
 import { type P2, type V3, circle, extrude, latheZ, place, rrect, shape, slot } from "./geo";
 import { type ArmPlacement, type HandPose, buildArm } from "./hands";
+import type { Surf } from "./materials";
 import {
   type Kit, apertureRear, barrel, boxMag, buttonX, flashHider, foldedIrons, frontPost, holoSight, muzzleBrake, pinX,
-  pistolGrip, prismSight, rail, redDot, rifleScope, slottedFloor, slottedPlate, stock, triggerGroup,
+  pistolGrip, prismSight, rail, redDot, rifleScope, screwX, screwY, selectorMarks, slottedFloor, slottedPlate, stock, suppressor, triggerGroup,
 } from "./parts";
 
 import type { ShellKind } from "../../effects/Shells";
@@ -54,6 +55,8 @@ export type GunSpec = {
   ejectDir: THREE.Vector3;
   shell: ShellKind | null;
   hip: THREE.Vector3;
+  /** Hip-fire orientation (rad): slight inward yaw + cant so the side of the gun reads. */
+  hipRot: THREE.Vector3;
   ads: THREE.Vector3;
   handgun: boolean;
   scope: boolean;
@@ -84,14 +87,14 @@ function newSpec(kind: ViewModelKind): GunSpec {
   return {
     kind, root, mag, bolt, boltTravel: 0.03, leftArm, leftGrab, leftReach: new THREE.Vector3(), leftRest: new THREE.Vector3(), boltHand: new THREE.Vector3(),
     muzzle, eject, ejectDir: new THREE.Vector3(1, 0.4, 0.2).normalize(), shell: "rifle",
-    hip: new THREE.Vector3(), ads: new THREE.Vector3(), handgun: false, scope: false, cycle: 0.2, flash: "brake", flashScale: 1, reload: "mag",
+    hip: new THREE.Vector3(), hipRot: new THREE.Vector3(0.01, 0.05, 0.035), ads: new THREE.Vector3(), handgun: false, scope: false, cycle: 0.2, flash: "brake", flashScale: 1, reload: "mag",
   };
 }
 
 /** Support-hand placement on a handguard of radius r around the bore. */
 function supportOnHandguard(at: V3, r: number, elbow: V3): [ArmPlacement, HandPose] {
   return [
-    { at, axis: [0, 0, 1], palm: [-0.72, -0.69, 0], elbow, left: true, watch: true },
+    { at, axis: [0, 0, 1], palm: [-0.4, -0.92, 0], elbow, left: true, watch: true },
     { r, thumb: "forward", phi0: -62, fingers: ["wrap", "wrap", "wrap", "wrap"], tight: 0.8 },
   ];
 }
@@ -105,7 +108,7 @@ function strongOnGrip(top: V3, axis: V3, elbow: V3, r = 0.0175, thumb: HandPose[
 }
 
 /** Split receiver: solid left body + right skin with an ejection-port window. */
-function receiverWithPort(k: Kit, mat: THREE.Material, pts: P2[], xl: number, xr: number, port: P2[]) {
+function receiverWithPort(k: Kit, mat: Surf, pts: P2[], xl: number, xr: number, port: P2[]) {
   const skin = 0.006;
   const inner = xr - skin;
   k.b.profile(mat, pts, inner - xl, (xl + inner) / 2, { bev: 0.0015 });
@@ -146,6 +149,9 @@ function buildRifle(k: Kit): GunSpec {
   pinX(k, m.steel, 0.0026, 0.0305, 0, -0.085, 0.062);
   pinX(k, m.steel, 0.0026, 0.0305, 0, -0.085, -0.108);
   triggerGroup(k, m.anodized, m.steel, 0.048, -0.008, -0.105, 0.022, 0.011);
+  selectorMarks(k, -0.0146, -0.089, 0.05);
+  for (const z of [-0.132, -0.388]) for (const sx of [-1, 1]) screwX(k, sx * 0.0197, -0.0625, z);
+  for (const z of [-0.06, -0.2]) screwY(k, 0, -0.0864, z, 0.0016, true);
   const grip = pistolGrip(k, m.gripTan, 0.066, -0.104, 0.096, 0.33, 0.034, 0.03);
   // Buffer tube, castle nut, stock.
   b.cyl(m.anodized, 0.0145, 0.065, 0.27, 0, yb, 16);
@@ -195,7 +201,7 @@ function buildRifle(k: Kit): GunSpec {
   buildArm(b, m, ...strongOnGrip(grip.top, grip.axis, [0.11, -0.33, 0.36]));
   const leftAt: V3 = [0, yb, -0.285];
   b.into(g.leftArm);
-  buildArm(b, m, ...supportOnHandguard(leftAt, 0.024, [-0.34, -0.3, 0.0]));
+  buildArm(b, m, ...supportOnHandguard(leftAt, 0.024, [-0.25, -0.3, 0.2]));
   b.into(g.leftGrab);
   const grabAt: V3 = [0, -0.06, -0.006];
   buildArm(b, m, { at: grabAt, axis: [0, -1, 0.15], palm: [-1, 0, 0], elbow: [-0.16, -0.36, 0.15], left: true, watch: true }, { r: 0.024, thumb: "wrap" });
@@ -205,7 +211,8 @@ function buildRifle(k: Kit): GunSpec {
   g.boltHand.set(-0.02, -0.092, -0.004);
   g.eject.position.set(0.017, portC[1], portC[0]);
   g.ejectDir.set(1, 0.38, 0.3).normalize();
-  g.hip.set(0.115, -0.128, -0.3);
+  g.hip.set(0.14, -0.075, -0.32);
+  g.hipRot.set(0.03, 0.07, -0.1);
   g.ads.set(0, 0, -0.165 - dot.eye);
   g.cycle = 0.08;
   return g;
@@ -236,6 +243,8 @@ function buildSmg(k: Kit): GunSpec {
   ], 0.027, 0, { bev: 0.0018 });
   b.box(m.polymer, 0.03, 0.006, 0.062, 0, -0.11, -0.033, { bev: 0.002 });
   triggerGroup(k, m.polymer, m.steel, 0.044, 0.004, -0.093, 0.022, 0.011);
+  selectorMarks(k, -0.0136, -0.082, 0.042);
+  for (const sx of [-1, 1]) screwX(k, sx * 0.0167, -0.056, -0.145);
   const grip = pistolGrip(k, m.grip, 0.062, -0.092, 0.092, 0.24, 0.032, 0.029);
   buttonX(k, m.steel, 0.006, 0.002, -0.0136, -0.082, 0.05);
   b.box(m.steel, 0.0025, 0.004, 0.018, -0.0145, -0.082, 0.042, { rx: 0.4, bev: 0.0006 });
@@ -286,7 +295,7 @@ function buildSmg(k: Kit): GunSpec {
   buildArm(b, m, ...strongOnGrip(grip.top, grip.axis, [0.11, -0.33, 0.36]));
   const leftAt: V3 = [0, -0.088, vgZ];
   b.into(g.leftArm);
-  buildArm(b, m, { at: leftAt, axis: [0, -1, 0.12], palm: [0.25, 0, 1], elbow: [-0.3, -0.32, 0.02], left: true, watch: true }, { r: 0.0138, thumb: "wrap", fingers: ["wrap", "wrap", "wrap", "wrap"] });
+  buildArm(b, m, { at: leftAt, axis: [0, -1, 0.12], palm: [-0.8, 0, 0.6], elbow: [-0.28, -0.3, 0.22], left: true, watch: true }, { r: 0.0138, thumb: "wrap", fingers: ["wrap", "wrap", "wrap", "wrap"] });
   b.into(g.leftGrab);
   const grabAt: V3 = [0, -0.07, -0.004];
   buildArm(b, m, { at: grabAt, axis: [0, -1, 0.1], palm: [-1, 0, 0], elbow: [-0.16, -0.36, 0.15], left: true, watch: true }, { r: 0.017, thumb: "wrap" });
@@ -297,7 +306,8 @@ function buildSmg(k: Kit): GunSpec {
   g.eject.position.set(0.016, portC[1], portC[0]);
   g.ejectDir.set(1, 0.45, 0.2).normalize();
   g.shell = "pistol";
-  g.hip.set(0.11, -0.12, -0.29);
+  g.hip.set(0.13, -0.07, -0.3);
+  g.hipRot.set(0.03, 0.07, -0.1);
   g.ads.set(0, 0, -0.152 - holo.eye);
   g.flash = "hider";
   g.flashScale = 0.75;
@@ -387,7 +397,8 @@ function buildShotgun(k: Kit): GunSpec {
   g.eject.position.set(0.018, -0.036, -0.05);
   g.ejectDir.set(1, 0.55, 0.15).normalize();
   g.shell = "shotgun";
-  g.hip.set(0.12, -0.134, -0.31);
+  g.hip.set(0.14, -0.095, -0.33);
+  g.hipRot.set(0.03, 0.07, -0.1);
   g.ads.set(0, 0, -0.17 - 0.045);
   g.flash = "shotgun";
   g.flashScale = 1.5;
@@ -422,6 +433,8 @@ function buildDmr(k: Kit): GunSpec {
   b.box(m.steel, 0.003, 0.005, 0.022, -0.0172, -0.1, 0.054, { rx: -0.5, bev: 0.0008 });
   pinX(k, m.steel, 0.0026, 0.0325, 0, -0.096, 0.066);
   triggerGroup(k, m.cerakoteTan, m.steel, 0.052, -0.012, -0.117, 0.022, 0.012);
+  selectorMarks(k, -0.0156, -0.1, 0.054);
+  for (const z of [-0.148, -0.458]) for (const sx of [-1, 1]) screwX(k, sx * 0.0236, -0.0735, z);
   const grip = pistolGrip(k, m.gripTan, 0.07, -0.115, 0.098, 0.24, 0.035, 0.031);
   b.cyl(m.anodized, 0.0152, 0.075, 0.26, 0, yb, 16);
   b.lathe(m.steel, [[0.0152, 0.078], [0.0185, 0.078], [0.0185, 0.088], [0.0152, 0.088]], 0, yb, { seg: 12 });
@@ -437,14 +450,14 @@ function buildDmr(k: Kit): GunSpec {
   slottedFloor(k, m.cerakoteTan, -0.135, -0.47, 0.034, -0.099, 0.0042, 6);
   b.section(m.cerakoteTan, rrect(0.04, 0.004, 0, 0, -0.0533), -0.135, -0.47, { bev: 0.0008 });
   b.section(m.cerakoteTan, rrect(0.043, 0.05, 0.009, 0, -0.075, 3), -0.466, -0.473, { bev: 0.0012, holes: [circle(0.0115, 0, yb, 14)] });
-  barrel(k, m.blued, -0.13, -0.63, yb, 0.0108, 0.0096);
+  barrel(k, m.blued, -0.13, -0.62, yb, 0.0108, 0.0096);
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
     b.box(m.polymer, 0.0024, 0.0012, 0.12, Math.cos(a) * 0.0097, yb + Math.sin(a) * 0.0097, -0.55, { rz: a + Math.PI / 2, bev: 0 });
   }
   b.box(m.steel, 0.024, 0.026, 0.022, 0, yb + 0.002, -0.36, { bev: 0.0015 });
-  muzzleBrake(k, m.steel, -0.63, yb, 0.0135, 0.07);
-  g.muzzle.position.set(0, yb, -0.705);
+  suppressor(k, -0.6, yb, 0.0205, 0.215);
+  g.muzzle.position.set(0, yb, -0.82);
   const sc = rifleScope(k, -0.03, railTop);
 
   b.into(g.bolt);
@@ -465,7 +478,7 @@ function buildDmr(k: Kit): GunSpec {
   buildArm(b, m, ...strongOnGrip(grip.top, grip.axis, [0.11, -0.34, 0.37]));
   const leftAt: V3 = [0, yb, -0.32];
   b.into(g.leftArm);
-  buildArm(b, m, ...supportOnHandguard(leftAt, 0.0265, [-0.34, -0.31, -0.02]));
+  buildArm(b, m, ...supportOnHandguard(leftAt, 0.0265, [-0.25, -0.31, 0.2]));
   b.into(g.leftGrab);
   const grabAt: V3 = [0, -0.05, -0.004];
   buildArm(b, m, { at: grabAt, axis: [0, -1, 0.1], palm: [-1, 0, 0], elbow: [-0.16, -0.36, 0.15], left: true, watch: true }, { r: 0.027, thumb: "wrap" });
@@ -476,9 +489,12 @@ function buildDmr(k: Kit): GunSpec {
   g.eject.position.set(0.018, portC[1], portC[0]);
   g.ejectDir.set(1, 0.35, 0.3).normalize();
   g.shell = "heavy";
-  g.hip.set(0.118, -0.138, -0.31);
+  g.hip.set(0.14, -0.085, -0.33);
+  g.hipRot.set(0.03, 0.07, -0.1);
   g.ads.set(0, 0, -0.105 - sc.eye);
   g.scope = true;
+  g.flash = "hider";
+  g.flashScale = 0.4;
   g.cycle = 0.25;
   return g;
 }
@@ -567,7 +583,7 @@ function buildLmg(k: Kit): GunSpec {
   buildArm(b, m, ...strongOnGrip(grip.top, grip.axis, [0.12, -0.34, 0.38]));
   const leftAt: V3 = [0, yb, -0.3];
   b.into(g.leftArm);
-  buildArm(b, m, ...supportOnHandguard(leftAt, 0.0295, [-0.35, -0.32, -0.02]));
+  buildArm(b, m, ...supportOnHandguard(leftAt, 0.0295, [-0.26, -0.32, 0.2]));
   b.into(g.leftGrab);
   const grabAt: V3 = [-0.006, -0.11, -0.03];
   buildArm(b, m, { at: grabAt, axis: [0, 0, 1], palm: [0, -1, 0], elbow: [-0.18, -0.36, 0.2], left: true, watch: true }, { r: 0.03, thumb: "forward", tight: 0.85 });
@@ -578,7 +594,8 @@ function buildLmg(k: Kit): GunSpec {
   g.eject.position.set(0.025, portC[1], portC[0]);
   g.ejectDir.set(1, 0.25, 0.25).normalize();
   g.shell = "rifle";
-  g.hip.set(0.13, -0.144, -0.33);
+  g.hip.set(0.15, -0.085, -0.34);
+  g.hipRot.set(0.03, 0.07, -0.1);
   g.ads.set(0, 0, -0.165 - pr.eye);
   g.flash = "hider";
   g.flashScale = 1.15;
@@ -649,7 +666,8 @@ function buildPistol(k: Kit): GunSpec {
   g.eject.position.set(0.01, -0.006, -0.037);
   g.ejectDir.set(0.85, 0.85, 0.25).normalize();
   g.shell = "pistol";
-  g.hip.set(0.085, -0.085, -0.3);
+  g.hip.set(0.07, -0.062, -0.27);
+  g.hipRot.set(0.0, 0.04, 0.02);
   g.ads.set(0, 0, -0.27);
   g.handgun = true;
   g.flash = "pistol";
@@ -758,7 +776,8 @@ function buildRevolver(k: Kit): GunSpec {
   g.eject.position.set(0, cylY, cylZ + 0.025);
   g.ejectDir.set(-0.3, 0.2, 1).normalize();
   g.shell = null;
-  g.hip.set(0.085, -0.088, -0.31);
+  g.hip.set(0.07, -0.062, -0.29);
+  g.hipRot.set(0.0, 0.04, 0.02);
   g.ads.set(0, 0, -0.29);
   g.handgun = true;
   g.flash = "revolver";

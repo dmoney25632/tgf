@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import type { RenderKind, Surf } from "./materials";
 
 /** Detail textures tile every 1/UV_SCALE metres (box-projected UVs). */
-const UV_SCALE = 9;
+const UV_SCALE = 7;
 
 export type V3 = [number, number, number];
 export type P2 = [number, number];
@@ -163,12 +164,16 @@ export function rodGeo(a: THREE.Vector3, b: THREE.Vector3, r: number, seg = 8, c
   return g;
 }
 
-type Bucket = { obj: THREE.Object3D; parts: Map<THREE.Material, THREE.BufferGeometry[]> };
+type Bucket = { obj: THREE.Object3D; parts: Map<RenderKind, THREE.BufferGeometry[]> };
+
+const RENDER_ORDER: Record<RenderKind, number> = { uber: 0, glass: 1, glow: 2 };
 
 /**
- * Accumulates part geometry per (target object, material) and merges each
- * bucket into a single mesh. Static gun parts become one mesh per material;
- * moving parts (mag, bolt, slide, pump, cylinder…) get their own target.
+ * Accumulates part geometry per (target object, render material) and merges
+ * each bucket into a single mesh. Surface properties (albedo, metalness,
+ * roughness, wear, detail layer) are baked into vertex attributes, so a whole
+ * gun is ~1 opaque draw call per moving part. Moving parts (mag, bolt, slide,
+ * pump, cylinder...) get their own target object.
  */
 export class GeoBuilder {
   private readonly buckets: Bucket[] = [];
@@ -176,7 +181,7 @@ export class GeoBuilder {
   triangles = 0;
   meshes = 0;
 
-  constructor(private readonly wear: (mat: THREE.Material) => number) {}
+  constructor(private readonly materials: Record<RenderKind, THREE.Material>) {}
 
   /** Subsequent parts go into `obj` (in obj's local space). */
   into(obj: THREE.Object3D) {
@@ -190,7 +195,7 @@ export class GeoBuilder {
   }
 
   /** Add raw geometry (consumed) with an optional placement. */
-  add(mat: THREE.Material, geo: THREE.BufferGeometry, m?: THREE.Matrix4) {
+  add(s: Surf, geo: THREE.BufferGeometry, m?: THREE.Matrix4) {
     const g = geo.index ? geo.toNonIndexed() : geo;
     if (g !== geo) geo.dispose();
     g.clearGroups();
@@ -200,16 +205,26 @@ export class GeoBuilder {
       g.applyMatrix4(m);
       if (m.determinant() < 0) flipWinding(g);
     }
-    // Edge flag → wear multiplier.
-    const w = this.wear(mat);
+    // Bake the surface: colour = albedo, pbr = (metal, rough, wear | alpha, nScale), surf = (layer, tint).
     const c = g.attributes.color as THREE.BufferAttribute;
-    for (let i = 0; i < c.count; i++) {
-      const e = c.getX(i);
-      const v = 1 + (w - 1) * e;
-      c.setXYZ(i, v, v, v);
+    const n = c.count;
+    const pbr = new Float32Array(n * 4);
+    const sf = new Float32Array(n * 2);
+    const tint = s.tint >= 0 ? s.tint + 1 : 0;
+    for (let i = 0; i < n; i++) {
+      const edge = c.getX(i);
+      c.setXYZ(i, s.color.r, s.color.g, s.color.b);
+      pbr[i * 4] = s.metal;
+      pbr[i * 4 + 1] = s.rough;
+      pbr[i * 4 + 2] = s.render === "glass" ? s.alpha : edge * s.wear;
+      pbr[i * 4 + 3] = s.nScale;
+      sf[i * 2] = s.layer;
+      sf[i * 2 + 1] = tint;
     }
-    let list = this.cur.parts.get(mat);
-    if (!list) this.cur.parts.set(mat, (list = []));
+    g.setAttribute("pbr", new THREE.BufferAttribute(pbr, 4));
+    g.setAttribute("surf", new THREE.BufferAttribute(sf, 2));
+    let list = this.cur.parts.get(s.render);
+    if (!list) this.cur.parts.set(s.render, (list = []));
     list.push(g);
     return this;
   }
@@ -217,7 +232,7 @@ export class GeoBuilder {
   // ---- Primitives -----------------------------------------------------------
 
   /** Chamfered box centred on (x, y, z). */
-  box(mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number, o: ExtrudeOpts = {}) {
+  box(mat: Surf, w: number, h: number, d: number, x: number, y: number, z: number, o: ExtrudeOpts = {}) {
     const bev = o.bev ?? Math.min(w, h, d) * 0.12;
     const g = extrude(shape(rrect(w, h, o.seg ? bev * 2 : 0, 0, 0, o.seg ?? 1)), d, { ...o, bev });
     return this.add(mat, g, place(x, y, z, o));
@@ -227,7 +242,7 @@ export class GeoBuilder {
    * Side profile drawn in the gun's (z, y) plane, extruded `thick` along X and
    * centred on x. Great for receivers, grips, stocks, triggers, magazines.
    */
-  profile(mat: THREE.Material, pts: P2[], thick: number, x = 0, o: ExtrudeOpts & { y?: number; z?: number } = {}) {
+  profile(mat: Surf, pts: P2[], thick: number, x = 0, o: ExtrudeOpts & { y?: number; z?: number } = {}) {
     const flip = (p: P2[]) => p.map(([z, y]) => [-z, y] as P2);
     const sh = shape(flip(pts), (o.holes ?? []).map(flip));
     const g = extrude(sh, thick, o);
@@ -236,37 +251,40 @@ export class GeoBuilder {
   }
 
   /** Cross-section in the (x, y) plane extruded along Z from z0 to z1. */
-  section(mat: THREE.Material, pts: P2[], z0: number, z1: number, o: ExtrudeOpts & { x?: number; y?: number } = {}) {
+  section(mat: Surf, pts: P2[], z0: number, z1: number, o: ExtrudeOpts & { x?: number; y?: number } = {}) {
     const sh = shape(pts, o.holes ?? []);
     const g = extrude(sh, Math.abs(z1 - z0), o);
     return this.add(mat, g, place(o.x ?? 0, o.y ?? 0, (z0 + z1) / 2, o));
   }
 
   /** Lathe around an axis parallel to Z through (x, y). pts are [radius, z]. */
-  lathe(mat: THREE.Material, pts: P2[], x: number, y: number, o: Place & { seg?: number; z?: number } = {}) {
+  lathe(mat: Surf, pts: P2[], x: number, y: number, o: Place & { seg?: number; z?: number } = {}) {
     return this.add(mat, latheZ(pts, o.seg ?? 16), place(x, y, o.z ?? 0, o));
   }
 
   /** Plain cylinder along Z. */
-  cyl(mat: THREE.Material, r: number, z0: number, z1: number, x: number, y: number, seg = 12, o: Place & { z?: number } = {}) {
+  cyl(mat: Surf, r: number, z0: number, z1: number, x: number, y: number, seg = 12, o: Place & { z?: number } = {}) {
     return this.lathe(mat, [[0, z0], [r, z0], [r, z1], [0, z1]], x, y, { ...o, seg });
   }
 
   /** Rod between two points. */
-  rod(mat: THREE.Material, a: V3, b: V3, r: number, seg = 8, capsule = false) {
+  rod(mat: Surf, a: V3, b: V3, r: number, seg = 8, capsule = false) {
     return this.add(mat, rodGeo(new THREE.Vector3(...a), new THREE.Vector3(...b), r, seg, capsule));
   }
 
-  /** Merge every bucket into meshes. Returns created geometries for disposal. */
+  /** Merge every bucket into meshes. Created geometries are pushed for disposal. */
   finish(disposables: { dispose(): void }[]) {
     for (const b of this.buckets) {
-      for (const [mat, list] of b.parts) {
+      for (const [kind, list] of b.parts) {
         const merged = list.length === 1 ? list[0] : mergeGeometries(list, false);
         if (!merged) throw new Error("viewmodel: merge failed");
         if (list.length > 1) for (const g of list) g.dispose();
-        boxUV(merged);
+        if (kind === "uber") boxUV(merged);
         merged.computeBoundingSphere();
-        const mesh = new THREE.Mesh(merged, mat);
+        const mesh = new THREE.Mesh(merged, this.materials[kind]);
+        mesh.renderOrder = RENDER_ORDER[kind];
+        // The viewmodel is always on screen; skip per-part frustum tests.
+        mesh.frustumCulled = false;
         b.obj.add(mesh);
         disposables.push(merged);
         this.triangles += merged.attributes.position.count / 3;
@@ -295,28 +313,42 @@ function flipWinding(g: THREE.BufferGeometry) {
   }
 }
 
-/** Box-projected UVs in metres (consistent texel density on every part). */
+/**
+ * Box-projected UVs in metres (consistent texel density on every part). The
+ * projection axis is chosen per triangle from its face normal, so a triangle
+ * never straddles two projections.
+ */
 function boxUV(g: THREE.BufferGeometry) {
   const p = g.attributes.position;
-  const n = g.attributes.normal;
   const uv = new Float32Array(p.count * 2);
-  for (let i = 0; i < p.count; i++) {
-    const ax = Math.abs(n.getX(i));
-    const ay = Math.abs(n.getY(i));
-    const az = Math.abs(n.getZ(i));
-    let u: number, v: number;
-    if (ax >= ay && ax >= az) {
-      u = p.getZ(i);
-      v = p.getY(i);
-    } else if (ay >= az) {
-      u = p.getX(i);
-      v = p.getZ(i);
-    } else {
-      u = p.getX(i);
-      v = p.getY(i);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  for (let t = 0; t + 2 < p.count; t += 3) {
+    a.fromBufferAttribute(p, t);
+    b.fromBufferAttribute(p, t + 1).sub(a);
+    c.fromBufferAttribute(p, t + 2).sub(a);
+    b.cross(c);
+    const ax = Math.abs(b.x);
+    const ay = Math.abs(b.y);
+    const az = Math.abs(b.z);
+    const mode = ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
+    for (let k = 0; k < 3; k++) {
+      const i = t + k;
+      let u: number, v: number;
+      if (mode === 0) {
+        u = p.getZ(i);
+        v = p.getY(i);
+      } else if (mode === 1) {
+        u = p.getX(i);
+        v = p.getZ(i);
+      } else {
+        u = p.getX(i);
+        v = p.getY(i);
+      }
+      uv[i * 2] = u * UV_SCALE;
+      uv[i * 2 + 1] = v * UV_SCALE;
     }
-    uv[i * 2] = u * UV_SCALE;
-    uv[i * 2 + 1] = v * UV_SCALE;
   }
   g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
 }

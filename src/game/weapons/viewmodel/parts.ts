@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { type GeoBuilder, type P2, circle, extrude, latheZ, place, rrect, shape, slot } from "./geo";
-import type { ViewmodelMaterials } from "./materials";
+import type { Surf, ViewmodelMaterials } from "./materials";
 
 /** Builder + materials, passed to every part function. */
 export type Kit = { b: GeoBuilder; m: ViewmodelMaterials };
@@ -11,7 +11,7 @@ export type Kit = { b: GeoBuilder; m: ViewmodelMaterials };
  */
 
 /** Picatinny-style rail: dovetail base + cross-slotted teeth. Top surface at yTop. */
-export function rail(k: Kit, mat: THREE.Material, z0: number, z1: number, yTop: number, w = 0.021, x = 0) {
+export function rail(k: Kit, mat: Surf, z0: number, z1: number, yTop: number, w = 0.021, x = 0) {
   const yb = yTop - 0.0076;
   const hw = w / 2;
   k.b.section(mat, [[-hw + 0.002, yb], [hw - 0.002, yb], [hw, yb + 0.0022], [hw - 0.002, yb + 0.0043], [-hw + 0.002, yb + 0.0043], [-hw, yb + 0.0022]], z0, z1, { bev: 0.0005, x });
@@ -24,7 +24,7 @@ export function rail(k: Kit, mat: THREE.Material, z0: number, z1: number, yTop: 
 }
 
 /** Rail along the side of a part (rotated 90° about Z). */
-export function sideRail(k: Kit, mat: THREE.Material, z0: number, z1: number, xOut: number, y: number, w = 0.019) {
+export function sideRail(k: Kit, mat: Surf, z0: number, z1: number, xOut: number, y: number, w = 0.019) {
   const s = Math.sign(xOut);
   const len = Math.abs(z1 - z0);
   const n = Math.max(1, Math.floor(len / 0.01));
@@ -34,7 +34,7 @@ export function sideRail(k: Kit, mat: THREE.Material, z0: number, z1: number, xO
 }
 
 /** Side plate with M-LOK-style slots. */
-export function slottedPlate(k: Kit, mat: THREE.Material, z0: number, z1: number, y0: number, y1: number, x: number, thick: number, slots: number, slotLen = 0.03) {
+export function slottedPlate(k: Kit, mat: Surf, z0: number, z1: number, y0: number, y1: number, x: number, thick: number, slots: number, slotLen = 0.03) {
   const holes: P2[][] = [];
   const zFront = Math.min(z0, z1);
   const zBack = Math.max(z0, z1);
@@ -48,7 +48,7 @@ export function slottedPlate(k: Kit, mat: THREE.Material, z0: number, z1: number
 }
 
 /** Bottom plate with slots (shape drawn in (x, z), extruded along Y). */
-export function slottedFloor(k: Kit, mat: THREE.Material, z0: number, z1: number, w: number, y: number, thick: number, slots: number) {
+export function slottedFloor(k: Kit, mat: Surf, z0: number, z1: number, w: number, y: number, thick: number, slots: number) {
   const zFront = Math.min(z0, z1);
   const zBack = Math.max(z0, z1);
   const pitch = (zBack - zFront) / slots;
@@ -65,19 +65,19 @@ export function slottedFloor(k: Kit, mat: THREE.Material, z0: number, z1: number
 }
 
 /** Hollow-ish tube (outer + inner wall) along Z. */
-export function tube(k: Kit, mat: THREE.Material, ro: number, ri: number, z0: number, z1: number, x: number, y: number, seg = 18, bev = 0.0012) {
+export function tube(k: Kit, mat: Surf, ro: number, ri: number, z0: number, z1: number, x: number, y: number, seg = 18, bev = 0.0012) {
   const zf = Math.min(z0, z1);
   const zb = Math.max(z0, z1);
   k.b.lathe(mat, [[ri, zb], [ro - bev, zb], [ro, zb - bev], [ro, zf + bev], [ro - bev, zf], [ri, zf], [ri, zb]], x, y, { seg });
 }
 
 /** Barrel with a slight taper from r0 (rear) to r1 (front). */
-export function barrel(k: Kit, mat: THREE.Material, zRear: number, zFront: number, y: number, r0: number, r1: number) {
+export function barrel(k: Kit, mat: Surf, zRear: number, zFront: number, y: number, r0: number, r1: number) {
   k.b.lathe(mat, [[0, zRear], [r0, zRear], [r0, zRear - 0.02], [r1, zFront + 0.002], [r1 - 0.0012, zFront], [r1 * 0.45, zFront], [r1 * 0.45, zFront + 0.006], [0, zFront + 0.006]], 0, y, { seg: 16 });
 }
 
 /** Three-port muzzle brake (lathe body + dark side ports). */
-export function muzzleBrake(k: Kit, mat: THREE.Material, zRear: number, y: number, r: number, len: number) {
+export function muzzleBrake(k: Kit, mat: Surf, zRear: number, y: number, r: number, len: number) {
   const zf = zRear - len;
   k.b.lathe(mat, [
     [0, zRear], [r * 0.8, zRear], [r * 0.8, zRear - 0.004], [r, zRear - 0.006], [r, zf + 0.004], [r - 0.002, zf], [r * 0.45, zf], [r * 0.45, zf + 0.004], [0, zf + 0.004],
@@ -91,7 +91,7 @@ export function muzzleBrake(k: Kit, mat: THREE.Material, zRear: number, y: numbe
 }
 
 /** Birdcage-style flash hider (prongs). */
-export function flashHider(k: Kit, mat: THREE.Material, zRear: number, y: number, r: number, len: number) {
+export function flashHider(k: Kit, mat: Surf, zRear: number, y: number, r: number, len: number) {
   const zf = zRear - len;
   k.b.lathe(mat, [[0, zRear], [r * 0.85, zRear], [r, zRear - 0.004], [r, zRear - len * 0.35], [r * 0.9, zRear - len * 0.4], [0, zRear - len * 0.4]], 0, y, { seg: 14 });
   for (let i = 0; i < 4; i++) {
@@ -101,7 +101,7 @@ export function flashHider(k: Kit, mat: THREE.Material, zRear: number, y: number
 }
 
 /** Trigger guard loop + curved trigger blade. Guard top at yTop, trigger at zt. */
-export function triggerGroup(k: Kit, mat: THREE.Material, trigMat: THREE.Material, zBack: number, zFront: number, yTop: number, depth = 0.022, thick = 0.011) {
+export function triggerGroup(k: Kit, mat: Surf, trigMat: Surf, zBack: number, zFront: number, yTop: number, depth = 0.022, thick = 0.011) {
   const yb = yTop - depth;
   const outer: P2[] = [[zBack, yTop], [zBack + 0.002, yb + 0.006], [zBack - 0.006, yb], [zFront + 0.004, yb], [zFront, yb + 0.004], [zFront, yTop]];
   const inner: P2[] = [[zBack - 0.004, yTop + 0.001], [zBack - 0.004, yb + 0.008], [zBack - 0.009, yb + 0.0035], [zFront + 0.006, yb + 0.0035], [zFront + 0.0035, yb + 0.006], [zFront + 0.0035, yTop + 0.001]];
@@ -124,7 +124,7 @@ export function triggerGroup(k: Kit, mat: THREE.Material, trigMat: THREE.Materia
  * Pistol grip with finger ridges, drawn from the top attach point running
  * down/back at `rake` radians. Returns the grip axis (top → bottom) for the hand.
  */
-export function pistolGrip(k: Kit, mat: THREE.Material, zTop: number, yTop: number, len: number, rake: number, depth = 0.034, thick = 0.03) {
+export function pistolGrip(k: Kit, mat: Surf, zTop: number, yTop: number, len: number, rake: number, depth = 0.034, thick = 0.03) {
   const dz = Math.sin(rake);
   const dy = -Math.cos(rake);
   const pts: P2[] = [];
@@ -150,7 +150,7 @@ export function pistolGrip(k: Kit, mat: THREE.Material, zTop: number, yTop: numb
 }
 
 /** Curved box magazine (local origin = top centre). Body below y = 0. */
-export function boxMag(k: Kit, mat: THREE.Material, depth: number, len: number, curve: number, width: number, opts: { ribs?: boolean; rounds?: THREE.Material; plate?: THREE.Material; window?: boolean } = {}) {
+export function boxMag(k: Kit, mat: Surf, depth: number, len: number, curve: number, width: number, opts: { ribs?: boolean; rounds?: Surf; plate?: Surf; window?: boolean } = {}) {
   const n = 8;
   const back: P2[] = [];
   const front: P2[] = [];
@@ -182,7 +182,7 @@ export function boxMag(k: Kit, mat: THREE.Material, depth: number, len: number, 
 }
 
 /** Collapsible stock body (side profile) + rubber pad. */
-export function stock(k: Kit, mat: THREE.Material, pad: THREE.Material, z0: number, yTop: number, len: number, h: number, thick = 0.036) {
+export function stock(k: Kit, mat: Surf, pad: Surf, z0: number, yTop: number, len: number, h: number, thick = 0.036) {
   const z1 = z0 + len;
   const pts: P2[] = [
     [z0, yTop - 0.003], [z0 + len * 0.35, yTop + 0.004], [z1 - 0.004, yTop + 0.004], [z1, yTop], [z1, yTop - h], [z1 - 0.012, yTop - h - 0.003],
@@ -220,7 +220,7 @@ export function redDot(k: Kit, zc: number, railTop: number) {
   // Glass + reticle.
   const lens = new THREE.CircleGeometry(ro - 0.0024, 20);
   b.add(m.lens, lens, place(0, 0, zc - L / 2 + 0.008));
-  const dot = new THREE.CircleGeometry(0.00075, 10);
+  const dot = new THREE.CircleGeometry(0.0011, 12);
   b.add(m.reticleRed, dot, place(0, 0, zc - L / 2 + 0.0085));
   return { eye: zc + L / 2 };
 }
@@ -262,7 +262,7 @@ export function prismSight(k: Kit, zc: number, railTop: number) {
   const { b, m } = k;
   const L = 0.075;
   // Body: chamfered box housing around the axis + objective/eyepiece tubes.
-  b.section(m.anodized, rrect(0.036, 0.034, 0.008, 0, -0.002, 3), zc + L * 0.2, zc - L * 0.25, { bev: 0.002 });
+  b.section(m.anodized, rrect(0.038, 0.037, 0.008, 0, -0.001, 3), zc + L * 0.2, zc - L * 0.25, { bev: 0.002, holes: [circle(0.0128, 0, 0, 24)] });
   tube(k, m.anodized, 0.0185, 0.0155, zc - L * 0.25, zc - L * 0.5, 0, 0, 22, 0.0012);
   tube(k, m.rubber, 0.019, 0.015, zc + L * 0.5, zc + L * 0.2, 0, 0, 22, 0.002);
   // Base down to the rail with cross-bolt.
@@ -280,50 +280,120 @@ export function prismSight(k: Kit, zc: number, railTop: number) {
   return { eye: zc + L * 0.5 };
 }
 
-/** Variable-power rifle scope: bells, saddle, turrets, rings. */
+/**
+ * Variable-power rifle scope: sunshade + objective bell with a coated lens
+ * set deep in a dark tube, saddle with knurled turrets, power ring + throw
+ * lever, ocular with eyepiece rubber, flip-up caps (open), cantilever rings.
+ */
 export function rifleScope(k: Kit, zc: number, railTop: number) {
   const { b, m } = k;
   const r = 0.0152;
+  const zObj = zc - 0.17;
+  const zEye = zc + 0.125;
+  // Main body: sunshade, objective bell, main tube, erector, power ring seat, ocular bell.
   b.lathe(m.anodized, [
-    [0.0225, zc - 0.155], [0.0245, zc - 0.152], [0.0245, zc - 0.12], [0.023, zc - 0.112], [r, zc - 0.085], [r, zc + 0.03],
-    [0.0175, zc + 0.04], [0.0185, zc + 0.05], [0.0185, zc + 0.07], [0.0205, zc + 0.08], [0.0205, zc + 0.115], [0.019, zc + 0.12], [0.017, zc + 0.12],
-    [0.017, zc + 0.115], [0.0, zc + 0.115],
-  ], 0, 0, { seg: 20 });
-  // Power ring knurl + throw lever.
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    b.box(m.rubber, 0.003, 0.002, 0.016, Math.cos(a) * 0.0192, Math.sin(a) * 0.0192, zc + 0.06, { rz: a + Math.PI / 2, bev: 0.0005 });
-  }
-  b.box(m.anodized, 0.004, 0.012, 0.006, 0.02, 0.006, zc + 0.06, { bev: 0.001, rz: -0.6 });
-  // Objective rim (front) inside the bell.
-  b.lathe(m.anodized, [[0.0225, zc - 0.155], [0.0205, zc - 0.155], [0.0205, zc - 0.145], [0.0225, zc - 0.145]], 0, 0, { seg: 24 });
-  b.add(m.lensCoated, new THREE.CircleGeometry(0.0207, 24), place(0, 0, zc - 0.146, { ry: Math.PI }));
-  b.add(m.lens, new THREE.CircleGeometry(0.0172, 24), place(0, 0, zc + 0.114));
-  // Saddle + turrets (elevation top, windage right, parallax left).
+    [0.0262, zObj], [0.0268, zObj + 0.003], [0.0268, zc - 0.135], [0.0258, zc - 0.132], [0.0258, zc - 0.118], [0.024, zc - 0.11], [r, zc - 0.083], [r, zc + 0.03],
+    [0.0172, zc + 0.04], [0.0178, zc + 0.05], [0.0178, zc + 0.074], [0.0198, zc + 0.084], [0.0204, zc + 0.112], [0.0196, zEye], [0.0175, zEye],
+  ], 0, 0, { seg: 28 });
+  // Sunshade seam + objective retaining ring.
+  b.lathe(m.knurled, [[0.0272, zc - 0.138], [0.0272, zc - 0.131]], 0, 0, { seg: 28 });
+  b.lathe(m.anodized, [[0.0262, zObj], [0.0236, zObj + 0.001], [0.0236, zObj + 0.014], [0.0222, zObj + 0.016]], 0, 0, { seg: 28 });
+  // Deep coated objective: dark tube interior, lens set back from the shade.
+  b.lathe(m.tubeInterior, [[0.0222, zObj + 0.016], [0.0222, zObj + 0.03], [0.0, zObj + 0.03]], 0, 0, { seg: 24 });
+  b.add(m.lensCoated, new THREE.CircleGeometry(0.0222, 32), place(0, 0, zObj + 0.022, { ry: Math.PI }));
+  b.add(m.lensCoated, new THREE.CircleGeometry(0.0222, 32), place(0, 0, zObj + 0.022));
+  // Power ring: knurled grip band + throw lever; fine index line in paint.
+  b.lathe(m.knurled, [[0.0186, zc + 0.052], [0.0192, zc + 0.054], [0.0192, zc + 0.07], [0.0186, zc + 0.072]], 0, 0, { seg: 28 });
+  b.box(m.anodized, 0.004, 0.013, 0.007, 0.0205, 0.007, zc + 0.062, { bev: 0.0012, rz: -0.6 });
+  b.box(m.paint, 0.0008, 0.003, 0.0006, 0, 0.0179, zc + 0.049, { bev: 0 });
+  // Eyepiece: rubber ring + ocular glass (dark with a coloured sheen) recessed.
+  b.lathe(m.rubber, [[0.0175, zEye], [0.0208, zEye - 0.002], [0.0212, zEye + 0.004], [0.0198, zEye + 0.008], [0.0172, zEye + 0.008]], 0, 0, { seg: 24 });
+  b.lathe(m.tubeInterior, [[0.0172, zEye + 0.008], [0.0172, zEye - 0.01], [0, zEye - 0.01]], 0, 0, { seg: 20 });
+  b.add(m.lensCoatedAmber, new THREE.CircleGeometry(0.0172, 28), place(0, 0, zEye - 0.002));
+  // Flip-up caps, both open: objective cap swung up, ocular cap swung to the side.
+  b.lathe(m.polymer, [[0.0272, zObj - 0.002], [0.0282, zObj - 0.002], [0.0282, zObj + 0.008], [0.0272, zObj + 0.008]], 0, 0, { seg: 24 });
+  b.add(m.polymer, extrude(shape(circle(0.026, 0, 0, 22)), 0.004, { bev: 0.0012 }), place(0, 0.053, zObj + 0.002, { rx: -0.25 }));
+  b.box(m.polymer, 0.008, 0.008, 0.006, 0, 0.029, zObj + 0.002, { bev: 0.0015 });
+  b.lathe(m.polymer, [[0.0212, zEye - 0.006], [0.0222, zEye - 0.006], [0.0222, zEye + 0.004], [0.0212, zEye + 0.004]], 0, 0, { seg: 24 });
+  b.add(m.polymer, extrude(shape(circle(0.021, 0, 0, 20)), 0.0035, { bev: 0.001 }), place(-0.044, 0.004, zEye + 0.006, { ry: 1.35 }));
+  // Saddle + turrets (elevation top, windage right, parallax left), knurled caps.
   b.section(m.anodized, rrect(0.036, 0.036, 0.009, 0, 0, 3), zc - 0.035, zc + 0.005, { bev: 0.0025 });
   const turret = (x: number, y: number, rx: number, ry: number, rad: number, h: number) => {
-    b.lathe(m.anodized, [[0, 0], [rad, 0], [rad, -h * 0.85], [rad - 0.0015, -h], [0, -h]], x, y, { seg: 16, rx, ry, z: zc - 0.015 });
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const ox = Math.cos(a) * rad;
-      const oy = Math.sin(a) * rad;
-      if (rx) b.box(m.anodized, 0.0018, h * 0.5, 0.0018, x + ox, y + h * 0.55, zc - 0.015 + oy);
-      else b.box(m.anodized, h * 0.5, 0.0018, 0.0018, x + Math.sign(x) * h * 0.55, y + ox, zc - 0.015 + oy);
-    }
+    b.lathe(m.anodized, [[0, 0], [rad * 0.85, 0], [rad * 0.85, -h * 0.35]], x, y, { seg: 20, rx, ry, z: zc - 0.015 });
+    b.lathe(m.knurled, [[rad * 0.85, -h * 0.35], [rad, -h * 0.38], [rad, -h * 0.9], [rad - 0.0015, -h], [0, -h]], x, y, { seg: 24, rx, ry, z: zc - 0.015 });
   };
-  turret(0, 0.018, Math.PI / 2, 0, 0.0105, 0.016);
-  turret(0.018, 0, 0, -Math.PI / 2, 0.0095, 0.013);
-  turret(-0.018, 0, 0, Math.PI / 2, 0.0085, 0.01);
-  // Rings + mount bases.
+  turret(0, 0.018, Math.PI / 2, 0, 0.0108, 0.017);
+  turret(0.018, 0, 0, -Math.PI / 2, 0.0098, 0.014);
+  turret(-0.018, 0, 0, Math.PI / 2, 0.0088, 0.011);
+  // Zero index marks (paint) on the turret skirts.
+  b.box(m.paint, 0.0008, 0.0036, 0.0006, 0, 0.026, zc - 0.0046, { bev: 0 });
+  b.box(m.paint, 0.0006, 0.0008, 0.0036, 0.026, 0.0, zc - 0.0046, { bev: 0 });
+  // Rings: split caps with screws, clamp bases onto the rail.
   for (const z of [zc - 0.07, zc + 0.022]) {
-    const ro = r + 0.004;
-    b.lathe(m.anodized, [[r, z + 0.008], [ro, z + 0.008], [ro + 0.0005, z], [ro, z - 0.008], [r, z - 0.008]], 0, 0, { seg: 20 });
-    b.profile(m.anodized, [[z + 0.009, railTop], [z - 0.009, railTop], [z - 0.007, -r - 0.002], [z + 0.007, -r - 0.002]], 0.02, 0, { bev: 0.0012 });
-    b.box(m.steel, 0.026, 0.005, 0.01, 0, railTop + 0.0025, z, { bev: 0.0009 });
-    b.cyl(m.steel, 0.0022, z - 0.003, z + 0.003, ro + 0.001, 0.006, 8, { ry: Math.PI / 2 });
-    b.cyl(m.steel, 0.0022, z - 0.003, z + 0.003, -ro - 0.001, 0.006, 8, { ry: Math.PI / 2 });
+    const ro = r + 0.0042;
+    b.lathe(m.anodized, [[r, z + 0.009], [ro, z + 0.009], [ro + 0.0006, z], [ro, z - 0.009], [r, z - 0.009]], 0, 0, { seg: 28 });
+    b.profile(m.anodized, [[z + 0.01, railTop], [z - 0.01, railTop], [z - 0.0075, -r - 0.002], [z + 0.0075, -r - 0.002]], 0.021, 0, { bev: 0.0012 });
+    b.box(m.steel, 0.027, 0.005, 0.011, 0, railTop + 0.0025, z, { bev: 0.0009 });
+    for (const sx of [-1, 1]) {
+      screwX(k, sx * (ro + 0.0004), 0.007, z - 0.004, 0.0021);
+      screwX(k, sx * (ro + 0.0004), 0.007, z + 0.004, 0.0021);
+    }
+    b.cyl(m.steel, 0.0032, z - 0.004, z + 0.004, 0.0142, railTop + 0.003, 10, { ry: Math.PI / 2 });
   }
-  return { eye: zc + 0.12 };
+  return { eye: zEye + 0.008 };
+}
+
+/**
+ * Suppressor: knurled QD mount, long can with wrench flats, front cap with a
+ * stepped bore, and a fabric heat cover strapped over the rear two-thirds.
+ */
+export function suppressor(k: Kit, zRear: number, y: number, r: number, len: number) {
+  const { b, m } = k;
+  const zf = zRear - len;
+  // QD mount collar (knurled) + locking ring.
+  b.lathe(m.knurled, [[0, zRear], [r * 0.82, zRear], [r * 0.95, zRear - 0.004], [r * 0.95, zRear - 0.03], [0, zRear - 0.03]], 0, y, { seg: 24 });
+  b.lathe(m.steel, [[r * 0.95, zRear - 0.03], [r, zRear - 0.032], [r, zRear - 0.038], [r * 0.97, zRear - 0.04]], 0, y, { seg: 24 });
+  // Main can.
+  b.lathe(m.cerakoteDark, [[r * 0.97, zRear - 0.04], [r, zRear - 0.042], [r, zf + 0.022], [r * 0.985, zf + 0.02]], 0, y, { seg: 28 });
+  // Front cap: knurled band, chamfer, stepped bore with a dark throat.
+  b.lathe(m.knurled, [[r * 0.985, zf + 0.02], [r * 1.005, zf + 0.018], [r * 1.005, zf + 0.006], [r * 0.95, zf + 0.002], [r * 0.6, zf], [r * 0.42, zf], [r * 0.4, zf + 0.003]], 0, y, { seg: 28 });
+  b.lathe(m.tubeInterior, [[r * 0.4, zf + 0.003], [r * 0.3, zf + 0.008], [0, zf + 0.008]], 0, y, { seg: 16 });
+  // Wrench flats on the front cap.
+  for (const sx of [-1, 1]) b.box(m.steel, 0.002, r * 0.9, 0.01, sx * (r * 0.92), y, zf + 0.012, { bev: 0.0004 });
+  // Heat cover (fabric) with two straps and a hook-and-loop seam on top.
+  const zc0 = zRear - 0.05;
+  const zc1 = zf + 0.045;
+  b.lathe(m.canvas, [[r + 0.0002, zc0], [r + 0.0022, zc0 - 0.003], [r + 0.0026, (zc0 + zc1) / 2], [r + 0.0022, zc1 + 0.003], [r + 0.0002, zc1]], 0, y, { seg: 28 });
+  for (const z of [zc0 - 0.012, zc1 + 0.012]) {
+    b.lathe(m.polymer, [[r + 0.0026, z + 0.005], [r + 0.0036, z + 0.004], [r + 0.0036, z - 0.004], [r + 0.0026, z - 0.005]], 0, y, { seg: 28 });
+  }
+  b.box(m.canvas, 0.006, 0.002, Math.abs(zc1 - zc0) - 0.01, 0, y + r + 0.0026, (zc0 + zc1) / 2, { bev: 0.0006 });
+}
+
+/** Socket-head screw facing ±X (flush with a side face at x). */
+export function screwX(k: Kit, x: number, y: number, z: number, r = 0.0018) {
+  const s = Math.sign(x) || 1;
+  k.b.add(k.m.steel, latheZ([[0, 0], [r, 0], [r, -r * 0.5], [r * 0.85, -r * 0.7], [r * 0.45, -r * 0.7], [r * 0.45, -r * 0.4], [0, -r * 0.4]], 10), place(x, y, z, { ry: -s * Math.PI / 2 }));
+}
+
+/** Socket-head screw facing +Y / -Y. */
+export function screwY(k: Kit, x: number, y: number, z: number, r = 0.0018, down = false) {
+  k.b.add(k.m.steel, latheZ([[0, 0], [r, 0], [r, -r * 0.5], [r * 0.85, -r * 0.7], [r * 0.45, -r * 0.7], [r * 0.45, -r * 0.4], [0, -r * 0.4]], 10), place(x, y, z, { rx: down ? Math.PI / 2 : -Math.PI / 2 }));
+}
+
+/**
+ * Text-free fire-control markings on the left of the receiver: painted dots
+ * and an arc of tick marks around the selector.
+ */
+export function selectorMarks(k: Kit, x: number, y: number, z: number) {
+  const { b, m } = k;
+  const s = Math.sign(x) || -1;
+  b.add(m.paint, new THREE.CircleGeometry(0.0012, 8), place(x + s * 0.0002, y + 0.008, z - 0.003, { ry: s * Math.PI / 2 }));
+  b.add(m.paintRed, new THREE.CircleGeometry(0.0012, 8), place(x + s * 0.0002, y - 0.002, z - 0.011, { ry: s * Math.PI / 2 }));
+  for (let i = 0; i < 3; i++) {
+    const a = -0.6 + i * 0.6;
+    b.add(m.paint, new THREE.PlaneGeometry(0.0004, 0.0024), place(x + s * 0.0002, y + Math.cos(a) * 0.009, z - Math.sin(a) * 0.009, { ry: s * Math.PI / 2, rx: a }));
+  }
 }
 
 /** Low-profile folded backup sights (rear + front). */
@@ -336,7 +406,7 @@ export function foldedIrons(k: Kit, zRear: number, zFront: number, railTop: numb
 }
 
 /** Aperture rear sight with protective ears; aperture centred on the sight line. */
-export function apertureRear(k: Kit, mat: THREE.Material, z: number, baseY: number, ringR = 0.0042) {
+export function apertureRear(k: Kit, mat: Surf, z: number, baseY: number, ringR = 0.0042) {
   const { b } = k;
   const hole = circle(ringR * 0.55, 0, 0, 14);
   b.section(mat, circle(ringR + 0.003, 0, 0, 16), z + 0.002, z - 0.002, { bev: 0.0006, holes: [hole] });
@@ -346,7 +416,7 @@ export function apertureRear(k: Kit, mat: THREE.Material, z: number, baseY: numb
 }
 
 /** Front post with wings; post tip exactly on the sight line. */
-export function frontPost(k: Kit, mat: THREE.Material, z: number, baseY: number, insert?: THREE.Material) {
+export function frontPost(k: Kit, mat: Surf, z: number, baseY: number, insert?: Surf) {
   const { b } = k;
   b.box(mat, 0.0024, -baseY, 0.0028, 0, baseY / 2, z, { bev: 0.0004 });
   for (const sx of [-1, 1]) b.profile(mat, [[z + 0.006, baseY], [z - 0.006, baseY], [z - 0.004, 0.002], [z + 0.004, 0.002]], 0.0026, sx * 0.0072, { bev: 0.0005 });
@@ -355,12 +425,12 @@ export function frontPost(k: Kit, mat: THREE.Material, z: number, baseY: number,
 }
 
 /** Rotate a lathe-around-Z geometry part to run along X (helpers for pins). */
-export function pinX(k: Kit, mat: THREE.Material, r: number, len: number, x: number, y: number, z: number) {
+export function pinX(k: Kit, mat: Surf, r: number, len: number, x: number, y: number, z: number) {
   k.b.add(mat, latheZ([[0, len / 2], [r, len / 2], [r, -len / 2], [0, -len / 2]], 8), place(x, y, z, { ry: Math.PI / 2 }));
 }
 
 /** Small flat-faced cylinder pointing along ±X (buttons, screws). */
-export function buttonX(k: Kit, mat: THREE.Material, r: number, h: number, x: number, y: number, z: number) {
+export function buttonX(k: Kit, mat: Surf, r: number, h: number, x: number, y: number, z: number) {
   const s = Math.sign(x) || 1;
   k.b.add(mat, latheZ([[0, 0], [r, 0], [r, -h * 0.8], [r * 0.8, -h], [0, -h]], 10), place(x, y, z, { ry: -s * Math.PI / 2 }));
 }
