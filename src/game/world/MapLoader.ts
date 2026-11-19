@@ -201,7 +201,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
 
   // ---- Set dressing (terrain shape, foliage plan, extra decor) --------------
   const dressing = (def.dressing && DRESSINGS[def.dressing]) || defaultDressing;
-  const plan = dressing({ def, builder, props, style: kit, quality, materials: wm, windTime: atmosphere.windTime });
+  const plan = dressing({ def, builder, props, style: kit, quality, materials: wm, windTime: atmosphere.windTime, addLamp: (p, c, i, d) => { atmosphere.addLamp(p, c, i, d); } });
   builder.ground = plan.terrain.height;
   for (const x of plan.extras ?? []) {
     root.add(x.object);

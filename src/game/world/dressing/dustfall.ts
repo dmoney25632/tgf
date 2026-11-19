@@ -248,6 +248,7 @@ export const dustfall: Dressing = (kit) => {
   for (let i = 0; i < 5; i++) decorBox(kit, { x: -5.2 + i * 0.7, z: -4.65, y: 3.55, w: 0.65, h: 0.34, d: 0.4, color: 0xc4b48e, surface: "sand", style: "sandbags" });
   // Interior: hanging lamp, chairs round the map table, papers and debris on the floor.
   props.place("hanging_industrial_lamp", { x: 0, y: 3.2 - 0.95, z: 0, scale: 0.7 });
+  kit.addLamp?.(new THREE.Vector3(0, 2.0, 0), 0xffd6a0, 4, 9);
   for (const [cx, cz, ry] of [[-1.7, 0.4, 1.4], [1.75, -0.3, -1.7], [0.3, 1.25, 3.0], [-4.2, -1.4, 2.6]] as const) {
     props.place("plastic_monobloc_chair_01", { x: cx, y: 0, z: cz, rotY: ry, scale: 1 });
   }
@@ -297,6 +298,7 @@ export const dustfall: Dressing = (kit) => {
     }
     for (const [lx, lz] of [[12, 18], [18, 21], [24, 15]] as const) {
       props.place("hanging_industrial_lamp", { x: lx, y: h - 1.34, z: lz, scale: 1 });
+      kit.addLamp?.(new THREE.Vector3(lx, h - 1.6, lz), 0xffd29a, 6, 14);
       rod(B, new THREE.Vector3(lx, h, lz), new THREE.Vector3(lx, yTop + 0.1, lz), 0.006, 0x222222);
     }
     // Floor: oily concrete slab with stains, pallets, shelving, gas bottles, jerrycans.

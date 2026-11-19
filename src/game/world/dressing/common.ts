@@ -18,6 +18,8 @@ export type DressingKit = {
   quality: QualityPreset;
   materials: WorldMaterials;
   windTime: { value: number };
+  /** Real (pooled) light sources; register only the few that matter most. */
+  addLamp?: (position: THREE.Vector3, color?: THREE.ColorRepresentation, intensity?: number, distance?: number) => void;
 };
 
 /** A self-contained animated/instanced extra (smoke columns, palms...). */
