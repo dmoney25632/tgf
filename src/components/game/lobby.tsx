@@ -10,6 +10,7 @@ import { OperatorPreview } from "./operator-preview";
 import { SURVIVAL_MAPS } from "@/game/world/maps/registry";
 import { PAD_FOCUS_CSS, useGamepadNav, useInputDevice } from "./gamepad";
 import { PadGlyph } from "./glyph";
+import { normalizeRoomCode } from "@/game/net/transport";
 
 export type LobbyChoice = {
   mode: "survival" | "range";
@@ -102,8 +103,72 @@ function WeaponPicker({ ids, value, onChange, title }: { ids: WeaponId[]; value:
   );
 }
 
+/** Online party hooks for Survival (create / join a squad of real players). */
+export type PartyActions = {
+  /** null = available; otherwise why parties are unavailable (shown instead of the buttons). */
+  unavailable: string | null;
+  onCreate: (c: LobbyChoice) => void;
+  onJoin: (code: string, c: LobbyChoice) => void;
+};
+
+function PartyPanel({ party, choice, notice }: { party: PartyActions; choice: LobbyChoice; notice?: string | null }) {
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <div className="rounded-lg border border-white/15 bg-white/[0.04] p-4">
+      <p className="mb-1 font-mono text-[11px] tracking-[0.25em] text-neutral-400 uppercase">Play with friends</p>
+      <p className="text-sm text-neutral-400">Create a party and share the code, or join a friend&apos;s party. Everyone waits in the party lobby until the host launches.</p>
+      {notice && <p className="mt-3 rounded border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{notice}</p>}
+      {party.unavailable ? (
+        <p className="mt-3 text-xs text-neutral-500">{party.unavailable}</p>
+      ) : (
+        <div className="mt-3 grid gap-2 sm:grid-cols-[auto_1fr]">
+          <button type="button" onClick={() => party.onCreate(choice)} className={cn(buttonVariants({ size: "lg" }), "h-11 font-bold")}>
+            Create party
+          </button>
+          <form
+            className="flex min-w-0 gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = normalizeRoomCode(code);
+              if (!n) return setErr("Party codes are 5 letters/digits, like K7QX2.");
+              setErr(null);
+              party.onJoin(n, choice);
+            }}
+          >
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              maxLength={7}
+              placeholder="CODE"
+              aria-label="Party code"
+              className="h-11 w-full min-w-0 flex-1 rounded-md border border-white/15 bg-black/40 px-3 font-mono text-lg tracking-[0.3em] uppercase outline-none focus:border-white/60"
+            />
+            <button type="submit" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11")}>
+              Join
+            </button>
+          </form>
+          {err && <p className="text-xs text-red-300 sm:col-span-2">{err}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Pre-match lobby: mode, operator (3D preview), loadout, difficulty, squad, wave target. */
-export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initial: LobbyChoice; onDeploy: (c: LobbyChoice) => void }) {
+export function Lobby({
+  callsign,
+  initial,
+  onDeploy,
+  party,
+  notice,
+}: {
+  callsign: string;
+  initial: LobbyChoice;
+  onDeploy: (c: LobbyChoice) => void;
+  party?: PartyActions;
+  notice?: string | null;
+}) {
   const [c, setC] = useState<LobbyChoice>(initial);
   const set = (patch: Partial<LobbyChoice>) => setC((p) => ({ ...p, ...patch }));
   const op = OPERATORS[c.operator];
@@ -199,6 +264,7 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
 
           {/* Loadout + match */}
           <section className="grid gap-5 rounded-xl border border-white/10 bg-black/35 p-5">
+            {survival && party && <PartyPanel party={party} choice={c} notice={notice} />}
             <WeaponPicker title="Primary" ids={PRIMARY_IDS} value={c.primary} onChange={(id) => set({ primary: id })} />
             <WeaponPicker title="Secondary" ids={SECONDARY_IDS} value={c.secondary} onChange={(id) => set({ secondary: id })} />
             {survival && (
@@ -260,11 +326,8 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
             )}
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 gap-2 text-base font-bold tracking-wide")}>
-                Deploy {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
+                {survival && party ? "Play solo" : "Deploy"} {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
               </button>
-              <Link href="/missions" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-12")}>
-                Missions
-              </Link>
               <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
                 Dashboard
               </Link>

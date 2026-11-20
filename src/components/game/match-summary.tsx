@@ -8,7 +8,10 @@ import type { MatchSummary } from "@/game/core/GameMode";
 import { ENEMIES, type EnemyType } from "@/game/survival/config";
 import { PAD_FOCUS_CSS, useGamepadNav } from "./gamepad";
 
-const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const fmtTime = (raw: number) => {
+  const s = Math.max(0, Math.round(raw || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
 const fmt = (n: number) => n.toLocaleString("en-US");
 
 /** End-of-match report with replay / loadout / exit actions. */

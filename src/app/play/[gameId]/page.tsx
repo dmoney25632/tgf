@@ -33,7 +33,14 @@ async function PlayContent({ params }: Pick<PageProps<"/play/[gameId]">, "params
   // Each playable game maps to its own client entry point.
   switch (game.id) {
     case "iron-horizon":
-      return <IronHorizonClient callsign={user.callsign} />;
+      return (
+        <IronHorizonClient
+          callsign={user.callsign}
+          userId={user.offline ? null : user.id}
+          // Offline dev runs parties over the tab-to-tab loopback; a guest on a live deployment can't party.
+          partyTransport={user.offline ? (process.env.NODE_ENV !== "production" ? "local" : null) : "supabase"}
+        />
+      );
     default:
       notFound();
   }

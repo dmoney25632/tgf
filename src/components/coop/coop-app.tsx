@@ -55,6 +55,10 @@ export function CoopApp({
   transport: kind,
   allowLocal = false,
   devParams,
+  start,
+  initialLoadout,
+  initialRoom,
+  onLeave,
 }: {
   userId: string | null;
   callsign: string;
@@ -63,6 +67,13 @@ export function CoopApp({
   allowLocal?: boolean;
   /** DEV harness: query-string overrides (autohost/autojoin/autolaunch/lag/jitter/loss) instead of the URL. */
   devParams?: string;
+  /** Embedded in the main lobby: create (host) or join this party right away, no menu. */
+  start?: { code: string; host: boolean };
+  /** Seed the loadout / host room settings from the main lobby picks. */
+  initialLoadout?: CoopLoadout;
+  initialRoom?: Partial<RoomSettings>;
+  /** Embedded: leaving the party (or failing to join) returns to the main lobby. */
+  onLeave?: (reason: string | null) => void;
 }) {
   const [stage, setStage] = useState<Stage>("menu");
   const [code, setCode] = useState("");
@@ -72,7 +83,7 @@ export function CoopApp({
   const [error, setError] = useState<string | null>(null);
   const [loadout, setLoadout] = useState<CoopLoadout>(DEFAULT_LOADOUT);
   const [ready, setReady] = useState(false);
-  const [settings, setSettings] = useState<RoomSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<RoomSettings>(() => ({ ...DEFAULT_SETTINGS, ...initialRoom, mapId: DEFAULT_SETTINGS.mapId }));
   const [matchStatus, setMatchStatus] = useState<MatchStatus>({ status: "lobby" });
   const [launch, setLaunch] = useState<CoopLaunch | null>(null);
   const [played, setPlayed] = useState<string[]>([]);
@@ -89,7 +100,8 @@ export function CoopApp({
     let saved = DEFAULT_LOADOUT;
     try {
       const raw = window.localStorage.getItem(LOADOUT_KEY);
-      if (raw) saved = { ...DEFAULT_LOADOUT, ...(JSON.parse(raw) as Partial<CoopLoadout>) };
+      if (initialLoadout) saved = initialLoadout;
+      else if (raw) saved = { ...DEFAULT_LOADOUT, ...(JSON.parse(raw) as Partial<CoopLoadout>) };
     } catch {
       // Storage blocked: defaults.
     }
@@ -106,6 +118,7 @@ export function CoopApp({
         if (h || j) setAuto({ code: (h ?? j)!, host: !!h, launchAt: Number(params.get("autolaunch")) || 0 });
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLoadout is a mount-time seed
   }, [kind, allowLocal, devParams]);
 
   const hostMeta = peers.find((p) => p.host) ?? null;
@@ -151,7 +164,8 @@ export function CoopApp({
     setReady(false);
     setMatchStatus({ status: "lobby" });
     setError(reason);
-  }, []);
+    onLeave?.(reason);
+  }, [onLeave]);
 
   useEffect(() => () => transportRef.current?.close(), []);
 
@@ -187,7 +201,8 @@ export function CoopApp({
       setIdentity({ id, name });
       setIsHost(host);
       setCode(roomCode);
-      setReady(false);
+      // Joiners are ready as soon as they arrive: the host just hits Launch.
+      setReady(!host);
       setStage("lobby");
       if (!host) {
         window.setTimeout(() => {
@@ -204,9 +219,20 @@ export function CoopApp({
       transportRef.current?.close();
       transportRef.current = null;
       setStage("menu");
-      setError(e instanceof Error ? e.message : "Couldn't connect.");
+      const msg = e instanceof Error ? e.message : "Couldn't connect.";
+      setError(msg);
+      onLeave?.(msg);
     }
   };
+
+  // ---- Embedded: create / join straight away -----------------------------------------
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!start || startedRef.current) return;
+    startedRef.current = true;
+    queueMicrotask(() => void connect(start.code, start.host));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
+  }, [start]);
 
   // ---- DEV harness automation --------------------------------------------------------
   useEffect(() => {
@@ -278,7 +304,7 @@ export function CoopApp({
 
   const backToLobby = () => {
     setLaunch(null);
-    setReady(false);
+    setReady(!isHost);
     if (isHost) setMatchStatus({ status: "lobby" });
     setStage("lobby");
   };
@@ -295,18 +321,24 @@ export function CoopApp({
     return <CoopGame key={launch.matchId} launch={launch} transport={transport} loadout={loadout} callsign={identity?.name ?? callsign} onExit={backToLobby} />;
   }
 
-  const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/coop?room=${code}${useLocal ? "&transport=local" : ""}` : "";
+  const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/play/iron-horizon?room=${code}${useLocal ? "&transport=local" : ""}` : "";
 
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,.07)_0%,transparent_60%)] px-4 py-8 text-neutral-100">
       <div className="mx-auto max-w-4xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Online co-op</p>
-            <h1 className="mt-1 text-3xl font-bold">Survival Squad</h1>
-            <p className="mt-1 text-sm text-neutral-400">2–4 players hold the outpost together. Signed in as {identity?.name ?? callsign}.</p>
+            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Survival party</p>
+            <h1 className="mt-1 text-3xl font-bold">{stage === "lobby" ? (isHost ? "Your party" : "Party lobby") : "Survival Squad"}</h1>
+            <p className="mt-1 text-sm text-neutral-400">
+              {stage === "lobby"
+                ? isHost
+                  ? "Share the code below. Friends who join show up here, then hit Launch to start together."
+                  : "You're in. Pick your loadout — the host starts the match."
+                : `2–4 players hold the outpost together. Signed in as ${identity?.name ?? callsign}.`}
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className={cn("flex gap-2", start && "hidden")}>
             <Link href="/play/iron-horizon" className={buttonVariants({ variant: "outline", size: "sm" })}>
               Solo
             </Link>
@@ -324,7 +356,13 @@ export function CoopApp({
         )}
         {error && <p className="mt-4 rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
 
-        {(stage === "menu" || stage === "connecting") && (
+        {start && stage !== "lobby" && (
+          <p className="mt-10 text-center font-mono text-sm tracking-[0.3em] text-neutral-400 uppercase">
+            {start.host ? "Creating party…" : `Joining party ${start.code}…`}
+          </p>
+        )}
+
+        {!start && (stage === "menu" || stage === "connecting") && (
           <div className="mt-8 grid gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-white/10 bg-neutral-950/80 p-6">
               <h2 className="text-lg font-semibold">Host a room</h2>
@@ -448,7 +486,7 @@ export function CoopApp({
               <Label>Operator</Label>
               <div className="flex flex-wrap gap-1.5">
                 {OPERATOR_IDS.map((id: OperatorId) => (
-                  <Pill key={id} active={loadout.operator === id} disabled={ready} onClick={() => setLoadout((l) => ({ ...l, operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary }))}>
+                  <Pill key={id} active={loadout.operator === id} onClick={() => setLoadout((l) => ({ ...l, operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary }))}>
                     {OPERATORS[id].name} · {OPERATORS[id].role}
                   </Pill>
                 ))}
@@ -458,7 +496,7 @@ export function CoopApp({
                 <Label>Primary</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {PRIMARY_IDS.map((id: WeaponId) => (
-                    <Pill key={id} active={loadout.primary === id} disabled={ready} onClick={() => setLoadout((l) => ({ ...l, primary: id }))}>
+                    <Pill key={id} active={loadout.primary === id} onClick={() => setLoadout((l) => ({ ...l, primary: id }))}>
                       {WEAPONS[id].name}
                     </Pill>
                   ))}
@@ -468,7 +506,7 @@ export function CoopApp({
                 <Label>Sidearm</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {SECONDARY_IDS.map((id: WeaponId) => (
-                    <Pill key={id} active={loadout.secondary === id} disabled={ready} onClick={() => setLoadout((l) => ({ ...l, secondary: id }))}>
+                    <Pill key={id} active={loadout.secondary === id} onClick={() => setLoadout((l) => ({ ...l, secondary: id }))}>
                       {WEAPONS[id].name}
                     </Pill>
                   ))}
@@ -500,7 +538,7 @@ export function CoopApp({
                   </button>
                 )}
                 <button type="button" onClick={() => leaveRoom()} className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
-                  Leave room
+                  Leave party
                 </button>
               </div>
               {!isHost && hostRoom?.status === "playing" && !rejoinable && (

@@ -8,7 +8,9 @@ import type { LoadTracker } from "@/game/ui/LoadProgress";
 import { detectQuality } from "@/game/config";
 import { loadSettings, sanitizeSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { saveMatch } from "@/app/play/[gameId]/actions";
-import { DEFAULT_CHOICE, Lobby, type LobbyChoice } from "./lobby";
+import { DEFAULT_CHOICE, Lobby, type LobbyChoice, type PartyActions } from "./lobby";
+import { CoopApp } from "@/components/coop/coop-app";
+import { makeRoomCode, normalizeRoomCode } from "@/game/net/transport";
 import { ShopOverlay } from "./shop-overlay";
 import { MatchSummaryView } from "./match-summary";
 import { LoadingScreen } from "./loading-screen";
@@ -38,24 +40,78 @@ function saveLobby(value: LobbyChoice) {
  * Iron Horizon host: lobby → match. The engine (and Three.js) is imported
  * lazily so it never ships with the rest of the site.
  */
-export function IronHorizonClient({ callsign }: { callsign: string }) {
+export function IronHorizonClient({
+  callsign,
+  userId = null,
+  partyTransport = null,
+}: {
+  callsign: string;
+  /** Account id for online parties (null for the offline guest). */
+  userId?: string | null;
+  /** How parties connect; null = parties unavailable (guest on a live deployment). */
+  partyTransport?: "supabase" | "local" | null;
+}) {
   const [choice, setChoice] = useState<LobbyChoice | null>(null);
   const [inGame, setInGame] = useState(false);
   const [run, setRun] = useState(0);
+  const [party, setParty] = useState<{ code: string; host: boolean; key: number } | null>(null);
+  const [partyNotice, setPartyNotice] = useState<string | null>(null);
 
   useEffect(() => {
     // Restore the last lobby picks after mount (localStorage isn't available during SSR).
     const restored = loadLobby();
-    queueMicrotask(() => setChoice(restored));
+    // Invite links (?room=CODE) drop you straight into that party.
+    const room = normalizeRoomCode(new URLSearchParams(window.location.search).get("room") ?? "");
+    queueMicrotask(() => {
+      setChoice(room ? { ...restored, mode: "survival" } : restored);
+      if (room && partyTransport) setParty({ code: room, host: false, key: Date.now() });
+    });
+  }, [partyTransport]);
+
+  const enterParty = useCallback((code: string, host: boolean, c: LobbyChoice) => {
+    saveLobby(c);
+    setChoice(c);
+    setPartyNotice(null);
+    setParty({ code, host, key: Date.now() });
+  }, []);
+
+  const leaveParty = useCallback((reason: string | null) => {
+    setParty(null);
+    setPartyNotice(reason);
+    // Drop ?room= so a reload doesn't rejoin a party you just left.
+    if (window.location.search.includes("room=")) window.history.replaceState(null, "", window.location.pathname);
   }, []);
 
   if (!choice) return <div className="fixed inset-0 bg-black" aria-busy="true" />;
+
+  if (party && partyTransport) {
+    return (
+      <CoopApp
+        key={party.key}
+        userId={partyTransport === "local" ? null : userId}
+        callsign={callsign}
+        transport={partyTransport}
+        start={{ code: party.code, host: party.host }}
+        initialLoadout={{ operator: choice.operator, primary: choice.primary, secondary: choice.secondary }}
+        initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave }}
+        onLeave={leaveParty}
+      />
+    );
+  }
+
+  const partyActions: PartyActions = {
+    unavailable: partyTransport ? null : "Sign in with an account to play online with friends.",
+    onCreate: (c) => enterParty(makeRoomCode(), true, c),
+    onJoin: (code, c) => enterParty(code, false, c),
+  };
 
   if (!inGame) {
     return (
       <Lobby
         callsign={callsign}
         initial={choice}
+        party={partyActions}
+        notice={partyNotice}
         onDeploy={(c) => {
           saveLobby(c);
           setChoice(c);
