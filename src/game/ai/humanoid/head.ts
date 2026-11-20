@@ -189,7 +189,7 @@ function openEyes(pos: Float32Array, uv: Float32Array, n: number) {
     const lo = dv >= 0 ? ht * (1 - smooth(0.004, 0.04, dv)) : 0;
     const w = Math.max(up, lo);
     if (w <= 0) continue;
-    const y = pos[j * 3 + 1] + up * 0.0068 - lo * 0.0016;
+    const y = pos[j * 3 + 1] + up * 0.0058 - lo * 0.0014;
     let z = pos[j * 3 + 2];
     const dx = pos[j * 3] - e.x, dy = y - e.y;
     const r2 = EYE_R * EYE_R - dx * dx - dy * dy;
@@ -264,6 +264,13 @@ float scalp = 1.0 - smoothstep( hl - 0.012, hl + 0.012, fuv.y );
 alb = mix( alb, mix( alb * 0.8, hairC, 0.35 + 0.5 * hairN ), scalp * uHair );
 // Re-tint to the soldier's skin tone.
 alb *= uTone;
+alb = mix( vec3( dot( alb, vec3( 0.2126, 0.7152, 0.0722 ) ) ), alb, 0.86 );
+// Redness on nose, cheeks and ears; faint blue-grey under the eyes.
+float hmRed = ( 1.0 - smoothstep( 0.4, 1.0, hmEll( fuv, vec2( 0.5, 0.39 ), vec2( 0.045, 0.06 ) ) ) )
+	+ ( 1.0 - smoothstep( 0.3, 1.0, hmEll( vec2( dxm, fuv.y ), vec2( 0.1, 0.38 ), vec2( 0.06, 0.05 ) ) ) ) * 0.7;
+alb *= mix( vec3( 1.0 ), vec3( 1.07, 0.93, 0.92 ), clamp( hmRed, 0.0, 1.0 ) * ( 1.0 - uCover * 0.5 ) );
+float hmUnder = ( 1.0 - smoothstep( 0.3, 1.0, hmEll( vec2( dxm, fuv.y ), vec2( 0.072, 0.322 ), vec2( 0.035, 0.014 ) ) ) );
+alb *= mix( vec3( 1.0 ), vec3( 0.9, 0.88, 0.93 ), hmUnder );
 // Occlusion under a helmet / cap brim: brow, eye sockets, temples.
 float under = ( 1.0 - smoothstep( 0.2, 0.36, fuv.y ) ) * ( 1.0 - smoothstep( 0.2, 0.34, dxm ) );
 alb *= 1.0 - uBrim * under * 0.4;
@@ -282,7 +289,7 @@ vec2 ep = vec2( ( vMapUv.x - 2.5 - 2.0 * eSide ) * 2.0, ( vMapUv.y - 0.5 ) * 2.0
 float medial = mix( ep.x, -ep.x, eSide );
 float er = length( ep );
 float ang = atan( ep.y, ep.x );
-vec3 scl = vec3( 0.36, 0.3, 0.26 ) * ( 1.0 - 0.6 * smoothstep( 0.4, 0.9, er ) );
+vec3 scl = vec3( 0.27, 0.225, 0.2 ) * ( 1.0 - 0.65 * smoothstep( 0.35, 0.9, er ) );
 scl = mix( scl, vec3( 0.42, 0.2, 0.17 ), smoothstep( 0.6, 0.92, medial ) * 0.8 ); // caruncle at the inner corner
 scl = mix( scl, vec3( 0.55, 0.22, 0.18 ), 0.25 * smoothstep( 0.6, 0.95, er ) * hmH( floor( vec2( ang * 9.0, er * 6.0 ) ) ) );
 float fib = 0.65 + 0.5 * hmH( vec2( floor( ang * 38.0 ), 3.0 ) ) * ( 0.6 + 0.4 * hmH( floor( vec2( ang * 76.0, er * 22.0 ) ) ) );
@@ -290,7 +297,7 @@ vec3 iris = uIris * fib * ( 0.75 + 0.6 * smoothstep( 0.3, 0.17, er ) ); // brigh
 iris *= 1.0 - 0.75 * smoothstep( 0.36, 0.47, er ); // limbal ring
 vec3 eyeC = mix( scl, iris, 1.0 - smoothstep( 0.46, 0.5, er ) );
 eyeC = mix( eyeC, vec3( 0.004 ), 1.0 - smoothstep( 0.15, 0.18, er ) );
-eyeC *= 1.0 - 0.5 * smoothstep( 0.1, 0.55, ep.y ); // upper-lid shadow
+eyeC *= 1.0 - 0.72 * smoothstep( -0.15, 0.5, ep.y ); // upper-lid shadow (lashes + brow)
 eyeC *= 1.0 - uBrim * 0.35;
 alb = mix( alb, eyeC, eye );
 // Face covering: knit balaclava with an eye slot, or camo face paint.
@@ -311,7 +318,7 @@ float hmCloth = bala;
 
 const FRAG_ROUGH = /* glsl */ `
 float specI = texture2D( uSpec, vMapUv ).g;
-roughnessFactor = mix( 0.66, 0.36, specI );
+roughnessFactor = mix( 0.7, 0.42, specI );
 roughnessFactor = mix( roughnessFactor, mix( 0.45, 0.05, hmCornea ), hmEye );
 roughnessFactor = mix( roughnessFactor, 1.0, hmCloth );
 `;
@@ -342,9 +349,9 @@ export function faceMaterial(look: FaceLook) {
         .replace("#include <lights_physical_pars_fragment>", sssLightsChunk())
         .replace("#include <map_fragment>", "#include <map_fragment>\n" + FRAG_COLOR)
         .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n" + FRAG_ROUGH)
-        .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", "mapN.xy *= normalScale * ( 1.0 - hmEye ) * ( 1.0 - hmCloth * 0.6 );"));
+        .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", "mapN.xy *= normalScale * ( 1.0 - hmEye ) * ( 1.0 - hmCloth * 0.6 );\n\tmapN.xy += ( vec2( hmH( floor( vMapUv * 1900.0 ) ), hmH( floor( vMapUv * 1900.0 ) + 3.7 ) ) - 0.5 ) * 0.22 * ( 1.0 - hmEye ) * ( 1.0 - hmCloth ) * ( 1.0 - smoothstep( 0.5, 1.5, length( fwidth( vMapUv * 1900.0 ) ) ) );"));
   };
-  m.customProgramCacheKey = () => "iron-horizon-face-v3";
+  m.customProgramCacheKey = () => "iron-horizon-face-v4";
   materials.set(key, m);
   return m;
 }

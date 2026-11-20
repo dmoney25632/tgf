@@ -33,7 +33,7 @@ export function sssLightsChunk() {
     .replace(
       "vec3 irradiance = dotNL * directLight.color;",
       `vec3 irradiance = dotNL * directLight.color;
-	vec3 hmW = vec3( 0.62, 0.3, 0.2 ) * hmSssAmt;
+	vec3 hmW = vec3( 0.5, 0.26, 0.18 ) * hmSssAmt;
 	vec3 hmSssIrr = clamp( ( dot( geometryNormal, directLight.direction ) + hmW ) / ( 1.0 + hmW ), 0.0, 1.0 ) * directLight.color;`,
     )
     .replace("reflectedLight.directDiffuse += irradiance * diffuseBRDF", "reflectedLight.directDiffuse += hmSssIrr * diffuseBRDF");
@@ -86,6 +86,8 @@ diffuseColor.rgb *= mix( 1.0, mix( 0.6, 1.04 - hmTack * 0.22, hmStrap ), hmMolle
 // skin: tone x baked multiplier, faint blotching, optional ink line-work
 diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * uSkinTone, hmSkin );
 diffuseColor.rgb *= 1.0 + ( ( hmCm.g - 0.5 ) * 0.06 + hmFibre * 0.05 ) * hmSkin;
+vec4 hmMot = texture2D( camoMap, vCamoUv * 0.9 + 0.17 );
+diffuseColor.rgb *= mix( vec3( 1.0 ), mix( vec3( 0.97, 0.99, 1.0 ), vec3( 1.06, 0.95, 0.93 ), hmMot.r ) * ( 0.96 + 0.08 * hmMot.b ), hmSkin );
 vec4 hmInk = texture2D( camoMap, vCamoUv * 4.0 + 0.31 );
 float hmInkA = ( 1.0 - smoothstep( 0.06, 0.24, abs( hmInk.r - 0.5 ) ) ) + hmInk.b * hmInk.g * 0.7;
 diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.03, 0.04, 0.05 ), clamp( hmInkA, 0.0, 0.8 ) * step( 5.5, hmFab ) * step( hmFab, 6.5 ) );
@@ -96,6 +98,9 @@ hmSssAmt = hmSkin;
 `;
 
 const FRAG_NORMAL = /* glsl */ `mapN.xy *= normalScale * vFabN;
+	// skin: pores and fine creases from two high-frequency taps of the noise atlas
+	vec2 hmPore = ( texture2D( camoMap, vCamoUv * 31.0 ).ag - 0.5 ) * 0.5 + ( texture2D( camoMap, vCamoUv * 11.0 + 0.5 ).ga - 0.5 ) * 0.35;
+	mapN.xy += hmPore * hmSkin;
 	// low-frequency creases on cloth, raised edges on webbing straps
 	vec3 hmFold = texture2D( foldMap, vCamoUv * 2.4 ).xyz * 2.0 - 1.0;
 	mapN.xy += hmFold.xy * 0.75 * vFabN * ( 1.0 - hmMolle );
@@ -133,13 +138,13 @@ export function uberMaterial(skinTone = 0xb08a6a) {
         .replace("#include <color_fragment>", "#include <color_fragment>\n" + FRAG_COLOR)
         .replace(
           "#include <roughnessmap_fragment>",
-          "#include <roughnessmap_fragment>\n\troughnessFactor = clamp( vMat.y * ( 1.0 + hmFibre * 0.25 * vFabN ) + hmMolle * ( 1.0 - hmStrap ) * 0.1, 0.05, 1.0 );",
+          "#include <roughnessmap_fragment>\n\troughnessFactor = clamp( vMat.y * ( 1.0 + hmFibre * 0.25 * vFabN ) + hmMolle * ( 1.0 - hmStrap ) * 0.1, 0.05, 1.0 );\n\troughnessFactor = mix( roughnessFactor, 0.62 + hmFibre * 0.2, hmSkin );",
         )
         .replace("#include <metalnessmap_fragment>", "#include <metalnessmap_fragment>\n\tmetalnessFactor = vMat.z;")
         .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", FRAG_NORMAL))
         .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += hmBase * vMat.w;");
   };
-  m.customProgramCacheKey = () => "iron-horizon-soldier-v3";
+  m.customProgramCacheKey = () => "iron-horizon-soldier-v4";
   ubers.set(skinTone, m);
   return m;
 }
