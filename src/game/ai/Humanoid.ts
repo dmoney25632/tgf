@@ -3,7 +3,7 @@ import { damp, Spring } from "../core/Spring";
 import type { HitPart, Hittable } from "../core/types";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { buildBody, STD_LOOKS, withQuality, type BodyBuild, type FaceSpec, type HitDims, type LookDef } from "./humanoid/body";
-import { disposeHeads, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
+import { disposeHeads, FACE_IDS, faceIdentity, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
 import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
@@ -55,7 +55,7 @@ let toneCounter = 0;
 
 /** Realistic skin tones (sRGB), light to deep. */
 const TONES = [0xecc4a6, 0xdcaa88, 0xc99470, 0xb27c58, 0x96633f, 0x75472b, 0x56341f];
-const IRIS = [0x3a2414, 0x2a1a0e, 0x2e3a40, 0x3a3a22, 0x4a2e18];
+const IRIS = [0x3a2414, 0x2a1a0e, 0x46596a, 0x3a3a22, 0x4a2e18, 0x55636c, 0x3e4a36, 0x2a1a0e];
 
 function hitBox(size: readonly number[]) {
   const k = size.join("|");
@@ -376,8 +376,11 @@ export class Humanoid {
     const t = toneCounter++;
     const tone = look.variant !== undefined ? look.skin : TONES[(t * 3 + 1) % TONES.length];
     const face = geo.face;
+    const faceId = t % FACE_IDS;
     let beard = face?.beard ?? 1;
-    if (face && look.variant === undefined && beard === 1) beard = [1, 0, 2, 1, 1][t % 5];
+    // Kits that leave the face to the soldier (stubble default) take the identity's own facial hair; a short-beard kit may grow a full one.
+    if (face && look.variant === undefined && beard === 1) beard = faceIdentity(faceId).beard;
+    else if (face && look.variant === undefined && beard === 2 && faceIdentity(faceId).beard === 3) beard = 3;
 
     // ---- Skeleton -----------------------------------------------------------
     for (const n of BONES) this.b[n] = new THREE.Bone();
@@ -438,7 +441,7 @@ export class Humanoid {
     this.lod.addLevel(mid, LOD_MID, 0.08);
     this.lod.addLevel(skinned(geo.far, uber, true), LOD_FAR, 0.08);
     if (face) {
-      const fl: FaceLook = { tone, beard, hair: face.hair, cover: face.cover, iris: IRIS[t % IRIS.length], brim: face.brim };
+      const fl: FaceLook = { tone, beard, hair: face.hair, cover: face.cover, iris: IRIS[t % IRIS.length], brim: face.brim, id: faceId };
       onHeadReady((hg) => {
         nearBody.geometry = geo.near;
         near.add(skinned(skinnedHead(hg), faceMaterial(fl), false)); // 17k-tri scan: skip the shadow pass, the helmet/body shadow reads the same
