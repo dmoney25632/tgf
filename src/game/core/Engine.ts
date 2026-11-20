@@ -22,9 +22,11 @@ import { sanitizeSettings, saveSettings, type GameSettings } from "../ui/Setting
 import { glyphContext } from "../ui/Glyphs";
 import { hudSignals } from "../ui/SurvivalHUD";
 import { AimAssist } from "../player/AimAssist";
+import { MobileLayer } from "../mobile/MobileLayer";
 import { Sfx } from "../audio/Sfx";
 import type { EngineContext, EngineEvent, GameMode } from "./GameMode";
 import { RangeMode } from "./RangeMode";
+import { BackgroundTicker } from "./BackgroundTicker";
 import { SurvivalGameMode, type SurvivalConfig } from "../survival/SurvivalGameMode";
 
 export type { GameSettings };
@@ -73,6 +75,7 @@ export class GameEngine {
   private readonly sfx = new Sfx();
   private readonly aimAssist = new AimAssist();
   private readonly assistList: THREE.Object3D[] = [];
+  private readonly mobile: MobileLayer;
   private readonly resizeObserver: ResizeObserver;
   readonly settings: GameSettings;
   readonly mode: GameMode;
@@ -139,6 +142,8 @@ export class GameEngine {
       this.opts.onLockChange?.(engaged);
     };
     this.input.onDeviceChange = () => this.syncGlyphs();
+    // [mobile] Touch controls, rotate/fullscreen, context-loss overlay (inert on desktop).
+    this.mobile = new MobileLayer(container, this.input, this.pipeline.canvas, { settings: () => this.settings, ads: () => this.weapons?.adsAmount ?? 0, assist: () => this.aimAssist.slow });
     this.effects = new EffectsPool(this.scene, preset.maxDecals, preset.maxParticles);
     this.effects.onShellLand = (at, kind, speed) => this.sfx.shellDrop(at, kind, speed);
     this.player = new PlayerController(this.camera, this.map.collision);
@@ -231,8 +236,10 @@ export class GameEngine {
   // ---------------------------------------------------------------------------
 
   start() {
-    this.lastTime = performance.now();
+    this.lastTime = this.lastRafAt = performance.now();
     this.raf = requestAnimationFrame(this.loop);
+    document.addEventListener("visibilitychange", this.onVisibility);
+    this.onVisibility();
   }
 
   /**
@@ -247,6 +254,7 @@ export class GameEngine {
     // with WrongDocumentError, so don't try.
     if (this.disposed || !canvas.isConnected) return;
     if (via === "pad" && this.input.engagePad()) return;
+    if (this.mobile.engage()) return; // touch device: on-screen controls instead of pointer lock
     type LockResult = Promise<void> | undefined;
     const fail = () => (this.opts.onLockError ? this.opts.onLockError() : this.opts.onLockChange?.(false));
     try {
@@ -377,8 +385,32 @@ export class GameEngine {
   private loop = (now: number) => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min((now - this.lastTime) / 1000, 0.1);
-    this.lastTime = now;
+    this.lastRafAt = performance.now();
+    this.frame(now, true);
+  };
+
+  /**
+   * [coop] Hidden tab / occluded window in an online match: rAF stops, so a
+   * worker timer keeps the simulation + net sync running (no rendering) —
+   * the host's world doesn't freeze for everyone and clients don't time
+   * out. It idles while rAF is delivering frames.
+   */
+  private lastRafAt = 0;
+  private readonly bgTicker = new BackgroundTicker(() => {
+    if (this.disposed) return;
+    const now = performance.now();
+    if (!document.hidden && now - this.lastRafAt < 250) return;
+    this.frame(now, false);
+  });
+  private onVisibility = () => {
+    if (this.opts.survival?.net !== undefined && !this.disposed) this.bgTicker.start();
+    else this.bgTicker.stop();
+  };
+
+  private frame(now: number, visible: boolean) {
+    // (rAF timestamps are vsync-aligned and may trail performance.now(): never go negative.)
+    const dt = Math.min(Math.max(0, now - this.lastTime) / 1000, 0.1);
+    this.lastTime = Math.max(this.lastTime, now);
     const t0 = performance.now();
 
     const input = this.input;
@@ -451,6 +483,7 @@ export class GameEngine {
     this.updateHud(dt, playing);
     input.endFrame();
 
+    if (!visible) return;
     this.updateLightOcclusion(dt);
     this.pipeline.render(dt);
     // Dynamic resolution changed the drawing buffer: keep pixel-sized effects in step.
@@ -459,7 +492,7 @@ export class GameEngine {
       this.effects.setViewportHeight(this.viewH * this.pipeline.pixelRatio);
     }
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
-  };
+  }
 
   private handleHotkeys() {
     const input = this.input;
@@ -493,7 +526,7 @@ export class GameEngine {
     const input = this.input;
     const s = this.settings;
     let slow = 1;
-    if (s.aimAssist && input.device === "pad") {
+    if (s.aimAssist && input.device !== "kbm") {
       const list = this.assistList;
       list.length = 0;
       this.mode.collectTargets(list);
@@ -688,10 +721,13 @@ export class GameEngine {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    this.bgTicker.dispose();
     if (document.pointerLockElement === this.pipeline.canvas) document.exitPointerLock();
     document.removeEventListener("pointerlockerror", this.onLockError);
     window.removeEventListener("beforeunload", this.onBeforeUnload);
     this.resizeObserver.disconnect();
+    this.mobile.dispose();
     this.input.dispose();
     this.mode.dispose();
     this.viewmodel.dispose();

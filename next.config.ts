@@ -101,6 +101,16 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  // Retired routes. The lobby is home; query strings carry over, so old
+  // /coop?room=CODE invite links still land in that party. /dashboard stays
+  // because the Supabase confirm-signup email template links to it.
+  async redirects() {
+    return [
+      { source: "/dashboard", destination: "/play/iron-horizon", permanent: false },
+      { source: "/coop", destination: "/play/iron-horizon", permanent: false },
+      { source: "/missions", destination: "/play/iron-horizon", permanent: false },
+    ];
+  },
   async rewrites() {
     return {
       beforeFiles: [{ source: "/assets/v/:version/:path*", destination: "/assets/:path*" }],

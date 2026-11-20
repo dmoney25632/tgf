@@ -16,7 +16,7 @@ cp .env.example .env.local   # then fill in your Supabase URL + publishable key
 npm run dev
 ```
 
-Without Supabase keys the app runs in **offline dev mode**: auth is skipped, you're a local guest, and the dashboard and game are still reachable. That makes it easy to work on the game alone.
+Without Supabase keys the app runs in **offline dev mode**: auth is skipped, you're a local guest, and the lobby and game are still reachable. That makes it easy to work on the game alone.
 
 ### Checks
 
@@ -107,7 +107,7 @@ Do **not** add `DATABASE_URL` / `DIRECT_URL` to Vercel: the app never connects t
 - `leaderboard` view is public (anon and authenticated) and exposes only callsign, game and aggregate totals: no user ids or emails.
 - RLS is on for every table. The app uses only the publishable key.
 
-**Auth routes:** `/signup` → email → `/auth/confirm` → `/dashboard`; `/login`; `/forgot-password` → email → `/auth/confirm` → `/reset-password`; `/check-email` (resend confirmation); `/account` (callsign, stats, change password); `POST /auth/signout`; `/auth/callback` (OAuth).
+**Auth routes:** `/signup` → email → `/auth/confirm` → lobby (`/dashboard` in the email template redirects there); `/login`; `/forgot-password` → email → `/auth/confirm` → `/reset-password`; `/check-email` (resend confirmation); `/account` (callsign, stats, change password); `POST /auth/signout`; `/auth/callback` (OAuth).
 
 ## Iron Horizon modes
 
@@ -120,40 +120,68 @@ Do **not** add `DATABASE_URL` / `DIRECT_URL` to Vercel: the app never connects t
 
 The lobby picks the operator (Assault / Support / Recon / Heavy), primary and secondary, difficulty, wave target, squad size and start wave.
 
-## Layout
+## Architecture
+
+The site is a thin Next.js shell around a framework-free game engine. Code only flows one way: `src/app` and `src/components` may import `src/game`, never the reverse, and nothing outside `/play` imports Three.js.
+
+| Module | Path | What lives there |
+| --- | --- | --- |
+| App shell | `src/app/`, `src/components/`, `src/lib/` | Routes, auth, lobby UI and overlays. `play/[gameId]` is the only route that loads game code. |
+| Game engine | `src/game/core/` | `Engine.ts` (the loop: input → look → 120 Hz physics → camera → weapons → mode → fx → HUD → render), `GameMode` (interface each mode implements), `RangeMode`, input. |
+| Render | `src/game/render/` | `RenderPipeline` (quality presets, shadows, bloom, AO, grading, AA), materials, sky/atmosphere, GPU warm-up. |
+| World and maps | `src/game/world/` | `MapLoader` builds a `MapDef` into meshes + collision; `maps/` holds map data and `registry.ts`; `dressing/` adds terrain, foliage and props per map; `architecture/` holds reusable building kits. |
+| Survival | `src/game/survival/` | `SurvivalGameMode`, waves, spawner, shop, loadouts. All tuning (enemies, waves, economy, difficulty, operators, perks) is in `config.ts`. |
+| Net | `src/game/net/` | Co-op: transport interface with a Supabase Realtime and a same-browser loopback implementation, protocol/codec, interpolation, host-side hit validation. |
+| Audio | `src/game/audio/` | Procedural Web Audio effects and voices (no audio files). |
+| Weapons, AI, player | `src/game/weapons/`, `src/game/ai/`, `src/game/player/` | Weapon stats + viewmodels, AI soldiers and navigation, the movement controller. |
+| HUD and settings | `src/game/ui/` | DOM HUDs drawn by the engine, settings model + persistence, load progress tracking. |
 
 ```
 src/
   app/
     page.tsx                 landing
-    (auth)/login, signup     auth pages + server actions
-    auth/callback, signout   Supabase code exchange / sign-out
-    dashboard/               game selection (protected)
-    play/[gameId]/           fullscreen game host (protected) + saveMatch server action
+    (auth)/                  login, signup, password reset, check-email + server actions
+    auth/                    Supabase confirm, OAuth callback, sign-out route handlers
+    play/[gameId]/           lobby + game host (protected), saveMatch and lobby-data server actions
+    leaderboard/ account/    public board, profile and stats
+    credits/                 asset attributions
+    coop/dev/                dev-only split-screen co-op harness (404 in production)
   proxy.ts                   session refresh + auth redirects (Next 16's "middleware")
+  components/
+    game/                    lobby, loading screen, pause/shop/summary overlays, game host, game-shell (error boundary, WebGL context-loss prompt)
+    coop/                    party room and co-op match host
+    auth/ ui/                forms and shadcn primitives
   lib/
-    games.ts                 game registry rendered by the dashboard
-    supabase/                server and proxy clients
-  components/game/           lobby, operator preview, shop overlay, match summary, game host
-  game/                      Iron Horizon engine (framework-free TypeScript)
-    config.ts                movement / look / camera / shake / quality tuning
-    core/Engine.ts           loop: input → look → 120 Hz physics → camera → weapons → grenades → mode → fx → HUD → render
-    core/GameMode.ts         GameMode interface; RangeMode and SurvivalGameMode plug into the engine
-    player/PlayerController  accel/brake, air momentum, coyote, jump buffer, slide, step-up, downed crawl
-    weapons/                 7 guns + knife (weapons.ts), WeaponSystem, viewmodels, GrenadeSystem
-    ai/                      NavGrid (A* + cover points), Agent, AgentManager (staggered 5 Hz thinking), Humanoid models
-    survival/                SurvivalGameMode, WaveManager, EnemySpawner, ShopSystem, PlayerLoadout, PlayerState, config
-    effects/                 pooled particles, tracers, decals, explosions; camera shake
-    render/RenderPipeline    quality presets, shadows, bloom, GTAO, grading, MSAA/FXAA
-    world/                   MapLoader, Collision (AABB + raycast/LOS), maps/kestrelYard, maps/dustfallOutpost
-    targets/TargetRange      pop-up targets + ringing steel plates
-    ui/                      HUD (crosshair, ammo, hitmarkers, scoreboard, F3 debug) + SurvivalHUD (wave, team, money, damage numbers)
-    audio/Sfx.ts             procedural Web Audio: gunshots, reverb, spatial enemy fire, explosions, UI cues
-supabase/migrations/         profiles, player_stats, matches, loadouts + record_match()
-tests/                       headless smoke tests + a tiny loader so Node can run the TS sources
+    games.ts                 games served under /play
+    auth.ts                  getCurrentUser / requireUser (offline guest, unreachable Supabase)
+    supabase/                server, proxy and browser clients, validation, config
+  game/                      the engine (see the table above)
+supabase/migrations/         schema, RLS, record_match(), leaderboard view
+tests/                       headless tests of the pure game modules + auth rules (Node test runner)
 ```
 
-All survival tuning (enemy stats, wave composition, economy, difficulty, perks, operators) lives in `src/game/survival/config.ts`.
+Retired routes (`/dashboard`, `/coop`, `/missions`) are redirects in `next.config.ts`. The Missions game mode still exists in `src/game/missions/` (engine-supported, tested) but has no screen in the lobby.
+
+### Loading
+
+The play route ships the lobby only. The engine and Three.js are dynamic imports: the lobby warms them in idle time (`components/game/prefetch-engine.ts`), and `GameView` imports them on Deploy. The loading screen's bar follows real asset loads through `game/ui/LoadProgress.ts`. Game assets are requested from `/assets/v/<hash>/…` and cached as immutable (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)); `npm run analyze` fails the check if Three.js ever reaches an initial route bundle.
+
+### Adding a map
+
+1. Create `src/game/world/maps/<name>.ts` exporting a `MapDef` (boxes, spawns, and a `survival` layout with enemy spawns, sniper perches, buy stations and ammo crates if it is a Survival map).
+2. Optional: a set-dressing in `src/game/world/dressing/<name>.ts`, registered in `dressing/index.ts` and referenced by `MapDef.dressing`.
+3. Register it in `src/game/world/maps/registry.ts` (id, name, lobby blurb). Survival maps then show up in the lobby automatically; add it to `COOP_MAPS` in `src/game/net/ids.ts` for parties.
+4. Add a test like `tests/brennhollow.test.ts` (spawns reachable on the nav grid, no stuck props).
+
+### Adding a weapon
+
+1. Add an entry to `WEAPONS` in `src/game/weapons/weapons.ts` (stats, slot, shop `price`, viewmodel `model` kind). Append it at the end: co-op sends weapons by index.
+2. If it needs a new look, add a builder to `GUN_BUILDERS` in `src/game/weapons/viewmodel/guns.ts`.
+3. It appears in the lobby and the armory by slot. Give it to an operator in `src/game/survival/config.ts` if it should be a default.
+
+### Adding a game mode
+
+Implement `GameMode` (`src/game/core/GameMode.ts`), construct it in `Engine.ts` for its mode id, and add the option to the lobby (`components/game/lobby.tsx`).
 
 ## Controls
 
@@ -161,7 +189,7 @@ WASD move · Shift sprint · C crouch (toggle) / Ctrl (hold) · C while sprintin
 
 ## Roadmap
 
-1. ✅ Next.js + Supabase auth, protected dashboard
+1. ✅ Next.js + Supabase auth, protected lobby
 2. ✅ Game selection UI
 3. ✅ FPS movement and feel pass
 4. ✅ Hitscan shooting, recoil, ADS, 7 weapons + knife + grenades

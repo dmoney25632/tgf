@@ -8,8 +8,10 @@ import { PAD_ACTIONS } from "@/game/ui/Glyphs";
 import { PAD_FOCUS_CSS, useGamepadNav, viaFromEvent, type DeviceSnapshot } from "./gamepad";
 import { Hint, KeyGlyph, PadGlyph } from "./glyph";
 import { SETTINGS_TABS, SettingsPanel, type SettingsTab } from "./settings-panel";
+import { TouchSettingsPanel } from "./touch-settings";
+import { touchControlsEnabled } from "@/game/mobile/device";
 
-type View = "main" | "settings" | "controls";
+type View = "main" | "settings" | "controls" | "touch";
 
 export type PauseMenuProps = {
   survival: boolean;
@@ -34,6 +36,7 @@ export function PauseMenu(p: PauseMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>("main");
   const [tab, setTab] = useState<SettingsTab>("graphics");
+  const [touchUi] = useState(touchControlsEnabled); // menus only mount client-side (after deploy)
 
   useGamepadNav(rootRef, {
     onBack: () => (view === "main" ? p.onResume("pad") : setView("main")),
@@ -64,14 +67,14 @@ export function PauseMenu(p: PauseMenuProps) {
   return (
     <div
       ref={rootRef}
-      className="absolute inset-0 z-20 flex animate-in items-center justify-center overflow-y-auto bg-black/60 px-4 py-6 backdrop-blur-[6px] duration-200 fade-in"
+      className="absolute inset-0 z-20 flex animate-in items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-[max(1rem,env(safe-area-inset-right))] py-6 backdrop-blur-[6px] duration-200 fade-in"
       onMouseDown={(e) => {
         // Pointer lock was refused: any click on the backdrop retries.
         if (p.lockError && e.target === e.currentTarget) p.onResume();
       }}
     >
       <style>{PAD_FOCUS_CSS}</style>
-      <div className="flex w-full max-w-5xl animate-in flex-col gap-4 duration-300 zoom-in-[0.98] md:flex-row" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="my-auto flex w-full max-w-5xl animate-in flex-col gap-4 duration-300 zoom-in-[0.98] md:flex-row" onMouseDown={(e) => e.stopPropagation()}>
         {/* Left: commands */}
         <nav className="flex w-full shrink-0 flex-col border-l border-white/10 md:w-64">
           <p className="px-4 font-mono text-[10px] tracking-[0.34em] text-white/90 uppercase">Paused</p>
@@ -79,6 +82,7 @@ export function PauseMenu(p: PauseMenuProps) {
           {item("resume", "Resume", (e) => p.onResume(viaFromEvent(e)), { primary: true })}
           {item("settings", "Settings", () => setView("settings"), { active: view === "settings" })}
           {item("controls", "Controls", () => setView("controls"), { active: view === "controls" })}
+          {touchUi && item("touch", "Touch controls", () => setView("touch"), { active: view === "touch" })}
           {p.onRespawn && item("respawn", "Reset position", () => p.onRespawn?.())}
           {p.onFullscreen && item("fullscreen", "Fullscreen", () => p.onFullscreen?.())}
           {item("lobby", p.survival ? "Abandon to lobby" : "Lobby", () => p.onLobby())}
@@ -91,7 +95,7 @@ export function PauseMenu(p: PauseMenuProps) {
         </nav>
 
         {/* Right: page */}
-        <section className="min-h-[420px] min-w-0 flex-1 rounded-md border border-white/10 bg-neutral-950/85 p-5 text-neutral-100 shadow-2xl">
+        <section className="min-h-[min(420px,80dvh)] min-w-0 flex-1 rounded-md border border-white/10 bg-neutral-950/85 p-5 text-neutral-100 shadow-2xl">
           {p.lockError && (
             <div role="alert" className="mb-4 rounded border border-white/40 bg-white/10 px-3 py-2 text-sm text-white">
               The browser didn&apos;t capture the mouse. <span className="font-semibold">Click anywhere</span> (or Resume) to try again — after pressing Esc, browsers
@@ -101,6 +105,7 @@ export function PauseMenu(p: PauseMenuProps) {
           {view === "main" && <Briefing {...p} />}
           {view === "settings" && <SettingsPanel settings={p.settings} onChange={p.onSettings} dev={p.dev} tab={tab} onTab={setTab} />}
           {view === "controls" && <Controls settings={p.settings} dev={p.dev} />}
+          {view === "touch" && <TouchSettingsPanel />}
 
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/5 pt-3">
             <Hint dev={p.dev} pad="A" label="Select" />

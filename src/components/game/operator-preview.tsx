@@ -59,6 +59,8 @@ export function OperatorPreview({ operator }: { operator: OperatorDef }) {
         renderer.forceContextLoss();
         renderer.domElement.remove();
       };
+    }).catch(() => {
+      // No WebGL (or the chunk failed to load): the preview is decorative, leave it empty.
     });
 
     return () => {
@@ -68,5 +70,6 @@ export function OperatorPreview({ operator }: { operator: OperatorDef }) {
   }, [operator]);
 
   // Rendered in colour, shown in black and white to match the menu style.
-  return <div ref={ref} className="h-full w-full contrast-125 grayscale" />;
+  // Decorative: losing its GPU context must not trigger the game's recover prompt.
+  return <div ref={ref} data-webgl-optional className="h-full w-full contrast-125 grayscale" />;
 }

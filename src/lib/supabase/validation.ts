@@ -73,11 +73,22 @@ export function defaultNextFor(type: ConfirmType): string {
   return "/play/iron-horizon";
 }
 
-type AuthErrorLike = { code?: string; message?: string; status?: number } | null | undefined;
+type AuthErrorLike = { code?: string; message?: string; status?: number; name?: string } | null | undefined;
+
+/**
+ * True when Supabase couldn't be reached at all (network down, DNS, timeout,
+ * gateway errors), as opposed to a real answer like "wrong password" or "no
+ * session". supabase-js reports those as AuthRetryableFetchError.
+ */
+export function isUnreachableError(error: AuthErrorLike): boolean {
+  if (!error) return false;
+  return error.name === "AuthRetryableFetchError" || error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504;
+}
 
 /** Turns Supabase Auth errors into short, non-leaky messages for the UI. */
 export function authErrorMessage(error: AuthErrorLike): string {
   if (!error) return "Something went wrong. Please try again.";
+  if (isUnreachableError(error)) return LOGIN_ERRORS.unreachable;
   switch (error.code) {
     case "invalid_credentials":
       return "Wrong email or password.";
@@ -117,6 +128,7 @@ export const LOGIN_ERRORS = {
   oauth: "Couldn't start that sign-in. Please try again.",
   provider: "That sign-in provider isn't enabled.",
   session: "Your session expired. Please log in again.",
+  unreachable: "Can't reach the sign-in server right now. Check your connection and try again in a moment.",
 } as const;
 
 export function loginErrorMessage(key: unknown): string | undefined {

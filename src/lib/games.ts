@@ -1,33 +1,16 @@
 /**
- * Registry of games on the TGF platform. The dashboard renders this array,
- * so adding a game is one entry here plus its route under /play.
+ * Games hosted under /play/[gameId]. The play route looks the id up here and
+ * renders that game's client entry point; saveMatch rejects unknown ids.
+ * Adding a game is one entry here plus a case in src/app/play/[gameId]/page.tsx.
  */
-export type GameStatus = "playable" | "prototype" | "coming-soon";
-
 export type GameEntry = {
   id: string;
   title: string;
-  tagline: string;
-  genre: string;
-  modes: string[];
-  status: GameStatus;
-  featured?: boolean;
-  /** Monochrome CSS backdrop for the card art (a halftone particle layer goes on top). */
-  art: string;
+  /** "coming-soon" games 404 on /play. */
+  status: "playable" | "prototype" | "coming-soon";
 };
 
-export const GAMES: GameEntry[] = [
-  {
-    id: "iron-horizon",
-    title: "Iron Horizon",
-    tagline: "Tight, grounded modern combat. Hold the outpost against wave after wave.",
-    genre: "Tactical FPS",
-    modes: ["Survival", "Firing Range"],
-    status: "prototype",
-    featured: true,
-    art: "radial-gradient(ellipse at 82% 18%, rgba(255,255,255,.22), transparent 58%), linear-gradient(180deg, #0b0b0b, #000)",
-  },
-];
+export const GAMES: GameEntry[] = [{ id: "iron-horizon", title: "Iron Horizon", status: "prototype" }];
 
 export function getGame(id: string) {
   return GAMES.find((g) => g.id === id);

@@ -7,7 +7,7 @@ import { ACTIONS, DEFAULT_BINDINGS, keyLabel, type ActionId, type Bindings } fro
  * and, via dangerouslySetInnerHTML, by the React menus.
  */
 
-export type GlyphDevice = "kbm" | "pad";
+export type GlyphDevice = "kbm" | "pad" | "touch";
 export type GlyphLayout = "xbox" | "ps";
 export type PadButtonName =
   | "A" | "B" | "X" | "Y" | "LB" | "RB" | "LT" | "RT" | "L3" | "R3" | "LS" | "RS"
@@ -162,8 +162,20 @@ export function keyGlyph(code: string, size = 18): string {
   return `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:${size}px;height:${size}px;padding:0 ${wide ? 5 : 0}px;box-sizing:border-box;border:1.3px solid ${FG};border-bottom-width:2.5px;border-radius:4px;background:${BG};color:${FG};font:700 ${Math.round(size * (wide ? 0.5 : 0.6))}px/1 var(--font-geist-sans),system-ui,sans-serif;letter-spacing:0;text-transform:uppercase;vertical-align:-0.28em;text-shadow:none">${escapeGlyphText(label)}</span>`;
 }
 
+/** On-screen touch button names (see src/game/mobile/layout.ts). */
+export const TOUCH_ACTIONS: Record<ActionId, string> = {
+  forward: "MOVE", back: "MOVE", left: "MOVE", right: "MOVE", jump: "JUMP", sprint: "MOVE", crouch: "CROUCH", crouchHold: "CROUCH",
+  fire: "FIRE", ads: "AIM", reload: "RELOAD", interact: "USE", melee: "KNIFE", grenade: "FRAG", swap: "SWAP", scoreboard: "SCORE", readyUp: "READY",
+};
+
+/** Touch prompt: a rounded pill naming the on-screen button. */
+export function touchGlyph(action: ActionId, size = 18): string {
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;height:${size}px;padding:0 ${Math.round(size * 0.45)}px;box-sizing:border-box;border:1.3px solid ${FG};border-radius:${size}px;background:${BG};color:${FG};font:700 ${Math.round(size * 0.5)}px/1 var(--font-geist-sans),system-ui,sans-serif;letter-spacing:.08em;vertical-align:-0.28em;text-shadow:none">${TOUCH_ACTIONS[action] ?? ""}</span>`;
+}
+
 /** Glyph for an action on the current (or given) device. */
 export function actionGlyph(action: ActionId, ctx: Pick<typeof glyphContext, "device" | "layout" | "bindings"> = glyphContext, size = 18): string {
+  if (ctx.device === "touch") return touchGlyph(action, size);
   return ctx.device === "pad" ? padGlyph(PAD_ACTIONS[action], ctx.layout, size) : keyGlyph(ctx.bindings[action] ?? DEFAULT_BINDINGS[action], size);
 }
 

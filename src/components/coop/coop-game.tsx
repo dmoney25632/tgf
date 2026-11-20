@@ -11,6 +11,7 @@ import type { NetTransport, RoomSettings, RosterEntry } from "@/game/net/transpo
 import type { OperatorId } from "@/game/survival/config";
 import type { WeaponId } from "@/game/weapons/weapons";
 import { detectQuality } from "@/game/config";
+import { mobileDefaultQuality } from "@/game/mobile/device";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { saveMatch } from "@/app/play/[gameId]/actions";
@@ -69,7 +70,7 @@ export function CoopGame({
         const s = launch.settings;
         engine = new GameEngine(hostRef.current, {
           callsign,
-          settings: loadSettings(detectQuality()),
+          settings: loadSettings(mobileDefaultQuality() ?? detectQuality()),
           mode: "survival",
           map: coopMap(s.mapId),
           loadout: [loadout.primary, loadout.secondary],

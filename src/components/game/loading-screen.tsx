@@ -6,6 +6,7 @@ import type { DeviceSnapshot } from "./gamepad";
 import { ParticleField } from "@/components/particle-backdrop";
 import { PadGlyph } from "./glyph";
 import { ParticleProgress } from "./particle-progress";
+import { touchControlsEnabled } from "@/game/mobile/device";
 
 const TIPS = [
   "Sprint, then crouch to slide — you keep the speed and drop under fire.",
@@ -101,7 +102,7 @@ export function LoadingScreen({
               }}
               className="inline-flex animate-pulse items-center gap-2.5 text-sm font-bold tracking-[0.3em] text-neutral-100 uppercase outline-none"
             >
-              {dev.device === "pad" ? <PadGlyph btn="A" layout={dev.layout} size={22} /> : <span className="rounded border border-white/40 px-2 py-0.5 text-[11px]">Click</span>}
+              {dev.device === "pad" ? <PadGlyph btn="A" layout={dev.layout} size={22} /> : <span className="rounded border border-white/40 px-2 py-0.5 text-[11px]">{touchControlsEnabled() ? "Tap" : "Click"}</span>}
               to deploy
             </button>
           ) : (

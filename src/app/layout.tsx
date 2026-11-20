@@ -17,6 +17,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "TGF",
   description: "Original browser-based first-person games.",
+  // iPhone has no element full screen: "Add to Home Screen" launches full screen instead.
+  appleWebApp: { capable: true, title: "Iron Horizon", statusBarStyle: "black" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

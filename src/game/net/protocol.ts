@@ -20,7 +20,9 @@ import { ByteReader, ByteWriter } from "./codec";
  *      2 players: state 20 Hz, snapshots 12 Hz, keyframe 1 s  →  32/s
  *      3 players: state 12 Hz, snapshots 10 Hz, keyframe 1 s  →  68/s
  *      4 players: state  6 Hz, snapshots  8 Hz, keyframe 2 s  →  78/s
- *    Interpolation delay grows with the send interval (100 → 200 ms).
+ *    Interpolation delay = send interval + 20 ms, raised adaptively by the
+ *    measured jitter (ClockSync in interpolation.ts): calm links get the
+ *    least lag, jittery ones a deeper buffer instead of rubber-banding.
  *    Gameplay events (hit claims, purchases, kills, hurt…) ride inside these
  *    periodic messages rather than costing extra ones.
  */
@@ -38,6 +40,11 @@ export const NET = {
   KEYFRAME_EVERY: 12,
   /** Minimum render delay for remote entities. */
   INTERP_DELAY_MS: 100,
+  /**
+   * In-game render delay floor = one send interval + this slack; ClockSync
+   * adds measured jitter on top (see interpolation.ts), capped at 450 ms.
+   */
+  INTERP_SLACK_MS: 20,
   /** Max extrapolation past the newest sample when packets are late. */
   MAX_EXTRAPOLATE_MS: 120,
   /** No packets from a peer for this long → treated as disconnected. */
@@ -531,6 +538,13 @@ export type StateExtras = {
   x?: [number, number, number][];
   /** Purchases: [itemId, price]. */
   buy?: [string, number][];
+  /**
+   * Client → host: "my delta decoder lost sync, send a keyframe". Rides on
+   * the regular state message (no extra Realtime traffic), so a lost or
+   * reordered delta heals in about one round trip instead of waiting up to
+   * a full keyframe interval with frozen enemies.
+   */
+  k?: 1;
 };
 
 /** Host → peers events on a snapshot. */

@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { SUPABASE_KEY, SUPABASE_URL } from "./config";
+import { SUPABASE_KEY, SUPABASE_URL, fetchWithTimeout } from "./config";
 
 /**
  * Supabase client for Server Components, Server Actions and Route Handlers.
@@ -14,6 +14,7 @@ export async function createClient() {
   const cookieStore = await cookies();
 
   return createServerClient(SUPABASE_URL, SUPABASE_KEY, {
+    global: { fetch: fetchWithTimeout },
     cookies: {
       getAll() {
         return cookieStore.getAll();

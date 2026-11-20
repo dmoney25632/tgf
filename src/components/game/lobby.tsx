@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from "@/game/weapons/weapons";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId, type WaveTarget } from "@/game/survival/config";
 import { detectQuality } from "@/game/config";
+import { mobileDefaultQuality } from "@/game/mobile/device";
 import { loadSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { OperatorPreview } from "./operator-preview";
+import { prefetchGameEngine } from "./prefetch-engine";
 import { SURVIVAL_MAPS } from "@/game/world/maps/registry";
 import { PAD_FOCUS_CSS, useGamepadNav, useInputDevice } from "./gamepad";
 import { PadGlyph } from "./glyph";
@@ -377,7 +379,7 @@ function ServiceRecord({ data, callsign }: { data: LobbyData | null; callsign: s
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const dev = useInputDevice();
   const [tab, setTab] = useState<SettingsTab>("mouse");
-  const [s, setS] = useState<GameSettings>(() => loadSettings(detectQuality()));
+  const [s, setS] = useState<GameSettings>(() => loadSettings(mobileDefaultQuality() ?? detectQuality()));
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -446,6 +448,7 @@ export function Lobby({
     onDeploy(c);
   };
   useGamepadNav(rootRef, { onStart: deploy }, !settingsOpen);
+  useEffect(() => prefetchGameEngine(), []);
 
   const pickOperator = (id: OperatorId) => set({ operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary });
   const summary = survival
@@ -682,6 +685,9 @@ export function Lobby({
           <aside className="grid content-start gap-6">
             <ServiceRecord data={board.data} callsign={callsign} />
             <WorldBoard data={board.data} loading={board.loading} refresh={board.refresh} callsign={callsign} />
+            <Link href="/credits" onClick={sfxClick} className="justify-self-center text-xs text-neutral-500 underline-offset-4 hover:text-white hover:underline">
+              Credits and licenses
+            </Link>
           </aside>
         </div>
       </div>

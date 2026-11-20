@@ -74,11 +74,34 @@ const MAP_KEYS = [
 
 type MapHolder = Partial<Record<(typeof MAP_KEYS)[number], THREE.Texture | null>>;
 
+/** Texture/material policy the warmup enforces on everything it sees (set per quality preset). */
+export type WarmupPolicy = {
+  /** Anisotropic filtering applied to every mipmapped texture (clamped to the GPU max). */
+  anisotropy: number;
+  /** Alpha-tested (cut-out) materials use alpha-to-coverage: only when the target is multisampled. */
+  alphaToCoverage: boolean;
+};
+
 export class GpuWarmup {
-  /** Upload budget per frame (ms). At least one texture is always uploaded. */
+  /** Upload budget per frame (ms) during play. At least one texture is always uploaded. */
   budgetMs = 3;
-  /** Materials compiled per scan tick. */
-  compilePerTick = 6;
+  /** Materials compiled per scan tick during play. */
+  compilePerTick = 8;
+  /**
+   * Until this time (ms) the match is still behind the loading screen / deploy
+   * card: compile every new material at once (the driver links them in
+   * parallel) and upload with a generous budget, so play starts warm.
+   */
+  private eagerUntil = 0;
+  private policy: WarmupPolicy = { anisotropy: 4, alphaToCoverage: false };
+  private maxAnisotropy = 1;
+  /**
+   * Render target the scene is drawn into (post path) or null (canvas). three
+   * keeps a program variant per output colour space / tone mapping, so the
+   * warm compile must happen with the same target bound or it compiles a
+   * variant that's never used and the real one stalls on first draw.
+   */
+  target: THREE.WebGLRenderTarget | null = null;
 
   private readonly scanned = new Set<THREE.Texture>();
   private readonly pending: THREE.Texture[] = [];
@@ -92,7 +115,51 @@ export class GpuWarmup {
   private uploaded = 0;
   private programs = 0;
 
-  constructor(private readonly renderer: THREE.WebGLRenderer) {}
+  constructor(private readonly renderer: THREE.WebGLRenderer) {
+    this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+  }
+
+  /** Compile/upload eagerly for `ms` (load, quality change: nothing to interrupt yet). */
+  eager(ms: number) {
+    this.eagerUntil = Math.max(this.eagerUntil, performance.now() + ms);
+    this.wake(ms + 2000);
+  }
+
+  /** New texture/material policy (quality change): re-applied to everything on the next scan. */
+  setPolicy(p: WarmupPolicy) {
+    if (p.anisotropy === this.policy.anisotropy && p.alphaToCoverage === this.policy.alphaToCoverage) return;
+    this.policy = { ...p };
+    this.policyVersion++;
+    this.invalidatePrograms();
+  }
+
+  private policyVersion = 1;
+  private readonly policyApplied = new WeakMap<object, number>();
+
+  /** Anisotropy + alpha-to-coverage, applied once per material/texture per policy. */
+  private applyPolicy(m: THREE.Material) {
+    if (this.policyApplied.get(m) === this.policyVersion) return;
+    this.policyApplied.set(m, this.policyVersion);
+    const cutout = m.alphaTest > 0 && !m.transparent;
+    const a2c = cutout && this.policy.alphaToCoverage;
+    if (cutout && m.alphaToCoverage !== a2c) {
+      m.alphaToCoverage = a2c;
+      m.needsUpdate = true;
+    }
+    const holder = m as unknown as MapHolder;
+    const aniso = Math.max(1, Math.min(this.policy.anisotropy, this.maxAnisotropy));
+    for (let k = 0; k < MAP_KEYS.length; k++) {
+      const t = holder[MAP_KEYS[k]];
+      if (!t || !t.isTexture || this.policyApplied.get(t) === this.policyVersion) continue;
+      this.policyApplied.set(t, this.policyVersion);
+      const mipmapped = t.minFilter === THREE.LinearMipmapLinearFilter || t.minFilter === THREE.NearestMipmapLinearFilter || t.minFilter === THREE.LinearMipmapNearestFilter;
+      if (!mipmapped || t.anisotropy === aniso || (t as THREE.Texture & { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
+      t.anisotropy = aniso;
+      // Already on the GPU: three only re-applies sampler state on an upload.
+      const uploaded = (this.renderer.properties.get(t) as { __version?: number }).__version;
+      if (uploaded !== undefined && uploaded === t.version && t.version > 0) t.needsUpdate = true;
+    }
+  }
 
   /** Re-scan when direct children are added to these roots. */
   watch(root: THREE.Object3D) {
@@ -113,6 +180,41 @@ export class GpuWarmup {
     this.wake();
   }
 
+  private readonly compiling = new Set<THREE.Material>();
+  private holdUntil = 0;
+
+  /**
+   * Hold back drawing (behind the loading screen) for up to `ms` while warm
+   * compiles are still linking, so no program is first used half-built
+   * (that blocks the main thread for the rest of its compile).
+   */
+  holdForPrograms(ms: number) {
+    this.holdUntil = performance.now() + ms;
+  }
+
+  /** True while the frame should be skipped: initial load, programs still linking. */
+  get holding() {
+    if (this.holdUntil === 0) return false;
+    if (performance.now() > this.holdUntil) {
+      this.holdUntil = 0;
+      return false;
+    }
+    // The first scan hasn't run yet: hold so it compiles before anything draws.
+    if (this.frame < 1) return true;
+    return this.pendingPrograms() > 0;
+  }
+
+  /** Materials whose programs are still compiling (non-blocking KHR_parallel_shader_compile check). */
+  pendingPrograms() {
+    const props = this.renderer.properties;
+    for (const m of this.compiling) {
+      const p = (props.get(m) as { currentProgram?: { isReady(): boolean } }).currentProgram;
+      if (!p || p.isReady()) this.compiling.delete(m);
+    }
+    if (this.compiling.size === 0) this.holdUntil = 0;
+    return this.compiling.size;
+  }
+
   get stats() {
     return { uploaded: this.uploaded, programs: this.programs, pending: this.pending.length + textureUploads.jobs.length };
   }
@@ -122,23 +224,32 @@ export class GpuWarmup {
     const now = performance.now();
     textureUploads.lastDrain = now;
     this.frame++;
-    if (now < this.warmUntil && this.frame % 10 === 0) {
-      for (let i = 0; i < scenes.length; i++) this.scan(scenes[i], cameras[i]);
+    const eager = now < this.eagerUntil;
+    if (now < this.warmUntil && (this.frame % (eager ? 4 : 10) === 0 || this.frame === 1)) {
+      const r = this.renderer;
+      const prev = r.getRenderTarget();
+      // Compile the variant the scene is actually drawn with (see `target`).
+      r.setRenderTarget(this.target);
+      for (let i = 0; i < scenes.length; i++) this.scan(scenes[i], cameras[i], eager ? 1e9 : this.compilePerTick);
+      r.setRenderTarget(prev);
     }
-    this.drainUploads(now);
+    this.drainUploads(now, eager ? 8 : this.budgetMs, eager ? 4 << 20 : 3 << 19);
   }
 
-  private scan(scene: THREE.Scene, camera: THREE.Camera) {
+  private scan(scene: THREE.Scene, camera: THREE.Camera, cap: number) {
     scene.traverse(this.visit);
-    // Compile a few new materials against this scene's lights; the rest are
-    // un-marked so the next tick picks them up again.
+    // Compile new materials against this scene's lights (KHR_parallel_shader_compile
+    // links them off-thread); past the cap they're un-marked for the next tick.
     const list = this.toCompile;
     let n = 0;
     while (list.length) {
       const obj = list.pop()!;
-      if (n < this.compilePerTick) {
+      if (n < cap) {
         this.renderer.compile(obj, camera, scene);
         this.programs++;
+        const m = (obj as THREE.Mesh).material;
+        if (Array.isArray(m)) for (let i = 0; i < m.length; i++) this.compiling.add(m[i]);
+        else if (m) this.compiling.add(m);
         n++;
         continue;
       }
@@ -160,6 +271,7 @@ export class GpuWarmup {
   };
 
   private visitMaterial(m: THREE.Material, o: THREE.Object3D) {
+    this.applyPolicy(m);
     const set = (o as THREE.InstancedMesh).isInstancedMesh ? this.compiledInstanced : this.compiled;
     if (!set.has(m)) {
       set.add(m);
@@ -184,13 +296,24 @@ export class GpuWarmup {
     return props.__version !== t.version;
   }
 
-  private drainUploads(now: number) {
+  private drainUploads(now: number, budgetMs: number, texelBudget: number) {
     const r = this.renderer;
-    const deadline = now + this.budgetMs;
+    const deadline = now + budgetMs;
+    // The CPU side of an upload returns quickly; the copy + mip build lands in
+    // the GPU process, so a texel budget bounds the real per-frame cost too.
+    let texels = 0;
     let first = true;
+    const more = () => first || (performance.now() < deadline && texels < texelBudget);
+    const upload = (t: THREE.Texture) => {
+      r.initTexture(t);
+      this.uploaded++;
+      first = false;
+      const img = t.image as { width?: number; height?: number } | null;
+      texels += (img?.width ?? 256) * (img?.height ?? 256);
+    };
     // Explicit swap jobs first: they replace visible placeholders.
     const jobs = textureUploads.jobs;
-    while (jobs.length && (first || performance.now() < deadline)) {
+    while (jobs.length && more()) {
       const job = jobs[0];
       if (job.cancelled) {
         jobs.shift();
@@ -198,26 +321,19 @@ export class GpuWarmup {
       }
       if (job.next < job.textures.length) {
         const t = job.textures[job.next++];
-        if (this.needsUpload(t)) {
-          r.initTexture(t);
-          this.uploaded++;
-          first = false;
-        }
+        if (this.needsUpload(t)) upload(t);
         continue;
       }
       jobs.shift();
       job.done();
     }
-    while (this.pending.length && (first || performance.now() < deadline)) {
+    while (this.pending.length && more()) {
       const t = this.pending.pop()!;
-      if (this.needsUpload(t)) {
-        r.initTexture(t);
-        this.uploaded++;
-        first = false;
-      }
+      if (this.needsUpload(t)) upload(t);
     }
     if (!this.pending.length && this.scanned.size > 512) this.scanned.clear();
   }
+
 
   dispose() {
     for (const root of this.watched) root.removeEventListener("childadded", this.onChildAdded);

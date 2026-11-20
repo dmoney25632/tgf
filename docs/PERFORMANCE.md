@@ -6,8 +6,8 @@ Budgets, how the game hits them, and how to measure. Asset licensing is covered 
 
 | What | Budget | Measured (Nov 2026) |
 | --- | --- | --- |
-| Initial JS on `/`, `/login`, `/signup`, `/dashboard` | < 180 kB gzip, no Three.js | 156 kB (`/`), 172 kB (auth pages), no Three.js |
-| Initial JS on `/play/[gameId]` | < 180 kB gzip; Three.js and the engine load lazily | 168 kB, plus an 82 kB gzip lazy Three.js chunk |
+| Initial JS on `/`, `/login`, `/signup`, `/leaderboard`, `/account`, `/credits` | < 180 kB gzip, no Three.js | 156 kB (`/`), 171 kB (auth pages), 154 kB (`/leaderboard`), no Three.js |
+| Initial JS on `/play/[gameId]` | < 180 kB gzip; Three.js and the engine load lazily | 298 kB (over budget: the co-op party UI and supabase-js, ~70 kB gzip, load with the lobby), plus an 82 kB gzip lazy Three.js chunk that the lobby prefetches when idle |
 | First-match download, High/Medium | < 30 MB | about 29.5 MB (est. 47 MB before re-encoding) |
 | First-match download, Low | < 15 MB | about 13.9 MB (est. 43 MB before 512 variants) |
 | Frame time | Display refresh, up to 144 Hz. Adaptive quality aims for `1000 / min(refresh, 144)` ms × 1.2 | High at 1024×768: 2.1 ms CPU p50 (3.1 p95), 299 draw calls |

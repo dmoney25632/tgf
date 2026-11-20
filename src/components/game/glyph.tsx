@@ -1,7 +1,6 @@
 "use client";
 
-import { actionGlyph, keyGlyph, padGlyph, type PadButtonName } from "@/game/ui/Glyphs";
-import type { ActionId, Bindings } from "@/game/ui/Settings";
+import { keyGlyph, padGlyph, type PadButtonName } from "@/game/ui/Glyphs";
 import type { DeviceSnapshot } from "./gamepad";
 import { cn } from "@/lib/utils";
 
@@ -16,10 +15,6 @@ export function PadGlyph({ btn, layout, size = 18, className }: { btn: PadButton
 
 export function KeyGlyph({ code, size = 18, className }: { code: string; size?: number; className?: string }) {
   return <Raw html={keyGlyph(code, size)} className={className} />;
-}
-
-export function ActionGlyph({ action, dev, bindings, size = 18, className }: { action: ActionId; dev: DeviceSnapshot; bindings: Bindings; size?: number; className?: string }) {
-  return <Raw html={actionGlyph(action, { device: dev.device, layout: dev.layout, bindings }, size)} className={className} />;
 }
 
 /** Footer hint: a glyph for the current device + a label. Keyboard hint is optional. */

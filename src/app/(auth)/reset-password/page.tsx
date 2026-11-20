@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResetPasswordForm } from "@/components/auth/password-forms";
 import { getCurrentUser } from "@/lib/auth";

@@ -1,12 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { SUPABASE_KEY, SUPABASE_URL, isSupabaseConfigured } from "./config";
+import { SUPABASE_KEY, SUPABASE_URL, fetchWithTimeout, isSupabaseConfigured } from "./config";
+import { isUnreachableError } from "./validation";
 
 /**
  * Routes that require a signed-in user (when Supabase is configured; in
  * offline/guest mode nothing is gated here and pages decide for themselves).
  */
-const PROTECTED_PREFIXES = ["/dashboard", "/play", "/account", "/coop", "/leaderboard"];
+const PROTECTED_PREFIXES = ["/play", "/account", "/coop", "/leaderboard"];
 /** Routes a signed-in user should skip. */
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/check-email"];
 
@@ -22,6 +23,7 @@ export async function updateSession(request: NextRequest) {
   if (!isSupabaseConfigured) return response; // offline dev mode
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_KEY, {
+    global: { fetch: fetchWithTimeout },
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -42,9 +44,13 @@ export async function updateSession(request: NextRequest) {
   });
 
   // Do not put code between createServerClient and getClaims().
-  const { data } = await supabase.auth.getClaims();
+  const { data, error: claimsError } = await supabase.auth.getClaims();
   const signedIn = Boolean(data?.claims);
   const path = request.nextUrl.pathname;
+
+  // Supabase is unreachable: don't guess. The page's own check shows the
+  // "can't reach the sign-in server" message instead of a silent sign-out.
+  if (isUnreachableError(claimsError)) return response;
 
   // Redirects must carry any refreshed session cookies, or the user is
   // silently signed out on the next request.
@@ -68,6 +74,7 @@ export async function updateSession(request: NextRequest) {
     // page's real check sends them back here and the two redirect forever.
     // Only auth pages pay for this round trip.
     const { data: verified, error } = await supabase.auth.getUser();
+    if (isUnreachableError(error)) return response;
     if (error || !verified.user) {
       await supabase.auth.signOut({ scope: "local" });
       return response;

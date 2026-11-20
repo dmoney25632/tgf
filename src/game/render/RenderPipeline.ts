@@ -6,6 +6,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { QualityPreset } from "../config";
 import { analyzeHdri, getAtmosphere } from "./Atmosphere";
 import { loadHdri } from "../assets/AssetLoader";
+import { dynamicResolutionBudget, snapRefreshMs } from "./dynamicResolution";
 
 // -----------------------------------------------------------------------------
 // Look
@@ -39,10 +40,13 @@ const POST = {
   aoIntensity: 5.5,
   aoBias: 0.06,
   vignette: 0.38,
-  grain: 0.03,
+  /** Film grain amplitude; re-seeded at GRAIN_HZ (per-frame noise reads as TV static at 120+ Hz). */
+  grain: 0.014,
   chromaticAberration: 0.0035,
   /** Contrast-adaptive sharpening (0..~0.25; CAS's "sharpness" mapped to its weight). */
-  sharpen: 0.16,
+  sharpen: 0.1,
+  /** Extra sharpening per unit of resolution lost to dynamic resolution (upscale blur). */
+  sharpenUpscale: 0.3,
   shafts: 0.3,
   /** Eye adaptation: 0 = fixed exposure, 1 = everything ends up mid-grey. */
   adaptStrength: 0.5,
@@ -54,6 +58,8 @@ const POST = {
    */
   adaptRef: 0.3,
 };
+
+const GRAIN_HZ = 24;
 
 const f = (n: number) => n.toFixed(5);
 const v3 = (a: number[]) => `vec3(${a.map(f).join(", ")})`;
@@ -86,6 +92,27 @@ vec3 CustomToneMapping( vec3 color ) {
 	color = AgXToneMapping( color );
 	return pow( ihGrade( pow( color, vec3( 1.0 / 2.2 ) ) ), vec3( 2.2 ) );
 }`,
+  );
+}
+
+let specularAaInstalled = false;
+/**
+ * Specular anti-aliasing (Kaplanyan & Hoffman-style): widen roughness by the
+ * screen-space variance of the shading normal, so normal-mapped metal, wet
+ * concrete and corrugated sheeting don't sparkle and crawl as the view moves.
+ * Only kicks in where the normal changes faster than a pixel can resolve.
+ */
+export function installSpecularAa() {
+  if (specularAaInstalled) return;
+  specularAaInstalled = true;
+  const C = THREE.ShaderChunk as Record<string, string>;
+  const anchor = "material.roughness += geometryRoughness;";
+  if (!C.lights_physical_fragment.includes(anchor)) return;
+  C.lights_physical_fragment = C.lights_physical_fragment.replace(
+    anchor,
+    `${anchor}
+vec3 ihDn = fwidth( normal );
+material.roughness = sqrt( material.roughness * material.roughness + min( dot( ihDn, ihDn ) * 0.5, 0.18 ) );`,
   );
 }
 
@@ -477,6 +504,8 @@ export class RenderPipeline {
   private upFails = 0;
   private lastUpAt = -1;
   private clock = 0;
+  /** Display refresh interval (ms), learned from the fastest sustained frame pacing. */
+  private refreshMs = 1000 / 60;
   /** Bumps whenever the drawing-buffer size changes (dynamic resolution). */
   resolutionVersion = 0;
   private readonly warmup: GpuWarmup;
@@ -492,6 +521,7 @@ export class RenderPipeline {
     private readonly sun: THREE.DirectionalLight,
   ) {
     installGradeToneMapping();
+    installSpecularAa();
     // Canvas MSAA only matters on low (post draws one full-screen triangle into it).
     this.renderer = new THREE.WebGLRenderer({ antialias: true,powerPreference: "high-performance", stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -502,6 +532,8 @@ export class RenderPipeline {
     this.envIntensity = atmo?.def.envIntensity ?? 0.3;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.autoClear = false;
+    // The info-log queries block on the driver; only worth it while developing.
+    this.renderer.debug.checkShaderErrors = process.env.NODE_ENV !== "production";
     // Count draw calls across all passes of a frame (reset in render()).
     this.renderer.info.autoReset = false;
     this.timer = new GpuTimer(this.renderer.getContext() as WebGL2RenderingContext);
@@ -515,7 +547,9 @@ export class RenderPipeline {
     this.warmup = new GpuWarmup(this.renderer);
     this.warmup.watch(scene);
     this.warmup.watch(viewScene);
-    this.warmup.wake(15000);
+    // Behind the loading screen / deploy card: compile and upload everything up front.
+    this.warmup.eager(8000);
+    this.warmup.holdForPrograms(4000);
     this.warmScenes = [scene, viewScene];
     this.warmCameras = [camera, viewCamera];
 
@@ -623,10 +657,18 @@ export class RenderPipeline {
         if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
         else if (m) m.needsUpdate = true;
       });
+      this.warmup.invalidatePrograms();
     }
 
     this.buildPost();
     this.setSize(this.width, this.height);
+    // Cut-out foliage gets alpha-to-coverage wherever the world pass is
+    // multisampled (MSAA target, or the antialiased canvas on low): smooth,
+    // non-crawling leaf edges instead of a 1-bit alpha test.
+    const msaa = q.postProcessing ? q.msaaSamples > 0 : this.renderer.getContext().getContextAttributes()?.antialias === true;
+    this.warmup.setPolicy({ anisotropy: q.anisotropy, alphaToCoverage: msaa });
+    this.warmup.target = this.post?.scene ?? null;
+    this.warmup.eager(3000);
   }
 
   private disposePost() {
@@ -794,7 +836,12 @@ export class RenderPipeline {
     p.shaftB?.setSize(qw, qh);
     p.bloom.forEach((t, i) => t.setSize(Math.max(1, W >> (i + 1)), Math.max(1, H >> (i + 1))));
     if (this.aoMat) this.aoMat.uniforms.depthTexel.value.set(1 / W, 1 / H);
-    if (this.fxaaMat) this.fxaaMat.uniforms.resolution.value.set(1 / W, 1 / H);
+    if (this.fxaaMat) {
+      this.fxaaMat.uniforms.resolution.value.set(1 / W, 1 / H);
+      // Native resolution only needs a light touch (sharpening amplifies
+      // shimmer); upscaled frames get more to win back the lost crispness.
+      this.fxaaMat.uniforms.sharpen.value = Math.min(0.22, POST.sharpen + POST.sharpenUpscale * Math.max(0, 1 - this.scale));
+    }
   }
 
   private pass(mat: THREE.Material, target: THREE.WebGLRenderTarget | null) {
@@ -863,6 +910,13 @@ export class RenderPipeline {
   render(dt = 1 / 60) {
     this.warmup.update(this.warmScenes, this.warmCameras);
     const r = this.renderer;
+    if (this.warmup.holding) {
+      // Still behind the loading screen and shaders are linking in parallel:
+      // skip this frame rather than block on a half-compiled program.
+      r.setRenderTarget(null);
+      r.clear();
+      return;
+    }
     r.info.reset();
     this.timer.begin();
     const p = this.post;
@@ -873,7 +927,8 @@ export class RenderPipeline {
       r.clearDepth();
       r.render(this.viewScene, this.viewCamera);
     } else {
-      const time = (performance.now() / 1000) % 1000;
+      // Grain/time re-seeds at film rate, not per frame (static-free at high refresh).
+      const time = (Math.floor((performance.now() / 1000) * GRAIN_HZ) / GRAIN_HZ) % 1000;
       r.setRenderTarget(p.scene);
       r.clear();
       r.render(this.scene, this.camera);
@@ -965,18 +1020,20 @@ export class RenderPipeline {
     if (this.windowTime < 0.5) return;
     const avg = this.windowSum / this.windowFrames;
     this.windowSum = this.windowFrames = this.windowTime = 0;
+    this.learnRefresh(avg);
     const gpu = this.timer.ms;
-    const target = q.targetFrameMs;
+    const { target, floor } = dynamicResolutionBudget(q, this.refreshMs, avg);
     let next = this.scale;
-    if (avg > target * 1.1) {
+    if (avg > target * 1.1 && this.scale > floor + 0.01) {
       if (gpu > 0 && gpu < target * 0.55) return; // CPU-bound: fewer pixels won't help
       // Pixel cost ~ scale²: aim straight for the budget, at most one big step.
-      next = Math.max(q.minResolutionScale, this.scale * Math.max(0.85, Math.sqrt(target / avg)));
+      next = Math.max(floor, this.scale * Math.max(0.85, Math.sqrt(target / avg)));
       if (this.clock - this.lastUpAt < 2.5) {
         this.upFails++;
         this.upHold = Math.min(60, 4 * 2 ** this.upFails);
       }
-    } else if (this.upHold <= 0 && this.scale < q.resolutionScale && avg < target * 1.03) {
+    } else if (this.upHold <= 0 && this.scale < q.resolutionScale && avg < (this.scale < floor - 0.01 ? q.targetFrameMs * 0.85 : target * 1.03)) {
+      // Below the high-refresh floor only the 60 fps budget matters: climb back to it.
       next = Math.min(q.resolutionScale, this.scale + 0.05);
       this.lastUpAt = this.clock;
       this.upHold = gpu > 0 && gpu < target * 0.7 ? 1 : 3;
@@ -987,6 +1044,22 @@ export class RenderPipeline {
     this.renderer.setPixelRatio(this.basePixelRatio * this.scale);
     this.setSize(this.width, this.height);
     this.settle = 0.3;
+  }
+
+  /**
+   * Learns the display's refresh rate from frame pacing: the fastest 0.5 s
+   * average seen (frames can't come faster than vsync), snapped to a common
+   * rate. Starts at 60 Hz, so a 120/144 Hz screen is found the first time the
+   * game runs at full speed.
+   */
+  private learnRefresh(avgMs: number) {
+    if (avgMs <= 0 || avgMs > this.refreshMs * 0.94) return;
+    this.refreshMs = snapRefreshMs(avgMs);
+  }
+
+  /** Learned display refresh interval (ms). */
+  get displayRefreshMs() {
+    return this.refreshMs;
   }
 
   dispose() {
@@ -1008,3 +1081,4 @@ export class RenderPipeline {
     this.renderer.domElement.remove();
   }
 }
+

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import type { SurvivalGameMode } from "@/game/survival/SurvivalGameMode";
 import type { ShopCategory, ShopItem, ShopView } from "@/game/survival/ShopSystem";
 import { PAD_FOCUS_CSS, useGamepadNav, viaFromEvent, type DeviceSnapshot } from "./gamepad";

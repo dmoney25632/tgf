@@ -16,14 +16,13 @@ type Props = {
   next?: string;
   initialError?: string;
   /** Shown above the form, e.g. "Co-op needs an account". */
-  notice?: string;
   offline: boolean;
   oauthProviders?: OAuthProvider[];
 };
 
 const PROVIDER_LABEL: Record<OAuthProvider, string> = { github: "GitHub", google: "Google", discord: "Discord" };
 
-export function AuthForm({ mode, next, initialError, notice, offline, oauthProviders = [] }: Props) {
+export function AuthForm({ mode, next, initialError, offline, oauthProviders = [] }: Props) {
   const [state, action, pending] = useActionState<AuthState, FormData>(mode === "login" ? login : signup, {
     error: initialError,
   });
@@ -41,7 +40,6 @@ export function AuthForm({ mode, next, initialError, notice, offline, oauthProvi
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {offline && <OfflineNotice />}
-        {notice && !offline && <FormMessage tone="info">{notice}</FormMessage>}
         <form action={action} className="flex flex-col gap-4">
           <input type="hidden" name="next" value={next ?? "/play/iron-horizon"} />
           {!isLogin && (

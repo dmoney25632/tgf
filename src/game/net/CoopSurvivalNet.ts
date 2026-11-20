@@ -103,6 +103,7 @@ export class CoopSurvivalNet implements SurvivalNet {
 
   // Host.
   private readonly encoder: SnapshotEncoder;
+  private lastKeyRequest = -1e9;
   private readonly validator = new HitValidator();
   private snapAcc = 0;
   private readonly events: HostEvent[] = [];
@@ -117,8 +118,14 @@ export class CoopSurvivalNet implements SurvivalNet {
 
   // Client.
   private readonly decoder = new SnapshotDecoder();
+  /** Decoder dropped a delta (gap / reorder) and is waiting for a keyframe. */
+  private get wantKeyframe() {
+    return this.decoder.dropped > 0 && !this.decoder.isSynced;
+  }
   private readonly hostClock = new ClockSync();
   private readonly snapQueue: SnapshotPayload[] = [];
+  /** Arrival time (performance.now) of each queued snapshot, for clock sync. */
+  private readonly snapArrivals: number[] = [];
   private readonly proxies = new Map<number, RemoteEnemy>();
   private myVitals: PlayerVitals | null = null;
   private lastSnapAt = 0;
@@ -171,6 +178,7 @@ export class CoopSurvivalNet implements SurvivalNet {
   get stats() {
     return {
       role: this.role, slot: this.slot, proxies: this.proxies.size, decoderDropped: this.decoder.dropped,
+      hostJitterMs: Math.round(this.hostClock.jitterMs), hostDelayMs: Math.round(this.hostClock.delayFor(this.streamDelay(this.rates.snapshotHz))),
       hitsAccepted: this.validator.accepted, hitsRejected: this.validator.rejected,
       peers: [...this.peers.values()].map((p) => ({ slot: p.slot, name: p.name, connected: p.connected, heard: p.heard })),
     };
@@ -214,6 +222,7 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (this.role !== "client" || sp?.m !== this.setup.matchId) return;
       if (typeof sp.h === "string") this.onState({ m: sp.m, b: sp.h }); // host pose
       this.snapQueue.push(sp);
+      this.snapArrivals.push(performance.now());
     }));
     this.offs.push(t.on("bye", (p) => this.onBye(p as { id: string; m?: string })));
     this.offs.push(t.onPresence((list) => {
@@ -313,6 +322,11 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (Array.isArray(payload.c)) for (const c of payload.c.slice(0, MAX_CLAIMS_PER_MSG)) if (Array.isArray(c) && c.length === 6) p.claims.push(c);
       if (Array.isArray(payload.x)) for (const x of payload.x.slice(0, 4)) if (Array.isArray(x) && x.length === 3) p.explosions.push(x);
       if (Array.isArray(payload.buy)) for (const b of payload.buy.slice(0, 16)) if (Array.isArray(b) && typeof b[0] === "string") p.buys.push(b);
+      // A client's delta decoder lost sync: heal with a keyframe (rate-limited).
+      if (payload.k === 1 && now - this.lastKeyRequest > 250) {
+        this.lastKeyRequest = now;
+        this.encoder.forceKeyframe();
+      }
     }
   }
 
@@ -379,7 +393,8 @@ export class CoopSurvivalNet implements SurvivalNet {
       slot: this.slot,
       seq: (this.stateSeq = (this.stateSeq + 1) & 0xffff),
       time: now,
-      x: p.position.x, y: p.position.y, z: p.position.z,
+      // Frame-interpolated feet: sampled at exactly `now`, so remote interpolation sees an even path.
+      x: p.feetPosition.x, y: p.feetPosition.y, z: p.feetPosition.z,
       yaw: p.yaw, pitch: p.pitch,
       crouch: p.crouching || p.sliding, sprint: p.sprinting, slide: p.sliding, grounded: p.grounded,
       ads: ctx.weapons.adsAmount > 0.5,
@@ -395,6 +410,7 @@ export class CoopSurvivalNet implements SurvivalNet {
     if (this.claims.length) payload.c = this.claims.splice(0, MAX_CLAIMS_PER_MSG);
     if (this.explosions.length) payload.x = this.explosions.splice(0);
     if (this.buys.length) payload.buy = this.buys.splice(0);
+    if (this.role === "client" && this.wantKeyframe) payload.k = 1;
     return payload;
   }
 
@@ -658,8 +674,11 @@ export class CoopSurvivalNet implements SurvivalNet {
   // ---------------------------------------------------------------------------
 
   private drainSnapshots(now: number) {
-    while (this.snapQueue.length) {
-      const payload = this.snapQueue.shift()!;
+    const q = this.snapQueue;
+    const n = q.length;
+    for (let i = 0; i < n; i++) {
+      const payload = q[i];
+      const arrived = this.snapArrivals[i] ?? now;
       this.lastSnapAt = now;
       let snap = null;
       try {
@@ -668,7 +687,8 @@ export class CoopSurvivalNet implements SurvivalNet {
         snap = null;
       }
       if (snap) {
-        this.hostClock.observe(snap.time, now);
+        // Arrival time, not this frame's time: frame quantisation would read as jitter.
+        this.hostClock.observe(snap.time, arrived);
         this.applyWaves(snap.wave, snap.phase, snap.timer, snap.remaining);
         for (const v of snap.players) {
           if (v.slot === this.slot) this.myVitals = v;
@@ -683,6 +703,8 @@ export class CoopSurvivalNet implements SurvivalNet {
       // Events are independent of delta sync.
       if (Array.isArray(payload.e)) for (const ev of payload.e) this.onHostEvent(ev);
     }
+    q.length = 0;
+    this.snapArrivals.length = 0;
   }
 
   private applyWaves(wave: number, phaseIdx: number, timer: number, remaining: number) {
@@ -852,13 +874,13 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (!av) continue;
       const v = p.vitals;
       const status = !p.connected ? "OFFLINE" : v.dead ? "KIA" : v.downed ? "DOWN" : canShop && p.last?.ready ? "READY" : "";
-      av.update(dt, p.clock.renderTime(now, this.rates.interpMs), {
-        crouched: !!p.last?.crouch,
-        downed: v.downed && !v.dead,
-        dead: v.dead,
-        connected: p.connected && p.heard,
-        status,
-      });
+      const as = this.avatarState;
+      as.crouched = !!p.last?.crouch;
+      as.downed = v.downed && !v.dead;
+      as.dead = v.dead;
+      as.connected = p.connected && p.heard;
+      as.status = status;
+      av.update(dt, p.clock.renderTime(now, this.streamDelay(p.entry.id === this.setup.hostId ? this.rates.snapshotHz : this.rates.stateHz)), as);
       if (!av.visible) {
         p.pendingShots = 0;
         continue;
@@ -873,6 +895,17 @@ export class CoopSurvivalNet implements SurvivalNet {
         }
       }
     }
+  }
+
+  private readonly avatarState = { crouched: false, downed: false, dead: false, connected: false, status: "" };
+
+  /**
+   * Minimum interpolation delay for a stream sent at `hz`: one send interval
+   * plus a little slack. ClockSync raises it when the link is jittery, so a
+   * calm connection shows teammates/enemies with the least possible lag.
+   */
+  private streamDelay(hz: number) {
+    return Math.ceil(1000 / hz) + NET.INTERP_SLACK_MS;
   }
 
   private teammateShot(p: Peer) {
@@ -891,7 +924,7 @@ export class CoopSurvivalNet implements SurvivalNet {
   }
 
   private updateProxies(dt: number, now: number) {
-    const rt = this.hostClock.renderTime(now, this.rates.interpMs);
+    const rt = this.hostClock.renderTime(now, this.streamDelay(this.rates.snapshotHz));
     for (const e of this.proxies.values()) {
       if (!e.active) continue;
       e.update(dt, rt);
@@ -1069,9 +1102,16 @@ export class CoopSurvivalNet implements SurvivalNet {
     }
   }
 
+  private readonly peerOrder: Peer[] = [];
+
   teamRows(out: TeamRow[]) {
     const canShop = this.mode.canShop;
-    for (const p of [...this.peers.values()].sort((a, b) => a.slot - b.slot)) {
+    if (this.peerOrder.length !== this.peers.size) {
+      this.peerOrder.length = 0;
+      for (const p of this.peers.values()) this.peerOrder.push(p);
+      this.peerOrder.sort((a, b) => a.slot - b.slot);
+    }
+    for (const p of this.peerOrder) {
       const v = p.vitals;
       out.push({
         name: p.name,

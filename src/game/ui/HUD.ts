@@ -1,5 +1,6 @@
 import type { WeaponStats } from "../weapons/WeaponSystem";
 import { actionGlyph, glyphContext } from "./Glyphs";
+import { TOUCH_HUD_STYLE } from "../mobile/hudStyle";
 
 export type HitKind = "body" | "head" | "kill" | "headkill";
 
@@ -52,7 +53,7 @@ const STYLE = `
 .ih-hud .ih-num{font-family:${HUD_MONO};font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .ih-hud .ih-cap{font-size:10px;font-weight:600;letter-spacing:.24em;text-transform:uppercase}
 .ih-hud .ih-panel{background:linear-gradient(90deg,rgba(8,10,8,0),rgba(8,10,8,.42) 30%,rgba(8,10,8,.42) 70%,rgba(8,10,8,0))}
-`;
+${TOUCH_HUD_STYLE}`;
 
 const PPD = 3.4; // compass pixels per degree
 const COMPASS_W = 340;
@@ -208,15 +209,16 @@ export class HUD {
       `position:absolute;left:50%;top:12px;width:min(${COMPASS_W}px,56vw);height:26px;transform:translateX(-50%);overflow:hidden;` +
         "-webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);",
       this.root,
+      "ih-compass",
     );
     this.compassStrip = div("position:absolute;left:50%;top:0;height:26px;will-change:transform;", compass);
     this.compassStrip.innerHTML = buildCompassSvg();
-    const marker = div("position:absolute;left:50%;top:36px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;", this.root);
+    const marker = div("position:absolute;left:50%;top:36px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;", this.root, "ih-compass-mark");
     div(`width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid ${HUD_ACCENT};`, marker);
     this.compassDeg = div("font-size:11px;font-weight:600;opacity:.85;", marker, "ih-num");
 
     // ---- Bottom-left: health -------------------------------------------------
-    this.healthWrap = div("position:absolute;left:28px;bottom:28px;width:188px;transition:opacity 200ms;", this.root);
+    this.healthWrap = div("position:absolute;left:28px;bottom:28px;width:188px;transition:opacity 200ms;", this.root, "ih-health");
     const hpRow = div("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px;", this.healthWrap);
     div("opacity:.7;", hpRow, "ih-cap").textContent = "Health";
     this.healthText = div("font-size:14px;font-weight:700;", hpRow, "ih-num");
@@ -227,7 +229,7 @@ export class HUD {
     this.armorFill = div("height:100%;width:100%;background:#78b4f0;transform-origin:left;transform:scaleX(0);transition:transform 160ms;", abar);
 
     // ---- Bottom-right: weapon ----------------------------------------------
-    const wb = div("position:absolute;right:30px;bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;", this.root);
+    const wb = div("position:absolute;right:30px;bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;", this.root, "ih-weapon");
     this.status = div(`font-size:11px;font-weight:700;letter-spacing:.2em;color:${HUD_ACCENT};min-height:18px;display:flex;align-items:center;gap:6px;transition:opacity 150ms;`, wb);
     this.slots = div("display:flex;gap:4px;margin-bottom:2px;", wb);
     this.weaponName = div("opacity:.85;font-size:11px;", wb, "ih-cap");
@@ -240,8 +242,8 @@ export class HUD {
     this.grenadeEl = div("display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:700;opacity:.92;", wb);
 
     // ---- Top-right: killfeed -------------------------------------------------
-    this.feed = div("position:absolute;right:22px;top:58px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;", this.root);
-    this.fps = div("position:absolute;right:12px;top:10px;font-size:10px;opacity:.5;", this.root, "ih-num");
+    this.feed = div("position:absolute;right:22px;top:58px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;", this.root, "ih-feed");
+    this.fps = div("position:absolute;right:12px;top:10px;font-size:10px;opacity:.5;", this.root, "ih-num ih-fps");
 
     // ---- Scoreboard (Tab) ---------------------------------------------------
     this.scoreboard = div(

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 
 /** Route-level fallback for unexpected runtime errors. */
@@ -21,7 +21,7 @@ export default function Error({ error, retry }: { error: unknown; retry: () => v
           Try again
         </button>
         <Link href="/play/iron-horizon" className={cn(buttonVariants({ variant: "outline" }))}>
-          Dashboard
+          Lobby
         </Link>
       </div>
     </main>

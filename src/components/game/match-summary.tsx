@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef } from "react";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 import type { MatchSummary } from "@/game/core/GameMode";
 import { ENEMIES, type EnemyType } from "@/game/survival/config";

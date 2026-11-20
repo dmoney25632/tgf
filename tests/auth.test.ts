@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   authErrorMessage,
   defaultNextFor,
+  isUnreachableError,
   loginErrorMessage,
   parseConfirmType,
   parseOAuthProviders,
@@ -57,4 +58,14 @@ test("error messages never echo arbitrary text", () => {
   assert.equal(authErrorMessage({ code: "invalid_credentials" }), "Wrong email or password.");
   assert.match(authErrorMessage({ message: "db detail leaked", status: 500 }), /Something went wrong/);
   assert.match(authErrorMessage({ status: 429 }), /Too many/);
+});
+
+test("an unreachable Supabase is reported as such, not as signed out", () => {
+  const network = { name: "AuthRetryableFetchError", message: "fetch failed", status: 0 };
+  assert.equal(isUnreachableError(network), true);
+  assert.equal(isUnreachableError({ status: 503 }), true);
+  assert.equal(isUnreachableError({ code: "invalid_credentials", status: 400 }), false);
+  assert.equal(isUnreachableError(null), false);
+  assert.match(authErrorMessage(network), /Can't reach the sign-in server/);
+  assert.equal(loginErrorMessage("unreachable"), authErrorMessage(network));
 });

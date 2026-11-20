@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { getBrowserClient } from "@/lib/supabase/client";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId } from "@/game/survival/config";
 import { PRIMARY_IDS, SECONDARY_IDS, WEAPONS, type WeaponId } from "@/game/weapons/weapons";
 import { NET } from "@/game/net/protocol";
@@ -153,6 +152,8 @@ export function CoopApp({
     }
   }, [loadout]);
 
+  /** A launch for us arrived (or we rejoined a match): the join watchdog stands down. */
+  const launchSeenRef = useRef(false);
   const leaveRoom = useCallback((reason: string | null = null) => {
     transportRef.current?.close();
     transportRef.current = null;
@@ -183,6 +184,8 @@ export function CoopApp({
         const q = new URLSearchParams(devParams ?? window.location.search);
         t = new LocalTransport(id, roomCode, { latencyMs: Number(q.get("lag")) || 0, jitterMs: Number(q.get("jitter")) || 0, loss: Number(q.get("loss")) || 0 });
       } else {
+        // Loaded on demand: keeps supabase-js out of the lobby bundle.
+        const { getBrowserClient } = await import("@/lib/supabase/client");
         const client = getBrowserClient();
         if (!client) throw new Error("Online play isn't configured on this deployment.");
         const { SupabaseTransport } = await import("@/game/net/supabaseTransport");
@@ -192,7 +195,10 @@ export function CoopApp({
       t.onPresence((list) => setPeers([...list]));
       t.on("launch", (p) => {
         const l = p as CoopLaunch;
-        if (l && Array.isArray(l.roster) && l.roster.some((r) => r.id === id)) setLaunch((cur) => cur ?? l);
+        if (l && Array.isArray(l.roster) && l.roster.some((r) => r.id === id)) {
+          launchSeenRef.current = true;
+          setLaunch((cur) => cur ?? l);
+        }
       });
       await t.connect();
       const joined = Date.now();
@@ -207,7 +213,9 @@ export function CoopApp({
       if (!host) {
         window.setTimeout(() => {
           const tr = transportRef.current;
-          if (tr !== t) return;
+          // Already launched: a slow presence sync (busy main
+          // thread while the match loads) must not kick us out of a live match.
+          if (tr !== t || launchSeenRef.current) return;
           const list = tr.peers();
           const h = list.find((p) => p.host);
           if (!h) leaveRoom(`Room ${roomCode} not found. Check the code with your host.`);
@@ -269,6 +277,7 @@ export function CoopApp({
     }
     if (!next || played.includes(next.matchId)) return;
     const l = next;
+    launchSeenRef.current = true;
     queueMicrotask(() => {
       setPlayed((p) => [...p, l.matchId]);
       setLaunch(l);

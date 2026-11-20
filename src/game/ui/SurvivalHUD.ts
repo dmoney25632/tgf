@@ -34,7 +34,7 @@ export type SurvivalHudFrame = {
  * What the HUD is currently asking of the player. Read by the engine so the
  * gamepad's X knows whether a tap reloads or a hold interacts.
  */
-export const hudSignals = { interact: false };
+export const hudSignals = { interact: false, /** Between waves: "[N] READY" is on offer (touch shows a READY button). */ ready: false };
 
 const NUM_POOL = 28;
 const TEAM_MAX = 4;
@@ -96,11 +96,12 @@ export class SurvivalHUD {
 
   constructor(container: HTMLElement) {
     hudSignals.interact = false;
+    hudSignals.ready = false;
     this.root = div("position:absolute;inset:0;pointer-events:none;user-select:none;overflow:hidden;", container, "ih-hud");
     this.root.style.cssText += `color:${HUD_FG};font-family:${HUD_SANS};text-shadow:0 1px 2px rgba(0,0,0,.6);`;
 
     // ---- Top-left: wave + team ----------------------------------------------------
-    const tl = div("position:absolute;left:26px;top:20px;width:210px;", this.root);
+    const tl = div("position:absolute;left:26px;top:20px;width:210px;", this.root, "ih-s-wave");
     this.waveLabel = div("opacity:.7;", tl, "ih-cap");
     this.waveLabel.textContent = "Wave";
     const wn = div("display:flex;align-items:baseline;gap:6px;line-height:1;margin-top:2px;", tl);
@@ -124,7 +125,7 @@ export class SurvivalHUD {
     }
 
     // ---- Top centre (under the compass): boss bar ---------------------------------
-    this.boss = div("position:absolute;left:50%;top:66px;transform:translateX(-50%);width:min(440px,70vw);display:none;", this.root);
+    this.boss = div("position:absolute;left:50%;top:66px;transform:translateX(-50%);width:min(440px,70vw);display:none;", this.root, "ih-s-boss");
     this.bossName = div("color:#ff8a6a;text-align:center;margin-bottom:5px;", this.boss, "ih-cap");
     const bb = div("height:5px;background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(255,120,90,.35);overflow:hidden;", this.boss);
     this.bossFill = div("height:100%;width:100%;background:linear-gradient(90deg,#b8261a,#ff5a3a);transform-origin:left;transition:transform 120ms;", bb);
@@ -136,12 +137,12 @@ export class SurvivalHUD {
     this.bannerSub = div("font-size:12px;font-weight:600;letter-spacing:.26em;opacity:.88;margin-top:10px;", this.bannerWrap);
 
     // ---- Bottom-left (above health): money -----------------------------------------
-    const m = div("position:absolute;left:28px;bottom:78px;", this.root);
+    const m = div("position:absolute;left:28px;bottom:78px;", this.root, "ih-s-money");
     this.moneyPops = div("display:flex;flex-direction:column;align-items:flex-start;gap:1px;font-size:12px;font-weight:600;color:#c8f0a0;margin-bottom:3px;", m);
     this.money = div("font-size:24px;font-weight:700;color:#a6e57a;", m, "ih-num");
 
     // ---- Prompt ---------------------------------------------------------------------
-    this.prompt = div("position:absolute;left:50%;top:calc(50% + 96px);transform:translateX(-50%);text-align:center;display:none;", this.root);
+    this.prompt = div("position:absolute;left:50%;top:calc(50% + 96px);transform:translateX(-50%);text-align:center;display:none;", this.root, "ih-s-prompt");
     this.promptText = div("display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;font-weight:600;letter-spacing:.14em;padding:6px 16px;white-space:nowrap;", this.prompt, "ih-panel");
     this.promptBar = div("height:2px;margin:6px auto 0;width:160px;background:rgba(0,0,0,.5);display:none;overflow:hidden;", this.prompt);
     this.promptFill = div("height:100%;width:100%;background:#9be070;transform-origin:left;transform:scaleX(0);", this.promptBar);
@@ -181,6 +182,7 @@ export class SurvivalHUD {
     }
     const timer = Math.ceil(f.timer);
     const intermission = f.phase === "intermission" || pre;
+    hudSignals.ready = intermission;
     if (this.lPhase !== f.phase || (f.phase === "combat" && this.lRemaining !== f.remaining) || (intermission && (this.lTimer !== timer || glyphs))) {
       this.lPhase = f.phase;
       this.lRemaining = f.remaining;
@@ -379,6 +381,7 @@ export class SurvivalHUD {
 
   dispose() {
     hudSignals.interact = false;
+    hudSignals.ready = false;
     this.root.remove();
   }
 }

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getGame } from "@/lib/games";
 import { IronHorizonClient } from "@/components/game/iron-horizon-client";
+import { GameErrorBoundary, WebGLContextGuard } from "@/components/game/game-shell";
 
 export async function generateMetadata({ params }: PageProps<"/play/[gameId]">) {
   const { gameId } = await params;
@@ -34,12 +35,15 @@ async function PlayContent({ params }: Pick<PageProps<"/play/[gameId]">, "params
   switch (game.id) {
     case "iron-horizon":
       return (
-        <IronHorizonClient
-          callsign={user.callsign}
-          userId={user.offline ? null : user.id}
-          // Offline dev runs parties over the tab-to-tab loopback; a guest on a live deployment can't party.
-          partyTransport={user.offline ? (process.env.NODE_ENV !== "production" ? "local" : null) : "supabase"}
-        />
+        <GameErrorBoundary>
+          <WebGLContextGuard />
+          <IronHorizonClient
+            callsign={user.callsign}
+            userId={user.offline ? null : user.id}
+            // Offline dev runs parties over the tab-to-tab loopback; a guest on a live deployment can't party.
+            partyTransport={user.offline ? (process.env.NODE_ENV !== "production" ? "local" : null) : "supabase"}
+          />
+        </GameErrorBoundary>
       );
     default:
       notFound();

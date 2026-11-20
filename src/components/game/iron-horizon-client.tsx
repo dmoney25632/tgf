@@ -6,6 +6,7 @@ import type { EngineEvent, MatchSummary } from "@/game/core/GameMode";
 import type { SurvivalGameMode } from "@/game/survival/SurvivalGameMode";
 import type { LoadTracker } from "@/game/ui/LoadProgress";
 import { detectQuality } from "@/game/config";
+import { mobileDefaultQuality } from "@/game/mobile/device";
 import { loadSettings, sanitizeSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { saveMatch } from "@/app/play/[gameId]/actions";
 import { matchReport } from "@/game/core/matchReport";
@@ -186,7 +187,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
     let shown = 0;
     let engineAt = 0;
     const t0 = performance.now();
-    const initial = loadSettings(detectQuality());
+    const initial = loadSettings(mobileDefaultQuality() ?? detectQuality());
 
     // Progress: module download (estimated) → real asset loads through the
     // three.js loading manager → done. Timed fallback when nothing loads

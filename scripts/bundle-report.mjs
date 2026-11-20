@@ -21,7 +21,9 @@ const ROUTES = {
   "/": "index.html",
   "/login": "login.html",
   "/signup": "signup.html",
-  "/dashboard": "dashboard.html",
+  "/leaderboard": "leaderboard.html",
+  "/account": "account.html",
+  "/credits": "credits.html",
   "/play/[gameId]": "play/[gameId].html",
 };
 

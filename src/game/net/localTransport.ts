@@ -68,10 +68,35 @@ export class LocalTransport implements NetTransport {
       const now = performance.now();
       const at = Math.max(this.lastDelivery, now + latencyMs + (Math.random() * 2 - 1) * jitterMs);
       this.lastDelivery = at;
-      if (at > now) setTimeout(() => this.events.emit(w.event, w.payload), at - now);
-      else this.events.emit(w.event, w.payload);
+      if (at <= now && !this.inbox.length) {
+        this.events.emit(w.event, w.payload);
+        return;
+      }
+      // One ordered queue + one timer: separate setTimeouts round their
+      // delays to whole ms and can fire out of order, which a WebSocket never does.
+      this.inbox.push({ at, event: w.event, payload: w.payload });
+      if (this.inbox.length === 1) this.scheduleInbox();
     }
   }
+
+  private readonly inbox: { at: number; event: NetEvent; payload: unknown }[] = [];
+  private inboxTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleInbox() {
+    if (this.inboxTimer !== null || !this.inbox.length) return;
+    const wait = Math.max(0, this.inbox[0].at - performance.now());
+    this.inboxTimer = setTimeout(this.flushInbox, wait);
+  }
+
+  private flushInbox = () => {
+    this.inboxTimer = null;
+    const now = performance.now();
+    let n = 0;
+    while (n < this.inbox.length && this.inbox[n].at <= now + 0.5) n++;
+    const due = this.inbox.splice(0, n);
+    for (const m of due) this.events.emit(m.event, m.payload);
+    this.scheduleInbox();
+  };
 
   private heartbeat() {
     const now = performance.now();
@@ -135,6 +160,12 @@ export class LocalTransport implements NetTransport {
     this.post({ t: "leave", id: this.selfId });
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.inboxTimer !== null) clearTimeout(this.inboxTimer);
+    this.inboxTimer = null;
+    this.inbox.length = 0;
+    if (this.inboxTimer !== null) clearTimeout(this.inboxTimer);
+    this.inboxTimer = null;
+    this.inbox.length = 0;
     window.removeEventListener("pagehide", this.onUnload);
     this.bc.close();
     this.bc = null;

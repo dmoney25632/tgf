@@ -1,7 +1,7 @@
 import { LOOK } from "../config";
 import { buildRemap, DEFAULT_BINDINGS, type Bindings, type PadCurve } from "../ui/Settings";
 
-export type InputDevice = "kbm" | "pad";
+export type InputDevice = "kbm" | "pad" | "touch";
 export type PadLayout = "xbox" | "ps";
 
 /** W3C "standard" gamepad mapping button indices. */
@@ -80,6 +80,9 @@ export class Input {
 
   pointerLocked = false;
   padEngaged = false;
+  /** On-screen touch controls are driving play (src/game/mobile); no pointer lock. */
+  touchEngaged = false;
+  private readonly touchDown = new Set<string>();
   /** Last device the player actually used (drives HUD glyphs + aim assist). */
   device: InputDevice = "kbm";
   padLayout: PadLayout = "xbox";
@@ -130,7 +133,7 @@ export class Input {
 
   /** Engaged = playing (pointer locked or gamepad session). */
   get locked() {
-    return this.pointerLocked || this.padEngaged;
+    return this.pointerLocked || this.padEngaged || this.touchEngaged;
   }
 
   configure(cfg: InputConfig) {
@@ -145,7 +148,7 @@ export class Input {
   }
 
   isDown(code: string) {
-    return this.keyDown.has(code) || this.padDown.has(code);
+    return this.keyDown.has(code) || this.padDown.has(code) || this.touchDown.has(code);
   }
 
   /** True only on the frame the key/button went down. */
@@ -159,6 +162,17 @@ export class Input {
     this.mouseDX = 0;
     this.mouseDY = 0;
     return out;
+  }
+
+  /**
+   * Extra look input in mouse pixels (e.g. touch drag). It is consumed with
+   * the mouse delta at the start of the next frame, so every look source
+   * shares the same latest-moment path and sensitivity scaling.
+   */
+  addLookDelta(dx: number, dy: number) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    this.mouseDX += dx;
+    this.mouseDY += dy;
   }
 
   consumeWheel() {
@@ -182,9 +196,34 @@ export class Input {
     return true;
   }
 
+  /** Start a touch session (the on-screen controls feed setTouch/touchLook). */
+  engageTouch() {
+    this.releaseAll();
+    this.touchEngaged = true;
+    this.setDevice("touch");
+    this.emitEngage();
+  }
+
+  /** Touch controls hold/release a canonical code (the down edge counts as a press). */
+  setTouch(code: string, down: boolean) {
+    if (!down) this.touchDown.delete(code);
+    else if (this.touchEngaged && !this.touchDown.has(code)) {
+      if (!this.isDown(code)) this.pressedThisFrame.add(code);
+      this.touchDown.add(code);
+    }
+  }
+
+  /** Touch look, in mouse-delta units (consumed with the mouse delta). */
+  touchLook(dx: number, dy: number) {
+    if (!this.touchEngaged) return;
+    this.mouseDX += dx;
+    this.mouseDY += dy;
+  }
+
   /** Leave play (pause/menus): drops the gamepad session and the pointer lock. */
   disengage() {
     this.padEngaged = false;
+    this.touchEngaged = false;
     this.releaseAll();
     if (this.pointerLocked && document.pointerLockElement) document.exitPointerLock();
     else this.emitEngage();
@@ -210,8 +249,19 @@ export class Input {
     }
   }
 
-  /** Read the gamepad and translate it into canonical codes + axes. Once per frame. */
+  /** Touch stick (x = right, y = forward), added to the analog move axes while touch-engaged. */
+  touchMoveX = 0;
+  touchMoveY = 0;
+
+  /** Read the gamepad (+ the touch stick) into canonical codes + axes. Once per frame. */
   poll(dt: number) {
+    this.pollPad(dt);
+    if (!this.touchEngaged) return;
+    this.moveX = Math.max(-1, Math.min(1, this.moveX + this.touchMoveX));
+    this.moveY = Math.max(-1, Math.min(1, this.moveY + this.touchMoveY));
+  }
+
+  private pollPad(dt: number) {
     this.readPad();
     const gp = this.gp;
     if (!gp) {
@@ -293,7 +343,7 @@ export class Input {
 
   /** Per-frame watchdog: never let a button stick down. */
   watchdog() {
-    if (this.padEngaged && document.hidden) this.disengage();
+    if ((this.padEngaged || this.touchEngaged) && document.hidden) this.disengage();
     if (!this.locked || document.hidden || !document.hasFocus()) {
       if (this.keyDown.size) this.keyDown.clear();
       return;
@@ -455,11 +505,12 @@ export class Input {
   private onContextMenu = (e: Event) => e.preventDefault();
   private onVisibility = () => {
     this.releaseAll();
-    if (document.hidden && this.padEngaged && !this.pointerLocked) this.disengage();
+    if (document.hidden && (this.padEngaged || this.touchEngaged) && !this.pointerLocked) this.disengage();
   };
   private releaseAll = () => {
     this.keyDown.clear();
     this.padDown.clear();
+    this.touchDown.clear();
     this.pressedThisFrame.clear();
     this.buttons = 0;
     this.sprintLatch = false;

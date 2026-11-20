@@ -89,6 +89,12 @@ export class PlayerController {
   private readonly start = new THREE.Vector3();
   private readonly stepTry = new THREE.Vector3();
   private readonly renderPos = new THREE.Vector3();
+  /**
+   * Feet position interpolated to this rendered frame (what the camera
+   * shows). Net code sends this rather than the raw physics position, which
+   * lags the frame clock by a varying 0–8 ms and reads as jitter remotely.
+   */
+  readonly feetPosition = new THREE.Vector3();
 
   constructor(
     readonly camera: THREE.PerspectiveCamera,
@@ -118,6 +124,7 @@ export class PlayerController {
   spawn(pos: THREE.Vector3, yaw: number) {
     this.position.copy(pos);
     this.prevPosition.copy(pos);
+    this.feetPosition.copy(pos);
     this.velocity.set(0, 0, 0);
     this.yaw = yaw;
     this.pitch = 0;
@@ -387,6 +394,7 @@ export class PlayerController {
     this.roll += (targetRoll - this.roll) * k(10);
 
     this.renderPos.lerpVectors(this.prevPosition, this.position, alpha);
+    this.feetPosition.copy(this.renderPos);
     this.renderPos.y += this.eyeHeight + this.stepOffset - this.landKick + bobY + o.shakeY;
 
     const cam = this.camera;
