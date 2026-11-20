@@ -64,7 +64,7 @@ export async function signup(_: AuthState, formData: FormData): Promise<AuthStat
   if (callsignError || !callsign) return { error: callsignError, fields };
   const { email, error: emailError } = validateEmail(formData.get("email"));
   if (emailError || !email) return { error: emailError, fields };
-  const { password, error: passwordError } = validateNewPassword(formData.get("password"), formData.get("confirm"));
+  const { password, error: passwordError } = validateNewPassword(formData.get("password"));
   if (passwordError || !password) return { error: passwordError, fields };
 
   const supabase = await createClient();
@@ -82,7 +82,14 @@ export async function signup(_: AuthState, formData: FormData): Promise<AuthStat
       emailRedirectTo: `${site}/auth/confirm?next=/play/iron-horizon`,
     },
   });
-  if (error) return { error: authErrorMessage(error), fields };
+  if (error) {
+    // The profiles trigger rejects a callsign taken between the check above
+    // and the insert; Supabase reports that as a generic database error.
+    if (error.status === 500 && /database error saving new user/i.test(error.message ?? "")) {
+      return { error: "That callsign is taken. Pick another.", fields };
+    }
+    return { error: authErrorMessage(error), fields };
+  }
 
   // Email confirmation turned off in the dashboard: already signed in.
   if (data.session) redirect("/play/iron-horizon");

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +27,7 @@ export function AuthForm({ mode, next, initialError, offline, oauthProviders = [
     error: initialError,
   });
   const isLogin = mode === "login";
+  const [showPassword, setShowPassword] = useState(false);
 
   if (state.checkEmail) return <CheckEmailCard email={state.checkEmail} reason="signup" />;
 
@@ -54,6 +55,10 @@ export function AuthForm({ mode, next, initialError, offline, oauthProviders = [
                 maxLength={16}
                 pattern="[A-Za-z0-9_\-]{3,16}"
                 autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="h-10"
                 defaultValue={state.fields?.callsign}
                 aria-describedby="callsign-hint"
               />
@@ -68,8 +73,13 @@ export function AuthForm({ mode, next, initialError, offline, oauthProviders = [
               id="email"
               name="email"
               type="email"
+              inputMode="email"
               autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
+              className="h-10"
               defaultValue={state.fields?.email}
             />
           </div>
@@ -85,19 +95,31 @@ export function AuthForm({ mode, next, initialError, offline, oauthProviders = [
             <Input
               id="password"
               name="password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               autoComplete={isLogin ? "current-password" : "new-password"}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               minLength={isLogin ? undefined : 8}
               maxLength={72}
+              className="h-10"
+              aria-describedby={isLogin ? undefined : "password-hint"}
             />
-          </div>
-          {!isLogin && (
-            <div className="grid gap-2">
-              <Label htmlFor="confirm">Confirm password</Label>
-              <Input id="confirm" name="confirm" type="password" autoComplete="new-password" required minLength={8} maxLength={72} />
+            <div className="flex items-center justify-between gap-2">
+              {!isLogin ? (
+                <p id="password-hint" className="text-xs text-muted-foreground">
+                  At least 8 characters.
+                </p>
+              ) : (
+                <span />
+              )}
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground select-none">
+                <input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} className="size-3.5" />
+                Show password
+              </label>
             </div>
-          )}
+          </div>
           {state.error && (
             <FormMessage tone="error">
               {state.error}
@@ -112,7 +134,7 @@ export function AuthForm({ mode, next, initialError, offline, oauthProviders = [
             </FormMessage>
           )}
           {state.message && <FormMessage tone="success">{state.message}</FormMessage>}
-          <Button type="submit" disabled={pending || offline} className="w-full">
+          <Button type="submit" disabled={pending || offline} className="h-10 w-full">
             {pending ? "Working…" : isLogin ? "Log in" : "Create account"}
           </Button>
         </form>
