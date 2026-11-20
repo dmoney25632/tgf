@@ -31,7 +31,17 @@ export const kestrel: Dressing = (kit) => {
   const grass = (x: number, z: number) => {
     const d = Math.max(Math.abs(x), Math.abs(z));
     if (d < WALL - 0.6) return d > WALL - 3 ? 0.55 : 0;
-    return 0;
+    if (d < WALL + 0.8 || Math.abs(z + 58) < 2.5) return 0; // wall foot, track under the power line
+    // Farmland meadow: dense, thinning in worn patches.
+    const n = fbm2(x * 0.05 + 11, z * 0.05 - 3, 3);
+    return Math.min(1, 0.95 - smoothstep(0.62, 0.75, n) * 0.7);
+  };
+  const tallGrass = (x: number, z: number) => {
+    const d = Math.max(Math.abs(x), Math.abs(z));
+    if (d < WALL + 1.2 || Math.abs(z + 58) < 3) return 0;
+    if (d < WALL + 3.5) return 0.7; // unmown strip against the wall
+    const n = fbm2(x * 0.06 - 5, z * 0.06 + 9, 3);
+    return smoothstep(0.48, 0.62, n) * 0.85;
   };
 
   for (const w of boxes.filter((b) => b.tag === "wall")) {
@@ -52,7 +62,7 @@ export const kestrel: Dressing = (kit) => {
   for (let x = -180; x <= 180; x += 32) poles.push({ x, y: height(x, -58), z: -58, rotY: Math.PI / 2 });
   poleLine(B, poles, r, 1.0);
 
-  const trees = scatterTrees(130, 50, 180, r, (x, z) => Math.abs(z + 58) < 5);
+  const trees = [...scatterTrees(130, 50, 180, r, (x, z) => Math.abs(z + 58) < 5), ...scatterTrees(45, 47, 85, r, (x, z) => Math.abs(z + 58) < 5)];
   const bushes: BushPlacement[] = [];
   for (let i = 0; i < 40; i++) {
     const a = (r() * 2 - 1) * 38;
@@ -63,6 +73,6 @@ export const kestrel: Dressing = (kit) => {
   }
   return {
     terrain: { height, splat, inner: 60, outer: 700 },
-    foliage: { grass, grassBounds: 42, trees, bushes },
+    foliage: { grass, grassBounds: 75, trees, bushes, tallGrass, tallGrassBounds: 85 },
   };
 };
