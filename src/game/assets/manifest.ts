@@ -93,7 +93,7 @@ export const EXTRA_MATERIAL_TEXTURES = {
 export type ExtraMaterialName = keyof typeof EXTRA_MATERIAL_TEXTURES;
 
 /** Optional HDRI sky. Set to null to always use the procedural sky. */
-export const HDRI: { file: string } | null = { file: "hdri/overcast_soil_puresky_2k.hdr" };
+export const HDRI: { file: string } | null = { file: "hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr" };
 
 export type ModelId =
   | "wooden_crate_01"
