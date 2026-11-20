@@ -273,6 +273,21 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
   for (const b of BONES) B[b] = new GeoBuilder();
   // Decorrelate camo between bones (and left/right).
   BONES.forEach((b, i) => B[b].uvOffset.set(i * 0.37, i * 0.61));
+  // Field wear: dust kicked up over the boots and shins, ground in at the knees,
+  // scuffed elbows and gloves, a little everywhere else (part-local metres).
+  const ss = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  for (const ft of ["footR", "footL"] as const) B[ft].wear = (p) => 0.75 + 0.25 * ss(0.0, -0.08, p.y);
+  for (const sh of ["shinR", "shinL"] as const) B[sh].wear = (p, n) => 0.12 + 0.75 * ss(-0.15, -0.42, p.y) + 0.45 * ss(-0.1, 0.0, p.y) * ss(0.2, 0.8, n.z);
+  for (const th of ["thighR", "thighL"] as const) B[th].wear = (p, n) => 0.1 + 0.25 * ss(-0.25, -0.43, p.y) * ss(0.0, 0.7, n.z);
+  for (const fa of ["fArmR", "fArmL"] as const) B[fa].wear = (p) => 0.12 + 0.35 * ss(-0.04, 0.02, p.y) + 0.2 * ss(-0.2, -0.27, p.y);
+  for (const hd of ["handR", "handL"] as const) B[hd].wear = () => 0.35;
+  for (const ua of ["uArmR", "uArmL"] as const) B[ua].wear = () => 0.1;
+  B.pelvis.wear = (p) => 0.12 + 0.12 * ss(0.0, -0.13, p.y);
+  B.spine.wear = (p) => 0.1 + 0.08 * ss(0.15, 0.0, p.y);
+  B.head.wear = () => 0.08;
   const add = (bone: BoneName, g: THREE.BufferGeometry, p: Paint, m?: THREE.Matrix4, fn?: ColorFn) => B[bone].add(g, p, m, fn);
 
   // =========================================================================
@@ -381,6 +396,17 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
       add("spine", rbox(0.052, 0.034, 0.024, 6, 4, 0.2), poly, T(x, 0.178, 0.172, -0.04));
     }
     add("spine", rbox(0.19, 0.07, 0.026, 8, 4, 0.3), vest, T(0, 0.29, 0.162, -0.08));
+    // Front plate bulk, dangler pouch under the plate, cummerbund side pouches,
+    // a frag pouch and a tourniquet on the shoulder strap.
+    add("spine", rbox(0.25, 0.27, 0.02, 8, 4, 0.4), shade(webbing, 0.92), T(0, 0.22, 0.112, -0.06));
+    add("spine", rbox(0.2, 0.075, 0.05, 8, 4, 0.4), vestD, T(0, 0.025, 0.15, 0.08));
+    for (const sd of [1, -1]) {
+      add("spine", rbox(0.06, 0.1, 0.05, 8, 4, 0.35), vestD, sided(sd, T(-0.165, 0.09, 0.06, 0, sd * 0.0 - 0.9)));
+      add("spine", rbox(0.05, 0.03, 0.022, 6, 4, 0.2), poly, sided(sd, T(-0.172, 0.15, 0.064, 0, -0.9)));
+    }
+    add("spine", ellipsoid(0.03, 0.036, 0.03, 8, 6), vestD, T(-0.15, 0.085, 0.115));
+    add("spine", cyl(0.016, 0.016, 0.09, 8), paint(0x161616, SURF.nylon, 0.85), T(-0.092, 0.3, 0.12, -0.55, 0, 0.1));
+    add("spine", rbox(0.024, 0.02, 0.024, 4, 4, 0.2), paint(0x8a1a14, SURF.hard, 0.6), T(-0.092, 0.345, 0.128, -0.55));
     add("spine", rbox(0.05, 0.13, 0.068, 8, 4, 0.3), vestD, T(0.176, 0.13, -0.03));
     add("spine", cyl(0.004, 0.006, 0.3, 4), poly, T(0.178, 0.33, -0.065, 0, 0, -0.12));
     // IR marker on the shoulder strap (team-coloured glow).
@@ -597,7 +623,8 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
     const fa: BoneName = side > 0 ? "fArmR" : "fArmL";
     const hd: BoneName = side > 0 ? "handR" : "handL";
     const S = (m: THREE.Matrix4) => sided(side, m);
-    const aw = armoured ? w * 1.04 : 1;
+    // Loose combat shirt sleeves (not on bare / rolled arms).
+    const aw = armoured ? w * 1.04 : sleeves === "long" ? 1.1 : 1;
     // Bare skin (tattooed right arm on the tank-top look).
     const bareArm = sleeves === "tank" && side > 0 ? inked : skin;
     if (sleeves === "tank") {
@@ -647,6 +674,7 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
       add(hd, new THREE.BoxGeometry(0.018, 0.034, 0.017), glove, S(T(len - 0.004, -0.085, z)));
     }
     add(hd, new THREE.BoxGeometry(0.02, 0.045, 0.021), glove, S(T(0.016, -0.04, 0.045, 0, 0, 0.5)));
+    if (!armoured) add(hd, rbox(0.012, 0.024, 0.07, 4, 4, 0.5), rubber, S(T(-0.02, -0.09, 0.0))); // hard knuckle guard
     add(hd, new THREE.BoxGeometry(0.035, 0.019, 0.019), glove, S(T(0.04, -0.06, 0.04, 0, -0.35, 0)));
   }
 
@@ -658,7 +686,8 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
     const sh: BoneName = side > 0 ? "shinR" : "shinL";
     const ft: BoneName = side > 0 ? "footR" : "footL";
     const S = (m: THREE.Matrix4) => sided(side, m);
-    const lw = armoured ? w : 1;
+    // Baggy combat trousers on the lighter kits.
+    const lw = armoured ? w : 1.13;
     add(th, loft([{ y: -0.43, rx: 0.055 * lw, rz: 0.057 * lw }, { y: -0.3, rx: 0.066 * lw, rz: 0.07 * lw }, { y: -0.15, rx: 0.08 * lw, rz: 0.086 * lw, cz: 0.006 }, { y: -0.02, rx: 0.088 * lw, rz: 0.094 * lw }, { y: 0.06, rx: 0.084 * lw, rz: 0.09 * lw, cx: 0.008 }], 12, false, false), uni, S(T()));
     add(th, rbox(0.03, 0.12, 0.1, 6, 4, 0.3), shade(uni, 0.92), S(T(-0.082 * lw, -0.2, 0.0)));
     if (side > 0 && !armoured && kit !== "sniper") {
@@ -676,11 +705,15 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
     add(sh, ellipsoid(0.056 * lw, 0.052, 0.06 * lw, 8, 6), uni, S(T(0, 0, 0.002)));
     add(sh, loft([{ y: -0.33, rx: 0.044 * lw, rz: 0.046 * lw }, { y: -0.26, rx: 0.046 * lw, rz: 0.048 * lw }, { y: -0.13, rx: 0.055 * lw, rz: 0.06 * lw, cz: -0.01 }, { y: -0.05, rx: 0.054 * lw, rz: 0.057 * lw, cz: -0.004 }, { y: 0.03, rx: 0.056 * lw, rz: 0.058 * lw }], 10, false, false), uni, S(T()));
     add(sh, loft([{ y: -0.43, rx: 0.052, rz: 0.062, cz: 0.006, p: 2.4 }, { y: -0.36, rx: 0.051, rz: 0.058, cz: 0.002 }, { y: -0.28, rx: 0.05, rz: 0.055 }], 10, false, false), boot, S(T()));
+    if (!armoured) {
+      // Trouser bloused over the boot top: a bunched, slightly flared roll.
+      add(sh, loft([{ y: -0.31, rx: 0.057, rz: 0.064, cz: 0.004 }, { y: -0.285, rx: 0.061, rz: 0.067, cz: 0.003 }, { y: -0.25, rx: 0.055, rz: 0.06 }], 10, false, false), shade(uni, 0.9), S(T()));
+    }
     if (armoured) {
       add(sh, rbox(0.11 * w, 0.27, 0.045, 8, 4, 0.3), plate, S(T(0, -0.17, 0.06 * w)));
       add(sh, ellipsoid(0.065, 0.06, 0.04, 8, 6), plateD, S(T(0, -0.01, 0.06 * w)));
     } else {
-      add(sh, rbox(0.088, 0.105, 0.034, 8, 3, 0.4), poly, S(T(0, -0.02, 0.058, 0.1)));
+      add(sh, rbox(0.094, 0.11, 0.04, 8, 3, 0.45), poly, S(T(0, -0.02, 0.064, 0.1)));
       add(sh, loft([{ y: -0.065, rx: 0.059, rz: 0.062 }, { y: -0.045, rx: 0.059, rz: 0.062 }], 10, false, false), strap, S(T()));
     }
     // Boot: upper, toe, sole (sole bottom at ground: y = -RIG.ankle).
@@ -742,7 +775,8 @@ function build(look: LookDef, variant: number, lod: number): BodyBuild {
   // =========================================================================
   const eb = (side: number) => {
     const b = new GeoBuilder();
-    const aw = armoured ? w * 1.04 : 1;
+    // Loose combat shirt sleeves (not on bare / rolled arms).
+    const aw = armoured ? w * 1.04 : sleeves === "long" ? 1.1 : 1;
     b.add(loft([{ y: -0.16, rx: 0.051 * aw, rz: 0.053 * aw }, { y: -0.11, rx: 0.055 * aw, rz: 0.057 * aw }], 10, false, false), paint(0xffffff), sided(side, T(armoured ? -0.004 : 0)));
     return b.merge()!;
   };

@@ -36,7 +36,7 @@ export function sssLightsChunk() {
 	vec3 hmW = vec3( 0.5, 0.26, 0.18 ) * hmSssAmt;
 	vec3 hmSssIrr = clamp( ( dot( geometryNormal, directLight.direction ) + hmW ) / ( 1.0 + hmW ), 0.0, 1.0 ) * directLight.color;`,
     )
-    .replace("reflectedLight.directDiffuse += irradiance * diffuseBRDF", "reflectedLight.directDiffuse += hmSssIrr * diffuseBRDF");
+    .replace("reflectedLight.directDiffuse += irradiance * diffuseBRDF", "reflectedLight.directDiffuse += hmSssIrr * diffuseBRDF * ( 1.0 - F );\n\t// Cloth: fibres scatter light at grazing angles (soft sheen, no plastic highlight).\n\treflectedLight.directDiffuse += hmSheen * directLight.color * saturate( dot( geometryNormal, directLight.direction ) + 0.25 ) * pow( 1.0 - saturate( dot( geometryNormal, geometryViewDir ) ), 4.0 ) * 0.35 * ( diffuseBRDF * 3.14159 + 0.04 )");
 }
 
 const VERT_HEAD = /* glsl */ `
@@ -44,8 +44,12 @@ attribute vec4 aMat;
 varying vec4 vMat;
 flat varying float vSurf;
 varying vec2 vCamoUv;
+attribute float aWear;
+varying float vWear;
 `;
 const FRAG_HEAD = /* glsl */ `
+varying float vWear;
+float hmSheen = 0.0;
 uniform sampler2D camoMap;
 uniform sampler2D foldMap;
 uniform vec3 uSkinTone;
@@ -95,6 +99,13 @@ diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.03, 0.04, 0.05 ), clamp( hmInk
 float vFabN = step( 0.5, hmFab ) * ( 1.0 - hmSkin );
 diffuseColor.rgb *= 1.0 + hmFibre * 0.16 * vFabN;
 hmSssAmt = hmSkin;
+// Field wear: patchy dust settled into the weave, heavier low on the body.
+vec4 hmDustN = texture2D( camoMap, vCamoUv * 3.1 + 0.53 );
+float hmDust = clamp( vWear * ( 0.55 + 0.9 * hmDustN.g ) - 0.18 + hmDustN.a * 0.25, 0.0, 1.0 ) * ( 1.0 - hmSkin );
+hmDust *= mix( 1.0, 0.6, step( hmFab, 0.5 ) ); // hard parts hold less
+vec3 hmDustC = vec3( 0.36, 0.32, 0.26 ) * ( 0.85 + 0.3 * hmDustN.b );
+diffuseColor.rgb = mix( diffuseColor.rgb, mix( diffuseColor.rgb * 0.75 + hmDustC * 0.4, hmDustC, 0.55 ), hmDust * 0.8 );
+hmSheen = vFabN * ( 1.0 - hmDust * 0.5 );
 `;
 
 const FRAG_NORMAL = /* glsl */ `mapN.xy *= normalScale * vFabN;
@@ -130,7 +141,7 @@ export function uberMaterial(skinTone = 0xb08a6a) {
     shader.uniforms.camoMap = { value: camo };
     shader.uniforms.foldMap = { value: folds };
     shader.uniforms.uSkinTone = { value: tone };
-    shader.vertexShader = VERT_HEAD + shader.vertexShader.replace("#include <uv_vertex>", "#include <uv_vertex>\n\tvMat = aMat;\n\tvSurf = aMat.x;\n\tvCamoUv = uv;");
+    shader.vertexShader = VERT_HEAD + shader.vertexShader.replace("#include <uv_vertex>", "#include <uv_vertex>\n\tvMat = aMat;\n\tvSurf = aMat.x;\n\tvCamoUv = uv;\n\tvWear = aWear;");
     shader.fragmentShader =
       FRAG_HEAD +
       shader.fragmentShader
@@ -138,13 +149,13 @@ export function uberMaterial(skinTone = 0xb08a6a) {
         .replace("#include <color_fragment>", "#include <color_fragment>\n" + FRAG_COLOR)
         .replace(
           "#include <roughnessmap_fragment>",
-          "#include <roughnessmap_fragment>\n\troughnessFactor = clamp( vMat.y * ( 1.0 + hmFibre * 0.25 * vFabN ) + hmMolle * ( 1.0 - hmStrap ) * 0.1, 0.05, 1.0 );\n\troughnessFactor = mix( roughnessFactor, 0.62 + hmFibre * 0.2, hmSkin );",
+          "#include <roughnessmap_fragment>\n\troughnessFactor = clamp( vMat.y * ( 1.0 + hmFibre * 0.25 * vFabN ) + hmMolle * ( 1.0 - hmStrap ) * 0.1, 0.05, 1.0 );\n\troughnessFactor = mix( roughnessFactor, 0.62 + hmFibre * 0.2, hmSkin );\n\troughnessFactor = mix( roughnessFactor, 0.97, hmDust * 0.85 );",
         )
         .replace("#include <metalnessmap_fragment>", "#include <metalnessmap_fragment>\n\tmetalnessFactor = vMat.z;")
         .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", FRAG_NORMAL))
         .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += hmBase * vMat.w;");
   };
-  m.customProgramCacheKey = () => "iron-horizon-soldier-v4";
+  m.customProgramCacheKey = () => "iron-horizon-soldier-v5";
   ubers.set(skinTone, m);
   return m;
 }

@@ -196,6 +196,8 @@ export class GeoBuilder {
   private readonly parts: THREE.BufferGeometry[] = [];
   /** UV offset so mirrored / repeated parts don't show identical camo. */
   uvOffset = new THREE.Vector2();
+  /** Wear / dust amount 0..1 per vertex (part-local position and normal); 0 when unset. */
+  wear: ((p: THREE.Vector3, n: THREE.Vector3) => number) | null = null;
 
   add(src: THREE.BufferGeometry, pt: Paint, m?: THREE.Matrix4, colorFn?: ColorFn, keepUv = false) {
     const minPart = MIN_PART[QUALITY.lod];
@@ -235,6 +237,7 @@ export class GeoBuilder {
     const col = new Float32Array(count * 3);
     const mat = new Float32Array(count * 4);
     const uv = new Float32Array(count * 2);
+    const wr = new Float32Array(count);
     const p = new THREE.Vector3(), n = new THREE.Vector3(), c = new THREE.Color();
     const ox = this.uvOffset.x, oy = this.uvOffset.y;
     for (let i = 0; i < count; i++) {
@@ -249,6 +252,7 @@ export class GeoBuilder {
       mat[i * 4 + 1] = pt.rough;
       mat[i * 4 + 2] = pt.metal;
       mat[i * 4 + 3] = pt.emit;
+      wr[i] = this.wear ? Math.min(1, Math.max(0, this.wear(p, n))) : 0;
       // Box projection in metres: consistent texel density on every part.
       const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
       let u: number, v: number;
@@ -267,6 +271,7 @@ export class GeoBuilder {
     }
     g.setAttribute("color", new THREE.BufferAttribute(col, 3));
     g.setAttribute("aMat", new THREE.BufferAttribute(mat, 4));
+    g.setAttribute("aWear", new THREE.BufferAttribute(wr, 1));
     g.setAttribute("uv", srcUv && srcUv.count === count ? srcUv : new THREE.BufferAttribute(uv, 2));
     this.parts.push(g);
     if (!src.userData.keep) src.dispose();

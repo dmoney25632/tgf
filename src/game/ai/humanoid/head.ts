@@ -360,6 +360,7 @@ uniform float uGrime;
 uniform float uSweat;
 uniform float uBrow;
 float hmSssAmt = 1.0;
+float hmSheen = 0.0;
 float hmH( vec2 p ) { return fract( sin( dot( p, vec2( 127.1, 311.7 ) ) ) * 43758.5453 ); }
 float hmEll( vec2 p, vec2 c, vec2 r ) { vec2 d = ( p - c ) / r; return dot( d, d ); }
 float hmN( vec2 p ) {
@@ -586,7 +587,7 @@ export function faceMaterial(look: FaceLook) {
         .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n" + FRAG_ROUGH)
         .replace("#include <normal_fragment_maps>", THREE.ShaderChunk.normal_fragment_maps.replace("mapN.xy *= normalScale;", "mapN.xy *= normalScale * ( 1.0 - hmEye ) * ( 1.0 - hmCloth * 0.6 );\n" + FRAG_NORMAL));
   };
-  m.customProgramCacheKey = () => "iron-horizon-face-v5";
+  m.customProgramCacheKey = () => "iron-horizon-face-v6";
   materials.set(key, m);
   return m;
 }
