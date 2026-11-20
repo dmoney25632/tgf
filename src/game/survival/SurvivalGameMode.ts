@@ -96,6 +96,7 @@ export class SurvivalGameMode implements GameMode {
     this.loadout = new PlayerLoadout(config.operator, config.primary, config.secondary);
     const op = this.loadout.operator;
     this.loadout.apply(ctx.weapons);
+    ctx.weapons.infiniteSecondary = true;
     ctx.weapons.resetAmmo();
     ctx.viewmodel.setOperatorColors(op.colors.glove, op.colors.sleeve);
     ctx.viewmodel.setWeapon(ctx.weapons.active.def);
@@ -645,12 +646,18 @@ export class SurvivalGameMode implements GameMode {
     }
     layout.ammoCrates.forEach((c, i) => {
       if (this.prompt || Math.hypot(c.x - p.x, c.z - p.z) > CRATE_RANGE) return;
-      if (!this.canShop) {
-        this.prompt = "AMMO CRATE RESTOCKS BETWEEN WAVES";
-        return;
-      }
-      if (this.crateUsed[i]) {
-        this.prompt = "CRATE EMPTY UNTIL NEXT INTERMISSION";
+      // Mid-wave (or once the free restock is used): buy a full resupply here.
+      if (!this.canShop || this.crateUsed[i]) {
+        const price = this.shop.ammoPrice;
+        const full = ctx.weapons.slots.every((s) => s.ammo >= s.def.magSize && s.reserve >= Math.round(s.def.reserveAmmo * ctx.weapons.mods.reserve));
+        this.prompt = full ? "AMMO FULL" : `[F] BUY AMMO  ·  $${price}  (YOU HAVE $${this.wallet.money})`;
+        if (!full && input.pressed("KeyF")) {
+          const r = this.buy("ammo");
+          if (r.ok) {
+            ctx.sfx.reload("magIn");
+            this.shud.showBanner("RESUPPLIED", `-$${price}`, 1.2, "#ffc845");
+          } else this.shud.showBanner(r.message.toUpperCase(), "", 1.2, "#ff5a4a");
+        }
         return;
       }
       this.prompt = "[F] RESUPPLY AMMO (FREE)";

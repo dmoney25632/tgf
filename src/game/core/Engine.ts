@@ -600,7 +600,7 @@ export class GameEngine {
     f.viewportH = this.viewH;
     f.crosshairHide = Math.max(ads, this.player.sprintBlend, this.weapons.lowered, this.weapons.meleeProgress >= 0 || this.grenades.throwProgress >= 0 ? 1 : 0);
     f.ammo = w.ammo;
-    f.reserve = w.reserve;
+    f.reserve = this.weapons.unlimited(w) ? -1 : w.reserve;
     f.magSize = w.def.magSize;
     f.weaponName = w.def.name;
     f.weaponKind = w.def.kind;

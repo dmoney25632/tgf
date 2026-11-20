@@ -11,6 +11,9 @@ export function SiteHeader({ user, hideNav }: { user?: SessionUser | null; hideN
         </Link>
         {user ? (
           <div className="flex items-center gap-3">
+            <Link href="/leaderboard" className="text-sm text-muted-foreground hover:text-foreground">
+              Leaderboard
+            </Link>
             <Link
               href="/account"
               className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline"

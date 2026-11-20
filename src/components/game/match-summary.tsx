@@ -81,6 +81,9 @@ export function MatchSummaryView({
           <button type="button" onClick={onLobby} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11 flex-1")}>
             Change loadout
           </button>
+          <Link href="/leaderboard" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11")}>
+            Leaderboard
+          </Link>
           <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
             Dashboard
           </Link>

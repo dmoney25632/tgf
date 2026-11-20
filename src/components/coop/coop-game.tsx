@@ -14,6 +14,7 @@ import { detectQuality } from "@/game/config";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { saveMatch } from "@/app/play/[gameId]/actions";
+import { matchReport } from "@/game/core/matchReport";
 import { ShopOverlay } from "@/components/game/shop-overlay";
 import { MatchSummaryView } from "@/components/game/match-summary";
 
@@ -52,7 +53,7 @@ export function CoopGame({
       setSummary(e.summary);
       setShopOpen(false);
       const s = e.summary;
-      saveMatch({ gameId: "iron-horizon", mode: "survival-coop", map: s.map, kills: s.kills, deaths: s.timesDowned, shotsFired: s.shotsFired, shotsHit: s.shotsHit, won: s.victory })
+      saveMatch(matchReport(s, "survival-coop"))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
         .catch(() => setSaved("Stats not saved (network error)."));
     }

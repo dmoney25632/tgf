@@ -328,7 +328,10 @@ export function Lobby({
               <button type="button" onClick={() => onDeploy(c)} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 gap-2 text-base font-bold tracking-wide")}>
                 {survival && party ? "Play solo" : "Deploy"} {dev.device === "pad" && <PadGlyph btn="MENU" layout={dev.layout} />}
               </button>
-              <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
+              <Link href="/leaderboard" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-12")}>
+            Leaderboard
+          </Link>
+          <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
                 Dashboard
               </Link>
             </div>

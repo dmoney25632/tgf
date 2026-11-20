@@ -38,6 +38,9 @@ async function DashboardContent() {
             <Link href="/play/iron-horizon" className={cn(buttonVariants({ size: "lg" }), "h-14 px-10 text-lg font-bold tracking-wide")}>
               Play
             </Link>
+            <Link href="/leaderboard" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-14 px-8 text-lg")}>
+              Leaderboard
+            </Link>
           </div>
         </section>
       </main>

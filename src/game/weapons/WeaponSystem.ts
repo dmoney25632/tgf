@@ -149,6 +149,14 @@ export class WeaponSystem {
     this.adsAmount = 0;
   }
 
+  /** Survival: the sidearm never runs dry (reserve stays full, HUD shows the infinity sign). */
+  infiniteSecondary = false;
+
+  /** True when this slot's reserve is unlimited. */
+  unlimited(slot: Slot) {
+    return this.infiniteSecondary && slot.def.slot === "secondary";
+  }
+
   /** Refill reserves (fraction of max) and top up magazines. */
   refillAmmo(fraction = 1) {
     for (const s of this.slots) {
@@ -492,7 +500,8 @@ export class WeaponSystem {
     if (t >= 1) {
       const take = Math.min(def.magSize - slot.ammo, slot.reserve);
       slot.ammo += take;
-      slot.reserve -= take;
+      if (this.unlimited(slot)) slot.reserve = Math.round(def.reserveAmmo * this.mods.reserve);
+      else slot.reserve -= take;
       this.reloadDuration = 0;
       this.hooks.onReload("done", def);
     }

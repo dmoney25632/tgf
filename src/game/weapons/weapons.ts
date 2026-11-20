@@ -8,7 +8,7 @@
  *   spread.*                    — hip-fire cone and sustained-fire bloom
  *   viewKick / shake            — how hard each shot *looks* and *feels*
  */
-export type WeaponClass = "Assault Rifle" | "SMG" | "Shotgun" | "Marksman" | "LMG" | "Sidearm" | "Hand Cannon";
+export type WeaponClass = "Assault Rifle" | "SMG" | "Shotgun" | "Marksman" | "Sniper Rifle" | "LMG" | "Sidearm" | "Hand Cannon";
 export type ViewModelKind = "rifle" | "smg" | "shotgun" | "dmr" | "lmg" | "pistol" | "revolver";
 
 export type WeaponDef = {
@@ -114,12 +114,13 @@ export const WEAPONS = {
     sound: { crack: 1.2, body: 1.4, thump: 1.6, tail: 1.4, volume: 1.15, pitch: 0.75 }, model: "shotgun",
   },
   longreach: {
-    id: "longreach", name: "Longreach DMR", kind: "Marksman", slot: "primary", price: 1500,
-    auto: false, rpm: 240, damage: 78, pellets: 1, headMultiplier: 2.0, limbMultiplier: 0.85,
-    falloffStart: 80, falloffEnd: 150, minDamage: 60, range: 400,
-    magSize: 10, reserveAmmo: 60, reloadTime: 2.4, reloadEmptyTime: 2.9,
-    adsTime: 0.32, adsFov: 28, scope: true, mobility: 0.94, sprintOutTime: 0.25, swapTime: 0.48,
-    spread: { hip: 3.6, ads: 0, move: 3, air: 4, perShot: 0.8, max: 2, recovery: 5 },
+    // Sniper: one shot drops any regular enemy, anywhere on the body, at any range.
+    id: "longreach", name: "Longreach SR", kind: "Sniper Rifle", slot: "primary", price: 1500,
+    auto: false, rpm: 75, damage: 600, pellets: 1, headMultiplier: 2.5, limbMultiplier: 1,
+    falloffStart: 400, falloffEnd: 500, minDamage: 600, range: 500,
+    magSize: 6, reserveAmmo: 48, reloadTime: 2.2, reloadEmptyTime: 2.7,
+    adsTime: 0.26, adsFov: 22, scope: true, mobility: 0.95, sprintOutTime: 0.22, swapTime: 0.45,
+    spread: { hip: 2.6, ads: 0, move: 2.4, air: 4, perShot: 0.5, max: 2, recovery: 6 },
     recoil: { pattern: [[2.6, 0.2]], jitterPitch: 0.35, jitterYaw: 0.4, kickScale: 1, adsScale: 0.75, snap: 30, recovery: 6, recoveryDelay: 0.08 },
     viewKick: { back: 0.07, up: 0.09, side: 0.02, roll: 0.03 }, shake: 0.24,
     sound: { crack: 1.5, body: 1.1, thump: 1.2, tail: 1.6, volume: 1.15, pitch: 0.85 }, model: "dmr",

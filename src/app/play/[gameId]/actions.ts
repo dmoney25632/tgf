@@ -13,6 +13,10 @@ export type MatchReport = {
   shotsFired: number;
   shotsHit: number;
   won: boolean;
+  /** Survival: highest wave cleared this run (0 for other modes). */
+  wave?: number;
+  headshots?: number;
+  score?: number;
 };
 
 const clampInt = (n: unknown, max: number) => Math.max(0, Math.min(max, Math.floor(Number(n) || 0)));
@@ -34,15 +38,19 @@ export async function saveMatch(report: MatchReport): Promise<{ ok: boolean; err
   if (!data?.claims) return { ok: false, error: "not signed in" };
 
   const shotsFired = clampInt(report.shotsFired, 100000);
+  const kills = clampInt(report.kills, 500);
   const { error } = await supabase.rpc("record_match", {
     p_game_id: report.gameId,
     p_mode: String(report.mode).slice(0, 32),
     p_map: String(report.map).slice(0, 64),
-    p_kills: clampInt(report.kills, 500),
+    p_kills: kills,
     p_deaths: clampInt(report.deaths, 500),
     p_shots_fired: shotsFired,
     p_shots_hit: Math.min(shotsFired, clampInt(report.shotsHit, 100000)),
     p_won: Boolean(report.won),
+    p_wave: clampInt(report.wave, 1000),
+    p_headshots: Math.min(kills, clampInt(report.headshots, 500)),
+    p_score: clampInt(report.score, 10000000),
   });
   if (!error) return { ok: true };
   // Don't echo raw database errors to the client.

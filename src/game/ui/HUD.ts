@@ -330,7 +330,7 @@ export class HUD {
     }
     if (this.lReserve !== f.reserve) {
       this.lReserve = f.reserve;
-      this.reserve.textContent = String(f.reserve);
+      this.reserve.textContent = f.reserve < 0 ? "∞" : String(f.reserve);
     }
     if (this.lWeapon !== f.weaponName) {
       this.lWeapon = f.weaponName;

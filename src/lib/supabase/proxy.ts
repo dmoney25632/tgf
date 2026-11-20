@@ -6,7 +6,7 @@ import { SUPABASE_KEY, SUPABASE_URL, isSupabaseConfigured } from "./config";
  * Routes that require a signed-in user (when Supabase is configured; in
  * offline/guest mode nothing is gated here and pages decide for themselves).
  */
-const PROTECTED_PREFIXES = ["/dashboard", "/play", "/account", "/coop"];
+const PROTECTED_PREFIXES = ["/dashboard", "/play", "/account", "/coop", "/leaderboard"];
 /** Routes a signed-in user should skip. */
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/check-email"];
 

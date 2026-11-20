@@ -8,6 +8,7 @@ import type { LoadTracker } from "@/game/ui/LoadProgress";
 import { detectQuality } from "@/game/config";
 import { loadSettings, sanitizeSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { saveMatch } from "@/app/play/[gameId]/actions";
+import { matchReport } from "@/game/core/matchReport";
 import { DEFAULT_CHOICE, Lobby, type LobbyChoice, type PartyActions } from "./lobby";
 import { CoopApp } from "@/components/coop/coop-app";
 import { makeRoomCode, normalizeRoomCode } from "@/game/net/transport";
@@ -171,16 +172,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
       setSummary(e.summary);
       setShopOpen(false);
       const s = e.summary;
-      saveMatch({
-        gameId: "iron-horizon",
-        mode: s.mode,
-        map: s.map,
-        kills: s.kills,
-        deaths: s.timesDowned,
-        shotsFired: s.shotsFired,
-        shotsHit: s.shotsHit,
-        won: s.victory,
-      })
+      saveMatch(matchReport(s))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
         .catch(() => setSaved("Stats not saved (network error)."));
     }
