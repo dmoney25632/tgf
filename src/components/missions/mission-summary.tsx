@@ -105,8 +105,8 @@ export function MissionSummaryView({
           <button type="button" onClick={onLobby} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11 flex-1")}>
             Mission select
           </button>
-          <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
-            Dashboard
+          <Link href="/play/iron-horizon" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
+            Lobby
           </Link>
         </div>
         {saved && <p className="mt-3 text-xs text-neutral-500">{saved}</p>}

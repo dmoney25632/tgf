@@ -23,8 +23,8 @@ export function navFor(map: MapDef) {
   return new NavGrid(world, -50, -50, 100, 100);
 }
 
-test("map registry lists both survival maps with layouts", () => {
-  assert.deepEqual(SURVIVAL_MAPS.map((m) => m.id), ["dustfall-outpost", "cinder-flats"]);
+test("map registry lists every survival map with a layout", () => {
+  assert.deepEqual(SURVIVAL_MAPS.map((m) => m.id), ["dustfall-outpost", "cinder-flats", "saltpan-gantry", "brennhollow"]);
   for (const m of SURVIVAL_MAPS) assert.ok(m.def.survival, `${m.id} has a survival layout`);
   assert.equal(new Set(MAPS.map((m) => m.id)).size, MAPS.length, "ids are unique");
 });

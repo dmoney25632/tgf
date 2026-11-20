@@ -50,7 +50,7 @@ const loginUrl = (next: string, reason?: string) =>
  * Returns the signed-in user, or redirects to /login.
  * In offline mode it returns the local guest (solo play keeps working).
  */
-export async function requireUser(next = "/dashboard"): Promise<SessionUser> {
+export async function requireUser(next = "/play/iron-horizon"): Promise<SessionUser> {
   const user = await getCurrentUser();
   if (!user) redirect(loginUrl(next));
   return user;
@@ -61,7 +61,7 @@ export async function requireUser(next = "/dashboard"): Promise<SessionUser> {
  * writes to the database need a real account. In offline mode this sends the
  * player to /login, which explains that Supabase isn't configured.
  */
-export async function requireAccount(next = "/dashboard"): Promise<SessionUser> {
+export async function requireAccount(next = "/play/iron-horizon"): Promise<SessionUser> {
   const user = await getCurrentUser();
   if (!user || user.offline) redirect(loginUrl(next, "account"));
   return user;

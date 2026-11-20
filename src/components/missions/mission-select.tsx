@@ -195,8 +195,8 @@ export function MissionSelect({
               <Link href="/play/iron-horizon" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-12")}>
                 Survival
               </Link>
-              <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
-                Dashboard
+              <Link href="/play/iron-horizon" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
+                Lobby
               </Link>
             </div>
           </section>

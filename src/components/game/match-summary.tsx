@@ -84,9 +84,6 @@ export function MatchSummaryView({
           <Link href="/leaderboard" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "h-11")}>
             Leaderboard
           </Link>
-          <Link href="/dashboard" className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
-            Dashboard
-          </Link>
         </div>
         {saved && <p className="mt-3 text-xs text-neutral-500">{saved}</p>}
       </div>

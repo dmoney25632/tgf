@@ -40,7 +40,7 @@ export function validateNewPassword(raw: unknown, confirm?: unknown): { password
  * Only allow same-site relative redirects (blocks `//evil.com`, `/\evil.com`,
  * absolute URLs and control characters).
  */
-export function safeNext(value: unknown, fallback = "/dashboard"): string {
+export function safeNext(value: unknown, fallback = "/play/iron-horizon"): string {
   const next = typeof value === "string" ? value : "";
   if (!next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return fallback;
   if (/[\u0000-\u001f\\]/.test(next)) return fallback;
@@ -70,7 +70,7 @@ export function parseConfirmType(raw: unknown): ConfirmType | null {
 export function defaultNextFor(type: ConfirmType): string {
   if (type === "recovery") return "/reset-password";
   if (type === "email_change") return "/account?updated=email";
-  return "/dashboard";
+  return "/play/iron-horizon";
 }
 
 type AuthErrorLike = { code?: string; message?: string; status?: number } | null | undefined;

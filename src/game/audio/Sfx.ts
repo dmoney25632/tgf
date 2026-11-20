@@ -13,6 +13,10 @@ type V3 = { x: number; y: number; z: number };
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  /** Weapons, world, movement (dry + reverb). */
+  private effects!: GainNode;
+  /** Hit markers, cash, wave stingers, heartbeat. */
+  private ui!: GainNode;
   private dry!: GainNode;
   private reverbSend!: GainNode;
   private noise!: AudioBuffer;
@@ -22,6 +26,9 @@ export class Sfx {
   private enemyShotsThisWindow = 0;
   private lastWhizz = 0;
   volume = 0.8;
+  effectsVolume = 1;
+  uiVolume = 0.85;
+  private hidden = false;
 
   resume() {
     if (!this.ctx) this.init();
@@ -33,25 +40,41 @@ export class Sfx {
     if (!Ctx) return;
     const ctx = (this.ctx = new Ctx());
 
-    // master → compressor → out. Compressor keeps full-auto from clipping.
+    // effects/ui buses → master → glue compressor → brick-wall limiter → out.
+    // The compressor keeps full-auto punchy without pumping; the limiter
+    // catches stacked explosions so nothing ever clips or crackles.
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.15;
-    comp.connect(ctx.destination);
+    comp.threshold.value = -16;
+    comp.knee.value = 8;
+    comp.ratio.value = 3.5;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.18;
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -2;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.08;
+    comp.connect(limiter).connect(ctx.destination);
     this.master = ctx.createGain();
-    this.master.gain.value = this.volume * 0.6;
     this.master.connect(comp);
+    this.effects = ctx.createGain();
+    this.effects.connect(this.master);
+    this.ui = ctx.createGain();
+    this.ui.connect(this.master);
+    this.applyGains();
     this.dry = ctx.createGain();
-    this.dry.connect(this.master);
+    this.dry.connect(this.effects);
+
+    // Silence (and stop burning CPU) while the tab is in the background.
+    document.addEventListener("visibilitychange", this.onVisibility);
 
     // Reverb: generated impulse response (outdoor yard slap + tail).
     const conv = ctx.createConvolver();
     conv.buffer = this.makeImpulse(1.6, 2.8);
     this.reverbSend = ctx.createGain();
     this.reverbSend.gain.value = 0.22;
-    this.reverbSend.connect(conv).connect(this.master);
+    this.reverbSend.connect(conv).connect(this.effects);
 
     const len = ctx.sampleRate * 2;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -61,8 +84,33 @@ export class Sfx {
 
   setVolume(v: number) {
     this.volume = v;
-    if (this.ctx) this.master.gain.value = v * 0.6;
+    this.applyGains();
   }
+
+  /** Per-bus levels (0..1): weapons/world and interface feedback. */
+  setMix(effects: number, ui: number) {
+    this.effectsVolume = effects;
+    this.uiVolume = ui;
+    this.applyGains();
+  }
+
+  private applyGains() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    // Short ramps so slider drags don't zipper.
+    this.master.gain.setTargetAtTime(this.volume * this.volume * 0.75, t, 0.02);
+    this.effects.gain.setTargetAtTime(this.effectsVolume, t, 0.02);
+    this.ui.gain.setTargetAtTime(this.uiVolume, t, 0.02);
+  }
+
+  private onVisibility = () => {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.hidden = document.hidden;
+    if (this.hidden) void ctx.suspend().catch(() => {});
+    else void ctx.resume().catch(() => {});
+  };
 
   /** Keep the listener on the camera for spatial impacts. */
   setListener(pos: V3, fwd: V3) {
@@ -210,14 +258,14 @@ export class Sfx {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    this.tone(this.dry, t, "sine", 1320, 1320, 0.01, 0.12, 0.002, 0.09);
-    this.tone(this.dry, t + 0.06, "sine", 1760, 1760, 0.01, 0.12, 0.002, 0.14);
+    this.tone(this.ui, t, "sine", 1320, 1320, 0.01, 0.12, 0.002, 0.09);
+    this.tone(this.ui, t + 0.06, "sine", 1760, 1760, 0.01, 0.12, 0.002, 0.14);
   }
 
   denied() {
     const ctx = this.ctx;
     if (!ctx) return;
-    this.tone(this.dry, ctx.currentTime, "square", 220, 180, 0.15, 0.12, 0.002, 0.18);
+    this.tone(this.ui, ctx.currentTime, "square", 220, 180, 0.15, 0.12, 0.002, 0.18);
   }
 
   waveStart() {
@@ -238,34 +286,34 @@ export class Sfx {
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(0.12, t + 0.4);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
-      osc.connect(filt).connect(g).connect(this.master);
+      osc.connect(filt).connect(g).connect(this.ui);
       osc.start(t);
       osc.stop(t + 2.5);
     }
-    this.tone(this.master, t, "sine", 60, 40, 1.5, 0.5, 0.01, 1.4);
+    this.tone(this.ui, t, "sine", 60, 40, 1.5, 0.5, 0.01, 1.4);
   }
 
   waveClear() {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    [523, 659, 784, 1046].forEach((f, i) => this.tone(this.master, t + i * 0.09, "triangle", f, f, 0.01, 0.16, 0.004, 0.5));
+    [523, 659, 784, 1046].forEach((f, i) => this.tone(this.ui, t + i * 0.09, "triangle", f, f, 0.01, 0.16, 0.004, 0.5));
   }
 
   downed() {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    this.tone(this.master, t, "sine", 220, 70, 1.2, 0.5, 0.01, 1.4);
-    this.noiseBurst(this.master, t, { type: "lowpass", freq: 300 }, 0.6, 0.01, 0.8);
+    this.tone(this.ui, t, "sine", 220, 70, 1.2, 0.5, 0.01, 1.4);
+    this.noiseBurst(this.ui, t, { type: "lowpass", freq: 300 }, 0.6, 0.01, 0.8);
   }
 
   heartbeat() {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    this.tone(this.dry, t, "sine", 60, 45, 0.08, 0.45, 0.005, 0.12);
-    this.tone(this.dry, t + 0.18, "sine", 55, 40, 0.08, 0.3, 0.005, 0.12);
+    this.tone(this.ui, t, "sine", 60, 45, 0.08, 0.45, 0.005, 0.12);
+    this.tone(this.ui, t + 0.18, "sine", 55, 40, 0.08, 0.3, 0.005, 0.12);
   }
 
   dryFire() {
@@ -330,20 +378,20 @@ export class Sfx {
     if (!ctx) return;
     const t = ctx.currentTime;
     if (kind === "body") {
-      this.tone(this.dry, t, "square", 1350, 1250, 0.03, 0.12, 0.0005, 0.035);
-      this.noiseBurst(this.dry, t, { type: "bandpass", freq: 5000, q: 3 }, 0.18, 0.0005, 0.02);
+      this.tone(this.ui, t, "square", 1350, 1250, 0.03, 0.12, 0.0005, 0.035);
+      this.noiseBurst(this.ui, t, { type: "bandpass", freq: 5000, q: 3 }, 0.18, 0.0005, 0.02);
     } else if (kind === "head") {
       // Bright metallic "tink".
-      this.tone(this.dry, t, "sine", 2400, 2380, 0.18, 0.22, 0.0005, 0.2);
-      this.tone(this.dry, t, "sine", 3620, 3600, 0.12, 0.12, 0.0005, 0.14);
-      this.noiseBurst(this.dry, t, { type: "highpass", freq: 6000 }, 0.2, 0.0005, 0.015);
+      this.tone(this.ui, t, "sine", 2400, 2380, 0.18, 0.22, 0.0005, 0.2);
+      this.tone(this.ui, t, "sine", 3620, 3600, 0.12, 0.12, 0.0005, 0.14);
+      this.noiseBurst(this.ui, t, { type: "highpass", freq: 6000 }, 0.2, 0.0005, 0.015);
     } else {
       // Kill: low confirm thunk + tick (+ tink for headshot kills).
-      this.tone(this.dry, t, "sine", 180, 70, 0.12, 0.5, 0.001, 0.14);
-      this.tone(this.dry, t, "square", 1100, 900, 0.05, 0.12, 0.0005, 0.06);
+      this.tone(this.ui, t, "sine", 180, 70, 0.12, 0.5, 0.001, 0.14);
+      this.tone(this.ui, t, "square", 1100, 900, 0.05, 0.12, 0.0005, 0.06);
       if (kind === "headkill") {
-        this.tone(this.dry, t + 0.01, "sine", 2600, 2580, 0.25, 0.22, 0.0005, 0.28);
-        this.tone(this.dry, t + 0.01, "sine", 3900, 3880, 0.18, 0.1, 0.0005, 0.2);
+        this.tone(this.ui, t + 0.01, "sine", 2600, 2580, 0.25, 0.22, 0.0005, 0.28);
+        this.tone(this.ui, t + 0.01, "sine", 3900, 3880, 0.18, 0.1, 0.0005, 0.2);
       }
     }
   }
@@ -511,6 +559,7 @@ export class Sfx {
   }
 
   dispose() {
+    document.removeEventListener("visibilitychange", this.onVisibility);
     void this.ctx?.close();
     this.ctx = null;
   }

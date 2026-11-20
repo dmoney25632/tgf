@@ -73,7 +73,7 @@ export async function updateSession(request: NextRequest) {
       return response;
     }
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/play/iron-horizon";
     url.search = "";
     return redirect(url);
   }

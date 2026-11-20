@@ -72,8 +72,8 @@ export default function CreditsPage() {
         </ul>
       </section>
 
-      <Link href="/dashboard" className={cn(buttonVariants({ variant: "outline" }), "self-start")}>
-        Back to the dashboard
+      <Link href="/play/iron-horizon" className={cn(buttonVariants({ variant: "outline" }), "self-start")}>
+        Back to the lobby
       </Link>
     </main>
   );

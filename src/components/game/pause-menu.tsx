@@ -83,10 +83,10 @@ export function PauseMenu(p: PauseMenuProps) {
           {p.onFullscreen && item("fullscreen", "Fullscreen", () => p.onFullscreen?.())}
           {item("lobby", p.survival ? "Abandon to lobby" : "Lobby", () => p.onLobby())}
           <Link
-            href="/dashboard"
+            href="/leaderboard"
             className="px-4 py-2.5 text-sm font-bold tracking-[0.22em] text-neutral-500 uppercase transition-colors outline-none hover:text-neutral-200"
           >
-            Exit to dashboard
+            Leaderboard
           </Link>
         </nav>
 

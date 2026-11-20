@@ -20,7 +20,7 @@ export function OfflineNotice() {
   return (
     <p className="rounded-md border border-white/40 bg-white/10 p-3 text-xs text-white">
       Guest mode: Supabase isn&apos;t configured, so accounts, co-op and saved stats are off.{" "}
-      <Link href="/dashboard" className="underline">
+      <Link href="/play/iron-horizon" className="underline">
         Play solo as a guest
       </Link>
       .

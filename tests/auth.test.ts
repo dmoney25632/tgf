@@ -16,7 +16,7 @@ import {
 test("safeNext only allows same-site relative paths", () => {
   assert.equal(safeNext("/play/iron-horizon?x=1"), "/play/iron-horizon?x=1");
   for (const bad of ["//evil.com", "/\\evil.com", "https://evil.com", "javascript:alert(1)", "/a\nb", "", null, ["/x"]]) {
-    assert.equal(safeNext(bad), "/dashboard", String(bad));
+    assert.equal(safeNext(bad), "/play/iron-horizon", String(bad));
   }
   assert.equal(safeNext("nope", "/account"), "/account");
 });
@@ -42,7 +42,7 @@ test("confirm link types and landing pages", () => {
   assert.equal(parseConfirmType("recovery"), "recovery");
   assert.equal(parseConfirmType("sms"), null);
   assert.equal(defaultNextFor("recovery"), "/reset-password");
-  assert.equal(defaultNextFor("email"), "/dashboard");
+  assert.equal(defaultNextFor("email"), "/play/iron-horizon");
 });
 
 test("OAuth providers are opt-in and whitelisted", () => {

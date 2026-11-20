@@ -30,3 +30,14 @@ test("mouse look is responsive: a 1000 px swipe at sensitivity 1 turns well past
 test("every preset leaves dynamic resolution room to drop", () => {
   for (const q of Object.values(QUALITY)) assert.ok(q.minResolutionScale < q.resolutionScale, q.label);
 });
+
+test("audio mix + vertical ratio default sensibly and clamp junk", () => {
+  const d = sanitizeSettings({});
+  assert.equal(d.effectsVolume, 1);
+  assert.equal(d.uiVolume, 0.85);
+  assert.equal(d.verticalRatio, 1);
+  const s = sanitizeSettings({ effectsVolume: 4, uiVolume: -1, verticalRatio: 9 });
+  assert.equal(s.effectsVolume, 1);
+  assert.equal(s.uiVolume, 0);
+  assert.equal(s.verticalRatio, 1.5);
+});

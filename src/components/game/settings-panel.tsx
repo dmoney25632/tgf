@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { QUALITY, type QualityName } from "@/game/config";
+import { LOOK, QUALITY, type QualityName } from "@/game/config";
 import { ACTIONS, DEFAULT_SETTINGS, FOV_RANGE, rebind, type ActionId, type GameSettings, type PadCurve } from "@/game/ui/Settings";
 import { PAD_ACTIONS } from "@/game/ui/Glyphs";
 import { radialDeadzone } from "@/game/core/Input";
@@ -71,8 +71,9 @@ export function SettingsPanel({ settings: s, onChange, dev, tab, onTab }: Props)
 
         {tab === "mouse" && (
           <>
-            <SliderRow label="Sensitivity" value={s.sensitivity} min={0.1} max={5} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => onChange({ sensitivity: v })} />
+            <SensitivityRow value={s.sensitivity} onChange={(v) => onChange({ sensitivity: v })} />
             <SliderRow label="ADS multiplier" value={s.adsSensitivity} min={0.2} max={2} step={0.05} format={(v) => `${v.toFixed(2)}×`} onChange={(v) => onChange({ adsSensitivity: v })} />
+            <SliderRow label="Vertical ratio" value={s.verticalRatio} min={0.5} max={1.5} step={0.05} format={(v) => `${v.toFixed(2)}×`} onChange={(v) => onChange({ verticalRatio: v })} />
             <ToggleRow label="Invert vertical" value={s.invertY} onChange={(v) => onChange({ invertY: v })} />
             <ToggleRow
               label="Raw input"
@@ -108,7 +109,15 @@ export function SettingsPanel({ settings: s, onChange, dev, tab, onTab }: Props)
         )}
 
         {tab === "audio" && (
-          <SliderRow label="Master volume" value={s.volume} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ volume: v })} />
+          <>
+            <SliderRow label="Master volume" value={s.volume} min={0} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ volume: v })} />
+            <SliderRow label="Effects" value={s.effectsVolume} min={0} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ effectsVolume: v })} />
+            <SliderRow label="Interface" value={s.uiVolume} min={0} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ uiVolume: v })} />
+            <p className="mt-2 px-2 text-xs leading-relaxed text-neutral-500">
+              Effects: gunfire, footsteps, impacts and explosions. Interface: hit markers, kill confirms, cash and wave cues. Audio pauses while the tab is in the
+              background.
+            </p>
+          </>
         )}
 
         {tab === "keys" && <Keybinds settings={s} onChange={onChange} />}
@@ -143,6 +152,65 @@ function SliderRow(props: { label: string; value: number; min: number; max: numb
         className="h-6 min-w-0 flex-1 accent-white"
       />
       <span className="w-14 text-right font-mono text-sm text-neutral-200 tabular-nums">{props.format(props.value)}</span>
+    </Row>
+  );
+}
+
+/**
+ * Sensitivity: slider for feel, a number box for exact values, presets, and a
+ * live "mouse travel for a full 360°" readout so it can be matched to habit.
+ */
+function SensitivityRow({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState(value.toFixed(2));
+  const [focused, setFocused] = useState(false);
+  const shown = focused ? text : value.toFixed(2);
+  const commit = (raw: string) => {
+    const v = Number(raw);
+    if (Number.isFinite(v)) onChange(Math.min(5, Math.max(0.1, Math.round(v * 100) / 100)));
+  };
+  const px360 = Math.round((Math.PI * 2) / (LOOK.baseSensitivity * value));
+  return (
+    <Row label="Sensitivity" hint={`A full 360° turn takes about ${px360.toLocaleString("en-US")} px of mouse travel. Lower = steadier aim, higher = faster turns.`}>
+      <input
+        type="range"
+        aria-label="Sensitivity"
+        min={0.1}
+        max={5}
+        step={0.01}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-6 min-w-0 flex-1 accent-white"
+      />
+      <input
+        type="number"
+        aria-label="Sensitivity value"
+        min={0.1}
+        max={5}
+        step={0.01}
+        value={shown}
+        onFocus={() => {
+          setText(value.toFixed(2));
+          setFocused(true);
+        }}
+        onChange={(e) => {
+          setText(e.target.value);
+          commit(e.target.value);
+        }}
+        onBlur={() => setFocused(false)}
+        className="h-8 w-20 rounded border border-white/15 bg-black/40 px-2 text-right font-mono text-sm tabular-nums outline-none focus:border-white/60"
+      />
+      <div className="flex gap-1">
+        {[0.6, 1, 1.5, 2.2].map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onChange(p)}
+            className={cn("rounded border px-1.5 py-0.5 font-mono text-[11px]", Math.abs(value - p) < 0.005 ? "border-white/70 bg-white/15 text-white" : "border-white/10 text-neutral-400 hover:border-white/30")}
+          >
+            {p === 1 ? "Default" : p}
+          </button>
+        ))}
+      </div>
     </Row>
   );
 }

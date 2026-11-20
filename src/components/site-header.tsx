@@ -6,7 +6,7 @@ export function SiteHeader({ user, hideNav }: { user?: SessionUser | null; hideN
   return (
     <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <Link href={user ? "/dashboard" : "/"} className="font-mono text-lg font-bold tracking-[0.3em]">
+        <Link href={user ? "/play/iron-horizon" : "/"} className="font-mono text-lg font-bold tracking-[0.3em]">
           TGF
         </Link>
         {user ? (

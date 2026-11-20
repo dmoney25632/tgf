@@ -79,13 +79,13 @@ export async function signup(_: AuthState, formData: FormData): Promise<AuthStat
     password,
     options: {
       data: { callsign }, // copied into public.profiles by the handle_new_user trigger
-      emailRedirectTo: `${site}/auth/confirm?next=/dashboard`,
+      emailRedirectTo: `${site}/auth/confirm?next=/play/iron-horizon`,
     },
   });
   if (error) return { error: authErrorMessage(error), fields };
 
   // Email confirmation turned off in the dashboard: already signed in.
-  if (data.session) redirect("/dashboard");
+  if (data.session) redirect("/play/iron-horizon");
 
   // Note: for an email that already has an account Supabase returns a fake
   // success (no email sent) so accounts can't be enumerated. Same screen.
@@ -105,7 +105,7 @@ export async function resendConfirmation(_: AuthState, formData: FormData): Prom
   const { error } = await supabase.auth.resend({
     type: "signup",
     email,
-    options: { emailRedirectTo: `${site}/auth/confirm?next=/dashboard` },
+    options: { emailRedirectTo: `${site}/auth/confirm?next=/play/iron-horizon` },
   });
   // Only surface rate limits; anything else gets the generic reply so the
   // form can't be used to probe which emails are registered.

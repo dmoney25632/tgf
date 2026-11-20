@@ -44,11 +44,17 @@ export type GameSettings = {
   autoQuality: boolean;
   // Audio
   volume: number;
+  /** Weapons, footsteps, impacts, explosions (0..1). */
+  effectsVolume: number;
+  /** Hit markers, cash, wave cues (0..1). */
+  uiVolume: number;
   // Mouse
   /** Mouse sensitivity multiplier (1 = default). */
   sensitivity: number;
   /** Extra multiplier while aiming. */
   adsSensitivity: number;
+  /** Vertical look speed relative to horizontal (1 = same). */
+  verticalRatio: number;
   invertY: boolean;
   /** Ask for unaccelerated (raw) pointer-lock movement. Off = OS pointer feel. */
   rawInput: boolean;
@@ -73,8 +79,11 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showFps: true,
   autoQuality: true,
   volume: 0.8,
+  effectsVolume: 1,
+  uiVolume: 0.85,
   sensitivity: 1,
   adsSensitivity: 1,
+  verticalRatio: 1,
   invertY: false,
   rawInput: false,
   padSensitivity: 1,
@@ -109,8 +118,11 @@ export function sanitizeSettings(raw: Partial<GameSettings> | null | undefined, 
     showFps: bool(r.showFps, d.showFps),
     autoQuality: bool(r.autoQuality, d.autoQuality),
     volume: clamp(r.volume, 0, 1, d.volume),
+    effectsVolume: clamp(r.effectsVolume, 0, 1, d.effectsVolume),
+    uiVolume: clamp(r.uiVolume, 0, 1, d.uiVolume),
     sensitivity: clamp(r.sensitivity, 0.1, 5, d.sensitivity),
     adsSensitivity: clamp(r.adsSensitivity, 0.2, 2, d.adsSensitivity),
+    verticalRatio: clamp(r.verticalRatio, 0.5, 1.5, d.verticalRatio),
     invertY: bool(r.invertY, d.invertY),
     rawInput: bool(r.rawInput, d.rawInput),
     padSensitivity: clamp(r.padSensitivity, 0.2, 3, d.padSensitivity),

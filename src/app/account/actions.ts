@@ -33,6 +33,6 @@ export async function updateCallsign(_: CallsignState, formData: FormData): Prom
   if (!data) return { error: "Profile not found. Try logging out and back in." };
 
   revalidatePath("/account");
-  revalidatePath("/dashboard");
+  revalidatePath("/play/iron-horizon");
   return { message: "Callsign updated.", callsign: data.callsign };
 }

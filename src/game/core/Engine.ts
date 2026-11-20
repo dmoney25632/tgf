@@ -217,6 +217,7 @@ export class GameEngine {
 
     this.pipeline.setQuality(preset);
     this.sfx.setVolume(this.settings.volume);
+    this.sfx.setMix(this.settings.effectsVolume, this.settings.uiVolume);
 
     document.addEventListener("pointerlockerror", this.onLockError);
     window.addEventListener("beforeunload", this.onBeforeUnload);
@@ -312,6 +313,7 @@ export class GameEngine {
       this.resize();
     }
     if (next.volume !== undefined) this.sfx.setVolume(next.volume);
+    if (next.effectsVolume !== undefined || next.uiVolume !== undefined) this.sfx.setMix(this.settings.effectsVolume, this.settings.uiVolume);
     // Switch raw/accelerated movement right away if the pointer is locked.
     if (this.settings.rawInput !== prevRaw && document.pointerLockElement === this.pipeline.canvas) this.lock();
     if (next.quality || next.autoQuality !== undefined) this.slowTime = 0;
@@ -394,7 +396,7 @@ export class GameEngine {
       const ads = this.weapons.adsAmount;
       const s = this.settings;
       const sens = LOOK.baseSensitivity * s.sensitivity * THREE.MathUtils.lerp(1, LOOK.adsSensitivityMultiplier * s.adsSensitivity, ads);
-      this.player.look(this.mouse.x, s.invertY ? -this.mouse.y : this.mouse.y, sens);
+      this.player.look(this.mouse.x, (s.invertY ? -this.mouse.y : this.mouse.y) * s.verticalRatio, sens);
       this.padLook(dt, ads);
 
       this.buildIntent();

@@ -342,8 +342,8 @@ export function CoopApp({
             <Link href="/play/iron-horizon" className={buttonVariants({ variant: "outline", size: "sm" })}>
               Solo
             </Link>
-            <Link href="/dashboard" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-              Dashboard
+            <Link href="/play/iron-horizon" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              Lobby
             </Link>
           </div>
         </div>

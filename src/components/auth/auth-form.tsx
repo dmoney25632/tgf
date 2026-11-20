@@ -43,7 +43,7 @@ export function AuthForm({ mode, next, initialError, notice, offline, oauthProvi
         {offline && <OfflineNotice />}
         {notice && !offline && <FormMessage tone="info">{notice}</FormMessage>}
         <form action={action} className="flex flex-col gap-4">
-          <input type="hidden" name="next" value={next ?? "/dashboard"} />
+          <input type="hidden" name="next" value={next ?? "/play/iron-horizon"} />
           {!isLogin && (
             <div className="grid gap-2">
               <Label htmlFor="callsign">Callsign</Label>
@@ -124,7 +124,7 @@ export function AuthForm({ mode, next, initialError, notice, offline, oauthProvi
             {oauthProviders.map((provider) => (
               <form key={provider} action={signInWithOAuth}>
                 <input type="hidden" name="provider" value={provider} />
-                <input type="hidden" name="next" value={next ?? "/dashboard"} />
+                <input type="hidden" name="next" value={next ?? "/play/iron-horizon"} />
                 <Button type="submit" variant="outline" className="w-full">
                   Continue with {PROVIDER_LABEL[provider]}
                 </Button>
