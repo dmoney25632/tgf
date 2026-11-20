@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 
 const TONES = {
   error: "border-destructive/40 bg-destructive/10 text-destructive",
-  success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-  info: "border-sky-500/40 bg-sky-500/10 text-sky-200",
+  success: "border-white/40 bg-white/10 text-white/90",
+  info: "border-white/40 bg-white/10 text-white",
 } as const;
 
 export function FormMessage({ tone, children }: { tone: keyof typeof TONES; children: ReactNode }) {
@@ -18,7 +18,7 @@ export function FormMessage({ tone, children }: { tone: keyof typeof TONES; chil
 
 export function OfflineNotice() {
   return (
-    <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+    <p className="rounded-md border border-white/40 bg-white/10 p-3 text-xs text-white">
       Guest mode: Supabase isn&apos;t configured, so accounts, co-op and saved stats are off.{" "}
       <Link href="/dashboard" className="underline">
         Play solo as a guest

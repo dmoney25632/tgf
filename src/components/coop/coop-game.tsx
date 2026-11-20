@@ -121,7 +121,7 @@ export function CoopGame({
       {showPause && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-white/10 bg-neutral-950/90 p-6 text-neutral-100">
-            <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">Iron Horizon · Online co-op</p>
+            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Online co-op</p>
             <h1 className="mt-1 text-2xl font-bold">Hold the outpost</h1>
             <p className="mt-1 text-sm text-neutral-400">{names}</p>
             <p className="mt-3 text-xs text-neutral-500">

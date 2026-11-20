@@ -53,10 +53,10 @@ export function PauseMenu(p: PauseMenuProps) {
       data-nav-default={opts.primary ? "" : undefined}
       className={cn(
         "group relative flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-bold tracking-[0.22em] uppercase transition-colors outline-none",
-        opts.active ? "bg-amber-400/12 text-amber-200" : "text-neutral-300 hover:bg-white/[0.05] hover:text-white focus-visible:bg-white/[0.05]",
+        opts.active ? "bg-white/12 text-white" : "text-neutral-300 hover:bg-white/[0.05] hover:text-white focus-visible:bg-white/[0.05]",
       )}
     >
-      <span className={cn("absolute top-0 left-0 h-full w-[3px] bg-amber-400 transition-opacity", opts.active ? "opacity-100" : "opacity-0 group-hover:opacity-60")} />
+      <span className={cn("absolute top-0 left-0 h-full w-[3px] bg-white transition-opacity", opts.active ? "opacity-100" : "opacity-0 group-hover:opacity-60")} />
       {label}
     </button>
   );
@@ -74,7 +74,7 @@ export function PauseMenu(p: PauseMenuProps) {
       <div className="flex w-full max-w-5xl animate-in flex-col gap-4 duration-300 zoom-in-[0.98] md:flex-row" onMouseDown={(e) => e.stopPropagation()}>
         {/* Left: commands */}
         <nav className="flex w-full shrink-0 flex-col border-l border-white/10 md:w-64">
-          <p className="px-4 font-mono text-[10px] tracking-[0.34em] text-amber-400/90 uppercase">Paused</p>
+          <p className="px-4 font-mono text-[10px] tracking-[0.34em] text-white/90 uppercase">Paused</p>
           <h1 className="px-4 pt-1 pb-4 text-2xl leading-tight font-black tracking-[0.04em] text-white uppercase">{p.mapName}</h1>
           {item("resume", "Resume", (e) => p.onResume(viaFromEvent(e)), { primary: true })}
           {item("settings", "Settings", () => setView("settings"), { active: view === "settings" })}
@@ -93,7 +93,7 @@ export function PauseMenu(p: PauseMenuProps) {
         {/* Right: page */}
         <section className="min-h-[420px] min-w-0 flex-1 rounded-md border border-white/10 bg-neutral-950/85 p-5 text-neutral-100 shadow-2xl">
           {p.lockError && (
-            <div role="alert" className="mb-4 rounded border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+            <div role="alert" className="mb-4 rounded border border-white/40 bg-white/10 px-3 py-2 text-sm text-white">
               The browser didn&apos;t capture the mouse. <span className="font-semibold">Click anywhere</span> (or Resume) to try again — after pressing Esc, browsers
               need about a second before the mouse can be captured again.
             </div>

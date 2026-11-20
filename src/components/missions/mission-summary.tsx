@@ -12,9 +12,9 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 const fmt = (n: number) => n.toLocaleString("en-US");
 
 const GRADE_COLOR: Record<MissionResult["grade"], string> = {
-  S: "text-amber-300",
-  A: "text-lime-300",
-  B: "text-sky-300",
+  S: "text-white/90",
+  A: "text-white/90",
+  B: "text-white/90",
   C: "text-neutral-300",
   D: "text-red-400",
 };
@@ -61,7 +61,7 @@ export function MissionSummaryView({
             <p className="font-mono text-[11px] tracking-[0.3em] text-neutral-500 uppercase">
               {r.codename} · {s.map} · {s.difficulty}
             </p>
-            <h2 className={cn("mt-1 text-4xl font-black tracking-tight", r.victory ? "text-lime-300" : "text-red-400")}>
+            <h2 className={cn("mt-1 text-4xl font-black tracking-tight", r.victory ? "text-white/90" : "text-red-400")}>
               {r.victory ? `${r.title} — complete` : "Mission failed"}
             </h2>
             <p className="mt-1 text-neutral-400">
@@ -85,7 +85,7 @@ export function MissionSummaryView({
             ))}
             <div className="mt-1 flex justify-between border-t border-white/10 pt-2 font-bold">
               <span>Score</span>
-              <span className="text-amber-300 tabular-nums">{fmt(r.score)}</span>
+              <span className="text-white/90 tabular-nums">{fmt(r.score)}</span>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">

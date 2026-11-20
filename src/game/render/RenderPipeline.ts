@@ -446,6 +446,8 @@ export class RenderPipeline {
     const canvas = this.renderer.domElement;
     canvas.style.cssText = "display:block;width:100%;height:100%;outline:none;";
     canvas.tabIndex = 0;
+    // Lets UI-only effects (the menu particle backdrop) idle while a match renders.
+    canvas.dataset.engine = "1";
     container.appendChild(canvas);
     // Spread texture uploads and shader compiles over the first frames.
     this.warmup = new GpuWarmup(this.renderer);

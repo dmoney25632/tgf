@@ -29,7 +29,7 @@ function Bars({ s }: { s: NonNullable<ShopItem["stats"]> }) {
         <div key={k} className="flex items-center gap-2 text-[10px]">
           <span className="w-8 text-neutral-500">{k}</span>
           <div className="h-1 flex-1 rounded bg-white/10">
-            <div className="h-full rounded bg-amber-300/80" style={{ width: `${Math.round(Math.max(0.04, Math.min(1, v)) * 100)}%` }} />
+            <div className="h-full rounded bg-white/80" style={{ width: `${Math.round(Math.max(0.04, Math.min(1, v)) * 100)}%` }} />
           </div>
         </div>
       ))}
@@ -87,13 +87,13 @@ export function ShopOverlay({ mode, dev, onResume }: { mode: SurvivalGameMode; d
       <div className="w-full max-w-4xl animate-in rounded-xl border border-white/10 bg-neutral-950/95 p-5 text-neutral-100 duration-300 zoom-in-[0.98] md:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="font-mono text-[11px] tracking-[0.3em] text-emerald-400/80 uppercase">
+            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">
               Armory · {mode.waves.wave > 0 ? `Wave ${mode.waves.wave} cleared` : "Pre-deployment"}
             </p>
             <h2 className="text-2xl font-black">Resupply &amp; Loadout</h2>
           </div>
           <div className="text-right">
-            <div className="font-mono text-3xl font-black text-lime-300 tabular-nums">{money(view.money)}</div>
+            <div className="font-mono text-3xl font-black text-white/90 tabular-nums">{money(view.money)}</div>
             <div className="text-xs text-neutral-500">Next wave in {Math.ceil(mode.waves.timer)}s (paused while shopping)</div>
           </div>
         </div>
@@ -107,7 +107,7 @@ export function ShopOverlay({ mode, dev, onResume }: { mode: SurvivalGameMode; d
               onClick={() => setTab(t.id)}
               className={cn(
                 "rounded-md border px-3 py-1.5 text-sm",
-                tab === t.id ? "border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 text-neutral-300 hover:border-white/25",
+                tab === t.id ? "border-white/70 bg-white/15 text-white" : "border-white/10 text-neutral-300 hover:border-white/25",
               )}
             >
               {t.label}
@@ -127,7 +127,7 @@ export function ShopOverlay({ mode, dev, onResume }: { mode: SurvivalGameMode; d
                 key={it.id}
                 className={cn(
                   "flex flex-col rounded-lg border p-3",
-                  it.status === "equipped" ? "border-amber-400/50 bg-amber-400/5" : "border-white/10 bg-white/[0.02]",
+                  it.status === "equipped" ? "border-white/50 bg-white/5" : "border-white/10 bg-white/[0.02]",
                 )}
               >
                 <div className="flex items-baseline justify-between gap-2">
@@ -168,7 +168,7 @@ export function ShopOverlay({ mode, dev, onResume }: { mode: SurvivalGameMode; d
             <Hint dev={dev} pad="Y" label="Ready up" />
           </div>
         )}
-        {toast && <p className={cn("mt-3 text-sm", toast.ok ? "text-emerald-400" : "text-red-400")}>{toast.text}</p>}
+        {toast && <p className={cn("mt-3 text-sm", toast.ok ? "text-white" : "text-red-400")}>{toast.text}</p>}
       </div>
     </div>
   );

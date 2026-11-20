@@ -40,7 +40,7 @@ export function SettingsPanel({ settings: s, onChange, dev, tab, onTab }: Props)
             onClick={() => onTab(t.id)}
             className={cn(
               "rounded px-3 py-1.5 text-xs font-semibold tracking-[0.18em] uppercase transition-colors",
-              tab === t.id ? "bg-amber-400/15 text-amber-200" : "text-neutral-400 hover:text-neutral-100",
+              tab === t.id ? "bg-white/15 text-white" : "text-neutral-400 hover:text-neutral-100",
             )}
           >
             {t.label}
@@ -132,7 +132,7 @@ function SliderRow(props: { label: string; value: number; min: number; max: numb
         step={props.step}
         value={props.value}
         onChange={(e) => props.onChange(Number(e.target.value))}
-        className="h-6 min-w-0 flex-1 accent-amber-400"
+        className="h-6 min-w-0 flex-1 accent-white"
       />
       <span className="w-14 text-right font-mono text-sm text-neutral-200 tabular-nums">{props.format(props.value)}</span>
     </Row>
@@ -148,9 +148,9 @@ function ToggleRow({ label, value, onChange, hint, extra }: { label: string; val
         aria-checked={value}
         aria-label={label}
         onClick={() => onChange(!value)}
-        className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", value ? "border-amber-400/60 bg-amber-400/30" : "border-white/15 bg-white/5")}
+        className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", value ? "border-white/60 bg-white/30" : "border-white/15 bg-white/5")}
       >
-        <span className={cn("absolute top-0.5 left-0.5 h-4.5 w-4.5 rounded-full transition-transform duration-150", value ? "translate-x-5 bg-amber-300" : "bg-neutral-400")} />
+        <span className={cn("absolute top-0.5 left-0.5 h-4.5 w-4.5 rounded-full transition-transform duration-150", value ? "translate-x-5 bg-white" : "bg-neutral-400")} />
       </button>
       <span className="text-xs font-semibold tracking-[0.18em] text-neutral-400 uppercase">{value ? "On" : "Off"}</span>
       {extra}
@@ -170,7 +170,7 @@ function ChoiceRow<T extends string>({ label, value, options, onChange, hint }: 
             onClick={() => onChange(id)}
             className={cn(
               "min-w-20 rounded border px-3 py-1.5 text-xs font-semibold tracking-[0.14em] uppercase transition-colors",
-              value === id ? "border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 text-neutral-300 hover:border-white/25",
+              value === id ? "border-white/70 bg-white/15 text-white" : "border-white/10 text-neutral-300 hover:border-white/25",
             )}
           >
             {text}
@@ -197,7 +197,7 @@ function StickTester({ deadzone, connected }: { deadzone: number; connected: boo
         const x = gp.axes[i * 2] ?? 0, y = gp.axes[i * 2 + 1] ?? 0;
         const live = radialDeadzone(x, y, deadzone, 0.04, out) > 0;
         el.style.transform = `translate(${(x * 26).toFixed(1)}px,${(y * 26).toFixed(1)}px)`;
-        el.style.background = live ? "#f0b44a" : "#737373";
+        el.style.background = live ? "#ffffff" : "#737373";
       });
     };
     raf = requestAnimationFrame(loop);
@@ -208,7 +208,7 @@ function StickTester({ deadzone, connected }: { deadzone: number; connected: boo
     <div ref={box} className="flex items-center gap-6 px-2 pt-1 pb-4" data-nav-skip>
       {["MOVE", "LOOK"].map((label) => (
         <div key={label} className="relative grid h-16 w-16 place-items-center rounded-full border border-white/15 bg-black/30">
-          <div className="absolute rounded-full border border-dashed border-amber-400/50" style={{ width: `${deadzone * 64}px`, height: `${deadzone * 64}px` }} />
+          <div className="absolute rounded-full border border-dashed border-white/50" style={{ width: `${deadzone * 64}px`, height: `${deadzone * 64}px` }} />
           <span data-dot className="h-2.5 w-2.5 rounded-full bg-neutral-500" />
           <span className="absolute -bottom-4 text-[9px] tracking-[0.2em] text-neutral-500">{label}</span>
         </div>
@@ -318,7 +318,7 @@ function Keybinds({ settings, onChange }: { settings: GameSettings; onChange: (p
             onClick={() => setCapturing(a.id)}
             className={cn(
               "flex h-8 min-w-24 items-center justify-center gap-2 rounded border px-3 text-xs transition-colors",
-              capturing === a.id ? "animate-pulse border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 hover:border-white/25",
+              capturing === a.id ? "animate-pulse border-white/70 bg-white/15 text-white" : "border-white/10 hover:border-white/25",
             )}
           >
             {capturing === a.id ? "Press a key…" : <KeyGlyph code={settings.bindings[a.id]} />}

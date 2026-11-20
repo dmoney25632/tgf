@@ -67,5 +67,6 @@ export function OperatorPreview({ operator }: { operator: OperatorDef }) {
     };
   }, [operator]);
 
-  return <div ref={ref} className="h-full w-full" />;
+  // Rendered in colour, shown in black and white to match the menu style.
+  return <div ref={ref} className="h-full w-full contrast-125 grayscale" />;
 }

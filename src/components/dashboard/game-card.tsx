@@ -21,11 +21,11 @@ export function GameCard({ game }: { game: GameEntry }) {
       )}
     >
       <div
-        className={cn("relative flex items-end p-5", game.featured ? "h-56" : "h-36")}
+        className={cn("relative flex items-end border-b border-white/10 p-5", game.featured ? "h-56" : "h-36")}
         style={{ background: game.art }}
       >
-        {/* Subtle scanline texture over the placeholder art */}
-        <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent_0_3px,rgba(0,0,0,0.18)_3px_4px)]" />
+        {/* Halftone particle layer: a dot grid that fades out from the glow. */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,.4)_1px,transparent_1.6px)] bg-size-[9px_9px] opacity-70 transition-opacity duration-500 [mask-image:linear-gradient(to_top,transparent,#000_70%)] group-hover:opacity-100" />
         <div className="relative">
           {game.featured && (
             <p className="mb-1 font-mono text-[11px] tracking-[0.25em] text-white/80 uppercase">

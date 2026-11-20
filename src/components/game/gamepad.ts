@@ -297,7 +297,7 @@ function activate(root: HTMLElement) {
 
 /** Global focus ring for pad-focused elements (render once inside a menu). */
 export const PAD_FOCUS_CSS =
-  "[data-pad-focus]{outline:2px solid #f0b44a!important;outline-offset:2px;box-shadow:0 0 0 4px rgba(240,180,74,.18)!important}";
+  "[data-pad-focus]{outline:2px solid #fff!important;outline-offset:2px;box-shadow:0 0 0 4px rgba(255,255,255,.16)!important}";
 
 /** Clicks dispatched by gamepad navigation are untrusted (`isTrusted === false`): they can't take pointer lock. */
 export function viaFromEvent(e: { nativeEvent: Event }): "pad" | undefined {

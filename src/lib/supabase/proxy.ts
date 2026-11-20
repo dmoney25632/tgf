@@ -63,6 +63,15 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (signedIn && AUTH_ROUTES.includes(path)) {
+    // A JWT can outlive its user (account deleted, session revoked). Confirm
+    // with the Auth server before bouncing away from the login form, or the
+    // page's real check sends them back here and the two redirect forever.
+    // Only auth pages pay for this round trip.
+    const { data: verified, error } = await supabase.auth.getUser();
+    if (error || !verified.user) {
+      await supabase.auth.signOut({ scope: "local" });
+      return response;
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";

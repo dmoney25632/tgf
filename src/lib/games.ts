@@ -12,7 +12,7 @@ export type GameEntry = {
   modes: string[];
   status: GameStatus;
   featured?: boolean;
-  /** CSS gradient used as card art until real key art exists. */
+  /** Monochrome CSS backdrop for the card art (a halftone particle layer goes on top). */
   art: string;
 };
 
@@ -25,7 +25,7 @@ export const GAMES: GameEntry[] = [
     modes: ["Survival", "Firing Range", "Team Deathmatch (soon)"],
     status: "prototype",
     featured: true,
-    art: "linear-gradient(135deg, #2b2f22 0%, #5b5a3a 45%, #c27b2c 100%)",
+    art: "radial-gradient(ellipse at 82% 18%, rgba(255,255,255,.22), transparent 58%), linear-gradient(180deg, #0b0b0b, #000)",
   },
   {
     id: "null-sector",
@@ -34,7 +34,7 @@ export const GAMES: GameEntry[] = [
     genre: "Extraction",
     modes: ["Solo", "Squads"],
     status: "coming-soon",
-    art: "linear-gradient(135deg, #0d1b2a 0%, #1b263b 50%, #3a86ff 100%)",
+    art: "radial-gradient(ellipse at 15% 25%, rgba(255,255,255,.14), transparent 55%), linear-gradient(180deg, #0b0b0b, #000)",
   },
   {
     id: "breakpoint-arena",
@@ -43,7 +43,7 @@ export const GAMES: GameEntry[] = [
     genre: "Arena",
     modes: ["3v3 Elimination"],
     status: "coming-soon",
-    art: "linear-gradient(135deg, #2a0d12 0%, #5c1a24 50%, #e63946 100%)",
+    art: "radial-gradient(ellipse at 50% 110%, rgba(255,255,255,.18), transparent 60%), linear-gradient(180deg, #0b0b0b, #000)",
   },
 ];
 

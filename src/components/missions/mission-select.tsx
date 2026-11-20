@@ -37,7 +37,7 @@ const Pill = ({ active, onClick, children }: { active: boolean; onClick: () => v
     onClick={onClick}
     className={cn(
       "rounded-md border px-3 py-1.5 text-sm transition-colors",
-      active ? "border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/25",
+      active ? "border-white/70 bg-white/15 text-white" : "border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/25",
     )}
   >
     {children}
@@ -53,15 +53,15 @@ function MissionCard({ m, active, record, onPick }: { m: MissionDef; active: boo
       onClick={onPick}
       className={cn(
         "w-full rounded-lg border p-4 text-left transition-colors",
-        active ? "border-amber-400/60 bg-amber-400/[0.07]" : "border-white/10 bg-white/[0.02] hover:border-white/25",
+        active ? "border-white/60 bg-white/[0.07]" : "border-white/10 bg-white/[0.02] hover:border-white/25",
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="font-mono text-[11px] tracking-[0.25em] text-amber-400/80 uppercase">
+        <span className="font-mono text-[11px] tracking-[0.25em] text-white/80 uppercase">
           Mission {m.index} · {m.codename}
         </span>
         {record && (
-          <span className="rounded border border-lime-400/30 px-1.5 font-mono text-xs text-lime-300" title={`Best score ${record.score.toLocaleString("en-US")}`}>
+          <span className="rounded border border-white/30 px-1.5 font-mono text-xs text-white/90" title={`Best score ${record.score.toLocaleString("en-US")}`}>
             {record.grade}
           </span>
         )}
@@ -95,13 +95,13 @@ export function MissionSelect({
   const pickOperator = (id: OperatorId) => set({ operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary });
 
   return (
-    <div ref={rootRef} className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#2d3430_0%,#121411_55%,#0a0a09_100%)] text-neutral-100">
+    <div ref={rootRef} className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,.07)_0%,transparent_60%)] text-neutral-100">
       <style>{PAD_FOCUS_CSS}</style>
       <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
-        <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">Iron Horizon · Campaign · Sarrow Basin</p>
+        <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Campaign · Sarrow Basin</p>
         <h1 className="mt-1 text-3xl font-black tracking-tight md:text-4xl">Meridian Response Group</h1>
         <p className="mt-1 max-w-2xl text-sm text-neutral-400">
-          Team <span className="text-sky-300">Vantage</span>, operator <span className="text-sky-300">{callsign}</span>. Three operations against the Ashen Front. Play solo with
+          Team <span className="text-white/90">Vantage</span>, operator <span className="text-white/90">{callsign}</span>. Three operations against the Ashen Front. Play solo with
           AI squadmates Kestrel and Halden; checkpoints at every objective.
         </p>
 
@@ -122,7 +122,7 @@ export function MissionSelect({
             <ol className="mt-4 grid gap-1.5 text-sm">
               {m.objectives.map((o, i) => (
                 <li key={i} className="flex gap-3 rounded border border-white/5 bg-white/[0.02] px-3 py-1.5">
-                  <span className="w-20 shrink-0 font-mono text-[11px] tracking-widest text-amber-300/80 uppercase">
+                  <span className="w-20 shrink-0 font-mono text-[11px] tracking-widest text-white/80 uppercase">
                     {i + 1}. {KIND_LABEL[o.kind]}
                   </span>
                   <span className="text-neutral-300">{o.title.charAt(0) + o.title.slice(1).toLowerCase()}</span>

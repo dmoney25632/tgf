@@ -44,7 +44,7 @@ const Pill = ({ active, onClick, children, title }: { active: boolean; onClick: 
     onClick={onClick}
     className={cn(
       "rounded-md border px-3 py-1.5 text-sm transition-colors",
-      active ? "border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/25",
+      active ? "border-white/70 bg-white/15 text-white" : "border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/25",
     )}
   >
     {children}
@@ -56,7 +56,7 @@ function StatBar({ label, value }: { label: string; value: number }) {
     <div className="flex items-center gap-2 text-[11px]">
       <span className="w-16 text-neutral-500">{label}</span>
       <div className="h-1.5 flex-1 rounded bg-white/10">
-        <div className="h-full rounded bg-amber-300/80" style={{ width: `${Math.round(Math.max(0.04, Math.min(1, value)) * 100)}%` }} />
+        <div className="h-full rounded bg-white/80" style={{ width: `${Math.round(Math.max(0.04, Math.min(1, value)) * 100)}%` }} />
       </div>
     </div>
   );
@@ -116,15 +116,15 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
   const pickOperator = (id: OperatorId) => set({ operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary });
 
   return (
-    <div ref={rootRef} className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,#3a3324_0%,#14130f_55%,#0a0a09_100%)] text-neutral-100">
+    <div ref={rootRef} className="fixed inset-0 overflow-y-auto bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,.07)_0%,transparent_60%)] text-neutral-100">
       <style>{PAD_FOCUS_CSS}</style>
       <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">Iron Horizon · Deployment</p>
+            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Deployment</p>
             <h1 className="mt-1 text-3xl font-black tracking-tight md:text-4xl">{survival ? `Survival — ${(SURVIVAL_MAPS.find((m) => m.id === c.map) ?? SURVIVAL_MAPS[0]).name}` : "Firing Range — Kestrel Yard"}</h1>
             <p className="mt-1 text-sm text-neutral-400">
-              Operator <span className="text-sky-300">{callsign}</span>.{" "}
+              Operator <span className="text-white/90">{callsign}</span>.{" "}
               {survival ? "Hold the outpost against escalating waves. Buy gear at the armories between waves." : "Zero your weapons on pop-up targets and steel."}
             </p>
           </div>
@@ -152,10 +152,10 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
                     onClick={() => pickOperator(id)}
                     className={cn(
                       "rounded-lg border p-2.5 text-left transition-colors",
-                      c.operator === id ? "border-amber-400/70 bg-amber-400/10" : "border-white/10 bg-white/[0.03] hover:border-white/25",
+                      c.operator === id ? "border-white/70 bg-white/10" : "border-white/10 bg-white/[0.03] hover:border-white/25",
                     )}
                   >
-                    <div className="mb-1.5 h-1 w-8 rounded" style={{ background: `#${o.colors.accent.toString(16).padStart(6, "0")}` }} />
+                    <div className="mb-1.5 h-1 w-8 rounded bg-white/70" />
                     <div className="font-bold">{o.name}</div>
                     <div className="text-xs text-neutral-400">{o.role}</div>
                   </button>
@@ -163,7 +163,7 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
               })}
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-[220px_1fr]">
-              <div className="h-72 overflow-hidden rounded-lg border border-white/5 bg-[radial-gradient(circle_at_50%_70%,rgba(255,200,120,.12),transparent_70%)]">
+              <div className="h-72 overflow-hidden rounded-lg border border-white/5 bg-[radial-gradient(circle_at_50%_70%,rgba(255,255,255,.08),transparent_70%)]">
                 <OperatorPreview operator={op} />
               </div>
               <div>
@@ -174,7 +174,7 @@ export function Lobby({ callsign, initial, onDeploy }: { callsign: string; initi
                 <ul className="mt-3 grid gap-1 text-sm">
                   {op.traits.map((t) => (
                     <li key={t} className="flex gap-2">
-                      <span className="text-amber-400">▸</span>
+                      <span className="text-white">▸</span>
                       {t}
                     </li>
                   ))}

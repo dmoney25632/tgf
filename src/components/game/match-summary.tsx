@@ -32,7 +32,7 @@ export function MatchSummaryView({
   const stat = (label: string, value: string | number, accent = false) => (
     <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5">
       <div className="text-[11px] tracking-wider text-neutral-500 uppercase">{label}</div>
-      <div className={cn("mt-0.5 text-xl font-bold tabular-nums", accent && "text-amber-300")}>{value}</div>
+      <div className={cn("mt-0.5 text-xl font-bold tabular-nums", accent && "text-white/90")}>{value}</div>
     </div>
   );
   const skipped = s.startWave > 1 ? ` (started at wave ${s.startWave})` : "";
@@ -45,7 +45,7 @@ export function MatchSummaryView({
         <p className="font-mono text-[11px] tracking-[0.3em] text-neutral-500 uppercase">
           {s.map} · {s.difficulty} · {s.operator}
         </p>
-        <h2 className={cn("mt-1 text-4xl font-black tracking-tight", s.victory ? "text-lime-300" : "text-red-400")}>
+        <h2 className={cn("mt-1 text-4xl font-black tracking-tight", s.victory ? "text-white/90" : "text-red-400")}>
           {s.victory ? "Outpost held" : "Mission failed"}
         </h2>
         <p className="mt-1 text-neutral-400">{waves}</p>

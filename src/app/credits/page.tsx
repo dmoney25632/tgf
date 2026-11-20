@@ -27,7 +27,7 @@ export default function CreditsPage() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-12">
       <div className="flex flex-col gap-2">
-        <p className="font-mono text-xs tracking-[0.3em] text-amber-400/80 uppercase">Credits</p>
+        <p className="font-mono text-xs tracking-[0.3em] text-white/80 uppercase">Credits</p>
         <h1 className="text-2xl font-bold">Third-party assets</h1>
         <p className="text-sm text-muted-foreground">Everything not listed here (weapons, soldier gear, animation, sound) is original work.</p>
       </div>

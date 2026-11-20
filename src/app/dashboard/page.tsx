@@ -23,7 +23,7 @@ async function DashboardContent() {
       <SiteHeader user={user} />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10">
         {user.offline && (
-          <p className="mb-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <p className="mb-6 rounded-md border border-white/40 bg-white/10 px-4 py-3 text-sm text-white">
             Offline dev mode — Supabase isn&apos;t configured, so you&apos;re playing as a local guest and
             stats won&apos;t be saved. Add keys to <code>.env.local</code> to enable accounts.
           </p>
@@ -32,13 +32,13 @@ async function DashboardContent() {
         <p className="mt-1 text-muted-foreground">Pick a game to deploy into.</p>
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2">
-          <Link href="/missions" className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-amber-500/60">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-amber-400">Campaign</p>
+          <Link href="/missions" className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-white/60">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-white">Campaign</p>
             <p className="mt-1 text-lg font-semibold">Missions</p>
             <p className="mt-1 text-sm text-muted-foreground">Three story operations in the Sarrow Basin. Solo with AI squadmates.</p>
           </Link>
-          <Link href="/coop" className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-amber-500/60">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-amber-400">Online</p>
+          <Link href="/coop" className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-white/60">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-white">Online</p>
             <p className="mt-1 text-lg font-semibold">Co-op Survival</p>
             <p className="mt-1 text-sm text-muted-foreground">Host or join a room code and hold out with 2–4 players. Account required.</p>
           </Link>

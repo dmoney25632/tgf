@@ -32,7 +32,7 @@ const Pill = ({ active, onClick, children, disabled }: { active: boolean; onClic
     onClick={onClick}
     className={cn(
       "rounded-md border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-      active ? "border-amber-400/70 bg-amber-400/15 text-amber-200" : "border-white/10 bg-white/[0.03] text-neutral-300 enabled:hover:border-white/25",
+      active ? "border-white/70 bg-white/15 text-white" : "border-white/10 bg-white/[0.03] text-neutral-300 enabled:hover:border-white/25",
     )}
   >
     {children}
@@ -298,11 +298,11 @@ export function CoopApp({
   const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/coop?room=${code}${useLocal ? "&transport=local" : ""}` : "";
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,#2b2f22_0%,#0b0b0a_60%)] px-4 py-8 text-neutral-100">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,.07)_0%,transparent_60%)] px-4 py-8 text-neutral-100">
       <div className="mx-auto max-w-4xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[11px] tracking-[0.3em] text-amber-400/80 uppercase">Iron Horizon · Online co-op</p>
+            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Online co-op</p>
             <h1 className="mt-1 text-3xl font-bold">Survival Squad</h1>
             <p className="mt-1 text-sm text-neutral-400">2–4 players hold the outpost together. Signed in as {identity?.name ?? callsign}.</p>
           </div>
@@ -317,7 +317,7 @@ export function CoopApp({
         </div>
 
         {useLocal && (
-          <p className="mt-4 rounded-md border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs text-sky-200">
+          <p className="mt-4 rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs text-white">
             Dev loopback transport: rooms connect browser tabs on this machine (BroadcastChannel), no Supabase needed. Add
             <span className="font-mono"> &amp;lag=80&amp;jitter=20</span> to the URL to simulate latency.
           </p>
@@ -356,7 +356,7 @@ export function CoopApp({
                   maxLength={7}
                   placeholder="K7QX2"
                   aria-label="Room code"
-                  className="h-11 min-w-0 flex-1 rounded-md border border-white/15 bg-black/40 px-3 font-mono text-lg tracking-[0.3em] uppercase outline-none focus:border-amber-400/60"
+                  className="h-11 min-w-0 flex-1 rounded-md border border-white/15 bg-black/40 px-3 font-mono text-lg tracking-[0.3em] uppercase outline-none focus:border-white/60"
                 />
                 <button type="submit" disabled={stage === "connecting"} className={cn(buttonVariants({ size: "lg" }), "h-11")}>
                   Join
@@ -372,7 +372,7 @@ export function CoopApp({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <Label>Room code</Label>
-                  <p className="font-mono text-4xl font-bold tracking-[0.35em] text-amber-300" data-testid="room-code">
+                  <p className="font-mono text-4xl font-bold tracking-[0.35em] text-white/90" data-testid="room-code">
                     {code}
                   </p>
                 </div>
@@ -398,11 +398,11 @@ export function CoopApp({
                         <span className="flex items-center gap-2">
                           <span className="font-medium">{p.name}</span>
                           {p.id === identity?.id && <span className="text-xs text-neutral-500">(you)</span>}
-                          {p.host && <span className="rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-amber-300 uppercase">Host</span>}
+                          {p.host && <span className="rounded bg-white/15 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-white/90 uppercase">Host</span>}
                         </span>
                         <span className="flex items-center gap-3 text-xs">
                           <span className="text-neutral-500">{OPERATORS[p.operator]?.name ?? p.operator}</span>
-                          <span className={p.ready ? "text-lime-300" : "text-neutral-500"}>{p.host ? "HOST" : p.ready ? "READY" : "NOT READY"}</span>
+                          <span className={p.ready ? "text-white/90" : "text-neutral-500"}>{p.host ? "HOST" : p.ready ? "READY" : "NOT READY"}</span>
                         </span>
                       </li>
                     ))}
