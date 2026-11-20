@@ -182,6 +182,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
         engine = new GameEngine(hostRef.current, {
           callsign,
           settings: initial,
+          onSettingsChange: (next) => setSettings(next),
           mode: choice.mission ? "mission" : choice.mode,
           mapId: choice.map,
           mission: choice.mission ? { missionId: choice.mission, operator: choice.operator, primary: choice.primary, secondary: choice.secondary, difficulty: choice.difficulty, squad: choice.squad } : undefined,

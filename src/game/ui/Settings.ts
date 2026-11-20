@@ -40,6 +40,8 @@ export type GameSettings = {
   /** Horizontal-ish world FOV in degrees (vertical FOV, like CAMERA.fov). */
   fov: number;
   showFps: boolean;
+  /** Drop to a lighter preset by itself when frames stay slow. */
+  autoQuality: boolean;
   // Audio
   volume: number;
   // Mouse
@@ -48,6 +50,8 @@ export type GameSettings = {
   /** Extra multiplier while aiming. */
   adsSensitivity: number;
   invertY: boolean;
+  /** Ask for unaccelerated (raw) pointer-lock movement. Off = OS pointer feel. */
+  rawInput: boolean;
   // Controller
   padSensitivity: number;
   padAdsSensitivity: number;
@@ -67,10 +71,12 @@ export const DEFAULT_SETTINGS: GameSettings = {
   quality: "medium",
   fov: CAMERA.fov,
   showFps: true,
+  autoQuality: true,
   volume: 0.8,
   sensitivity: 1,
   adsSensitivity: 1,
   invertY: false,
+  rawInput: false,
   padSensitivity: 1,
   padAdsSensitivity: 1,
   padInvertY: false,
@@ -101,10 +107,12 @@ export function sanitizeSettings(raw: Partial<GameSettings> | null | undefined, 
     quality,
     fov: Math.round(clamp(r.fov, FOV_RANGE[0], FOV_RANGE[1], d.fov)),
     showFps: bool(r.showFps, d.showFps),
+    autoQuality: bool(r.autoQuality, d.autoQuality),
     volume: clamp(r.volume, 0, 1, d.volume),
     sensitivity: clamp(r.sensitivity, 0.1, 5, d.sensitivity),
     adsSensitivity: clamp(r.adsSensitivity, 0.2, 2, d.adsSensitivity),
     invertY: bool(r.invertY, d.invertY),
+    rawInput: bool(r.rawInput, d.rawInput),
     padSensitivity: clamp(r.padSensitivity, 0.2, 3, d.padSensitivity),
     padAdsSensitivity: clamp(r.padAdsSensitivity, 0.2, 2, d.padAdsSensitivity),
     padInvertY: bool(r.padInvertY, d.padInvertY),

@@ -64,7 +64,7 @@ export const SLIDE = {
 
 export const LOOK = {
   /** Radians per pixel at sensitivity 1.0. */
-  baseSensitivity: 0.0021,
+  baseSensitivity: 0.0028,
   adsSensitivityMultiplier: 0.62,
   /** Keep pitch this far from straight up/down so the camera never flips. */
   poleMargin: 0.08,
@@ -216,13 +216,13 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     aoSamples: 0,
     godRays: false,
     shadowInterval: 1,
-    minResolutionScale: 0.6,
+    minResolutionScale: 0.5,
     targetFrameMs: 16.7,
     maxLocalLights: 2,
   },
   medium: {
     label: "Medium",
-    maxPixelRatio: 1.5,
+    maxPixelRatio: 1.25,
     resolutionScale: 1,
     shadows: true,
     shadowMapSize: 1024,
@@ -243,20 +243,20 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     aoSamples: 8,
     godRays: false,
     shadowInterval: 2,
-    minResolutionScale: 0.7,
+    minResolutionScale: 0.6,
     targetFrameMs: 16.7,
     maxLocalLights: 4,
   },
   high: {
     label: "High",
-    maxPixelRatio: 1.75,
+    maxPixelRatio: 1.5,
     resolutionScale: 1,
     shadows: true,
     shadowMapSize: 2048,
     postProcessing: true,
     bloom: true,
     ambientOcclusion: true,
-    msaaSamples: 4,
+    msaaSamples: 2,
     maxDecals: 160,
     maxParticles: 768,
     maxTextureSize: 1024,
@@ -267,21 +267,43 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     shadowExtent: 46,
     hdri: true,
     dustMotes: true,
-    aoSamples: 12,
+    aoSamples: 10,
     godRays: true,
     shadowInterval: 1,
-    minResolutionScale: 0.75,
+    minResolutionScale: 0.65,
     targetFrameMs: 16.7,
     maxLocalLights: 6,
   },
 };
 
-/** Pick a sensible default for the device. */
+/** GPU name from WebGL (unmasked where the browser allows it), lower-case. */
+function gpuName(): string {
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2") ?? document.createElement("canvas").getContext("webgl");
+    if (!gl) return "";
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    const name = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? "");
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return name.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Pick a sensible default for the device. Smooth beats pretty: High only on
+ * GPUs that clearly carry it, and auto quality steps down from there if not.
+ */
 export function detectQuality(): QualityName {
   if (typeof navigator === "undefined") return "medium";
-  const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
   const cores = navigator.hardwareConcurrency ?? 4;
-  if (mobile || cores <= 4) return "low";
-  if (cores >= 8 && window.devicePixelRatio <= 2) return "high";
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+  if (mobile || cores <= 4 || memory <= 4) return "low";
+  const gpu = gpuName();
+  if (/swiftshader|llvmpipe|software|basic render|mali|adreno|powervr/.test(gpu)) return "low";
+  if (/intel/.test(gpu) && !/arc/.test(gpu)) return "low";
+  const strong = /nvidia|geforce|rtx|radeon rx|radeon pro|apple m\d+ (pro|max|ultra)|arc/.test(gpu);
+  if (strong && cores >= 8 && window.devicePixelRatio <= 2) return "high";
   return "medium";
 }

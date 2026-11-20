@@ -59,19 +59,27 @@ export function SettingsPanel({ settings: s, onChange, dev, tab, onTab }: Props)
               hint="Resolution, shadows, post-processing, foliage and effects budget."
             />
             <SliderRow label="Field of view" value={s.fov} min={FOV_RANGE[0]} max={FOV_RANGE[1]} step={1} format={(v) => `${v}°`} onChange={(v) => onChange({ fov: v })} />
+            <ToggleRow
+              label="Auto quality"
+              value={s.autoQuality}
+              onChange={(v) => onChange({ autoQuality: v })}
+              hint="Steps down a preset by itself if the frame rate stays low, so play stays smooth."
+            />
             <ToggleRow label="FPS counter" value={s.showFps} onChange={(v) => onChange({ showFps: v })} />
           </>
         )}
 
         {tab === "mouse" && (
           <>
-            <SliderRow label="Sensitivity" value={s.sensitivity} min={0.1} max={5} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => onChange({ sensitivity: v })} />
+            <SliderRow label="Sensitivity" value={s.sensitivity} min={0.1} max={5} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => onChange({ sensitivity: v })} />
             <SliderRow label="ADS multiplier" value={s.adsSensitivity} min={0.2} max={2} step={0.05} format={(v) => `${v.toFixed(2)}×`} onChange={(v) => onChange({ adsSensitivity: v })} />
             <ToggleRow label="Invert vertical" value={s.invertY} onChange={(v) => onChange({ invertY: v })} />
-            <p className="mt-2 rounded border border-white/5 bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-neutral-400">
-              <span className="font-semibold text-neutral-200">Raw input:</span> the game asks the browser for unaccelerated mouse movement where supported (Chrome,
-              Edge). Elsewhere your OS pointer acceleration applies — turn it off for 1:1 aim.
-            </p>
+            <ToggleRow
+              label="Raw input"
+              value={s.rawInput}
+              onChange={(v) => onChange({ rawInput: v })}
+              hint="Off: aim moves like your desktop pointer (OS acceleration). On: unaccelerated 1:1 movement where the browser supports it (Chrome, Edge) — raise sensitivity to match."
+            />
           </>
         )}
 

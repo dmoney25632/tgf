@@ -18,7 +18,7 @@ import { EffectsPool } from "../effects/EffectsPool";
 import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
 import { HUD, type HitKind, type HudFrame } from "../ui/HUD";
-import { sanitizeSettings, type GameSettings } from "../ui/Settings";
+import { sanitizeSettings, saveSettings, type GameSettings } from "../ui/Settings";
 import { glyphContext } from "../ui/Glyphs";
 import { hudSignals } from "../ui/SurvivalHUD";
 import { AimAssist } from "../player/AimAssist";
@@ -44,6 +44,8 @@ export type EngineOptions = {
   /** The browser refused pointer lock (React shows "click to resume"). */
   onLockError?: () => void;
   onEvent?: (e: EngineEvent) => void;
+  /** The engine changed a setting itself (auto quality): React mirrors and persists it. */
+  onSettingsChange?: (s: GameSettings) => void;
 };
 
 /**
@@ -82,6 +84,7 @@ export class GameEngine {
   private sessionTime = 0;
   private fpsFrames = 0;
   private fpsTime = 0;
+  private slowTime = 0;
   private fps = 0;
   private frameMs = 0;
   private disposed = false;
@@ -246,7 +249,9 @@ export class GameEngine {
     type LockResult = Promise<void> | undefined;
     const fail = () => (this.opts.onLockError ? this.opts.onLockError() : this.opts.onLockChange?.(false));
     try {
-      const p = canvas.requestPointerLock({ unadjustedMovement: true }) as unknown as LockResult;
+      // Raw input is opt-in: on macOS especially, unaccelerated deltas feel far
+      // slower and heavier than the desktop pointer people are used to.
+      const p = (this.settings.rawInput ? canvas.requestPointerLock({ unadjustedMovement: true }) : canvas.requestPointerLock()) as unknown as LockResult;
       p?.catch?.(() => {
         // Some platforms reject unadjustedMovement; retry with plain lock.
         if (!canvas.isConnected) return fail();
@@ -293,6 +298,7 @@ export class GameEngine {
   applySettings(next: Partial<GameSettings>) {
     const prevQuality = this.settings.quality;
     const prevBindings = this.settings.bindings;
+    const prevRaw = this.settings.rawInput;
     Object.assign(this.settings, sanitizeSettings({ ...this.settings, ...next }));
     if (!next.bindings) this.settings.bindings = prevBindings;
     this.input.configure(this.settings);
@@ -306,6 +312,33 @@ export class GameEngine {
       this.resize();
     }
     if (next.volume !== undefined) this.sfx.setVolume(next.volume);
+    // Switch raw/accelerated movement right away if the pointer is locked.
+    if (this.settings.rawInput !== prevRaw && document.pointerLockElement === this.pipeline.canvas) this.lock();
+    if (next.quality || next.autoQuality !== undefined) this.slowTime = 0;
+  }
+
+  /**
+   * Auto quality: when frames stay slow even after dynamic resolution has
+   * done what it can, step down one preset (never back up by itself, so it
+   * can't oscillate). Runs on the 0.5 s fps sample.
+   */
+  private governQuality(fps: number, sample: number) {
+    const s = this.settings;
+    if (!s.autoQuality || s.quality === "low" || this.sessionTime < 6 || document.hidden) {
+      this.slowTime = 0;
+      return;
+    }
+    const pl = this.pipeline;
+    const q = QUALITY[s.quality];
+    const floored = pl.resolutionScale <= q.minResolutionScale + 0.01 || (pl.gpuMs > 0 && pl.gpuMs < q.targetFrameMs * 0.55);
+    if (fps < 50 && floored) this.slowTime += sample;
+    else this.slowTime = Math.max(0, this.slowTime - sample * 2);
+    if (this.slowTime < 4) return;
+    this.slowTime = -6; // let the new preset settle before judging again
+    const quality = s.quality === "high" ? "medium" : "low";
+    this.applySettings({ quality });
+    saveSettings(this.settings);
+    this.opts.onSettingsChange?.({ ...this.settings });
   }
 
   // ---------------------------------------------------------------------------
@@ -588,6 +621,7 @@ export class GameEngine {
     if (this.fpsTime >= 0.5) {
       this.fps = Math.round(this.fpsFrames / this.fpsTime);
       this.hud.setFps(this.fps);
+      if (playing) this.governQuality(this.fps, this.fpsTime);
       this.fpsFrames = 0;
       this.fpsTime = 0;
     }

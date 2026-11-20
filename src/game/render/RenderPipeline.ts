@@ -962,7 +962,7 @@ export class RenderPipeline {
     this.windowFrames++;
     this.windowTime += dt;
     if (this.upHold > 0) this.upHold -= dt;
-    if (this.windowTime < 0.75) return;
+    if (this.windowTime < 0.5) return;
     const avg = this.windowSum / this.windowFrames;
     this.windowSum = this.windowFrames = this.windowTime = 0;
     const gpu = this.timer.ms;
@@ -986,7 +986,7 @@ export class RenderPipeline {
     this.scale = next;
     this.renderer.setPixelRatio(this.basePixelRatio * this.scale);
     this.setSize(this.width, this.height);
-    this.settle = 0.5;
+    this.settle = 0.3;
   }
 
   dispose() {
