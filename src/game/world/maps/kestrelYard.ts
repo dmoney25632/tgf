@@ -37,10 +37,10 @@ export const KESTREL_YARD: MapDef = {
   fogFar: 220,
   sunDirection: [0.45, 0.8, 0.35],
   sunColor: 0xfff1de,
-  sunIntensity: 2.0,
+  sunIntensity: 3.3,
   hemiSky: 0xc3cacc,
   hemiGround: 0x545040,
-  atmosphere: { fogDensity: 0.005, fogColor: 0xb3b7ae, cloudCover: 0.7, hemiIntensity: 1.05, envIntensity: 0.55, exposure: 1.08 },
+  atmosphere: { fogDensity: 0.0042, fogColor: 0xb3b7ae, cloudCover: 0.5, hemiIntensity: 0.6, envIntensity: 0.42, exposure: 1.08 },
   dressing: "kestrel",
   spawns: [{ x: 0, z: 34, yaw: 0 }],
   boxes: [

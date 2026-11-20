@@ -12,17 +12,18 @@ import { loadHdri } from "../assets/AssetLoader";
 // -----------------------------------------------------------------------------
 
 /**
- * Filmic grade (display-referred, applied after AgX): desaturated, cool
- * green-grey shadows, warm dusty highlights, a soft S-curve and slightly
- * lifted blacks. Baked into the shaders as constants (free to evaluate).
+ * Filmic grade (display-referred, applied after AgX): cinematic war-film
+ * look. Deep, slightly cool teal-grey shadows, warm sunlit highlights,
+ * a firm S-curve, true blacks, and saturation pulled back a touch (AgX
+ * already desaturates brights). Baked into the shaders as constants.
  */
 const GRADE = {
-  saturation: 0.84,
+  saturation: 0.94,
   /** 0..1 strength of the smoothstep S-curve. */
-  contrast: 0.45,
-  shadowTint: [0.95, 0.99, 1.035],
-  highlightTint: [1.035, 1.0, 0.94],
-  lift: 0.01,
+  contrast: 0.62,
+  shadowTint: [0.93, 0.995, 1.05],
+  highlightTint: [1.055, 1.0, 0.915],
+  lift: 0.0,
 };
 
 /** AgX maps mid-grey darker than three's ACES; this keeps map exposures valid. */
@@ -37,10 +38,21 @@ const POST = {
   aoRadius: 1.3,
   aoIntensity: 5.5,
   aoBias: 0.06,
-  vignette: 0.32,
-  grain: 0.028,
+  vignette: 0.38,
+  grain: 0.03,
   chromaticAberration: 0.0035,
+  /** Contrast-adaptive sharpening (0..~0.25; CAS's "sharpness" mapped to its weight). */
+  sharpen: 0.16,
   shafts: 0.3,
+  /** Eye adaptation: 0 = fixed exposure, 1 = everything ends up mid-grey. */
+  adaptStrength: 0.5,
+  adaptMin: 0.5,
+  adaptMax: 1.9,
+  /**
+   * Scene luminance (pre-exposure) the maps were tuned at: an open, sunlit
+   * view. Brighter scenes pull exposure down, darker ones push it up.
+   */
+  adaptRef: 0.3,
 };
 
 const f = (n: number) => n.toFixed(5);
@@ -229,8 +241,49 @@ void main() {
 }`;
 
 /**
+ * Eye adaptation, step 1: average log luminance of the smallest bloom level
+ * (a ~1/32-res copy of the HDR scene). Centre-weighted and biased up the
+ * frame so the viewmodel in the lower right doesn't steer exposure.
+ */
+const LUM_FRAG = /* glsl */ `
+uniform sampler2D tIn;
+varying vec2 vUv;
+void main() {
+	float sum = 0.0, wsum = 0.0;
+	for ( int y = 0; y < 8; y ++ ) for ( int x = 0; x < 8; x ++ ) {
+		vec2 uv = vec2( 0.1 + 0.8 * ( float( x ) + 0.5 ) / 8.0, 0.22 + 0.7 * ( float( y ) + 0.5 ) / 8.0 );
+		vec3 c = texture2D( tIn, uv ).rgb;
+		float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+		vec2 d = uv - vec2( 0.5, 0.55 );
+		float w = 1.0 - 0.9 * smoothstep( 0.0, 0.5, length( d ) );
+		sum += log( max( l, 1e-4 ) ) * w;
+		wsum += w;
+	}
+	gl_FragColor = vec4( sum / wsum, 0.0, 0.0, 1.0 );
+}`;
+
+/**
+ * Eye adaptation, step 2: ease the stored log luminance toward this frame's.
+ * Brightening (walking out into the sun) adapts faster than darkening, like
+ * an eye. rate < 0 snaps (first frame / after a reset).
+ */
+const ADAPT_FRAG = /* glsl */ `
+uniform sampler2D tLum;
+uniform sampler2D tPrev;
+uniform float dt;
+uniform float snap;
+varying vec2 vUv;
+void main() {
+	float cur = texture2D( tLum, vec2( 0.5 ) ).r;
+	float prev = texture2D( tPrev, vec2( 0.5 ) ).r;
+	float speed = cur > prev ? 2.2 : 1.1;
+	float k = snap > 0.5 ? 1.0 : 1.0 - exp( -dt * speed );
+	gl_FragColor = vec4( mix( prev, cur, k ), 0.0, 0.0, 1.0 );
+}`;
+
+/**
  * The one full-resolution composite: chromatic aberration, AO, bloom, sun
- * shafts, AgX tone map, grade, vignette and (without FXAA) film grain.
+ * shafts, eye adaptation, AgX tone map, grade and vignette.
  */
 const FINAL_FRAG = /* glsl */ `
 #include <tonemapping_pars_fragment>
@@ -245,6 +298,8 @@ uniform float vignette;
 uniform float grain;
 uniform float ca;
 uniform float time;
+uniform sampler2D tAdapt;
+uniform float adaptRef;
 varying vec2 vUv;
 // ihGrade() comes with the patched tonemapping_pars_fragment above.
 void main() {
@@ -272,14 +327,15 @@ void main() {
 	#ifdef USE_SHAFTS
 		col += texture2D( tShafts, vUv ).r * shaftColor;
 	#endif
+	#ifdef USE_ADAPT
+		// Partial adaptation: dark rooms open up, but stay darker than the yard.
+		float avgLum = exp( texture2D( tAdapt, vec2( 0.5 ) ).r );
+		col *= clamp( pow( adaptRef / avgLum, ${f(POST.adaptStrength)} ), ${f(POST.adaptMin)}, ${f(POST.adaptMax)} );
+	#endif
 	col = AgXToneMapping( col );
 	col = sRGBTransferOETF( vec4( col, 1.0 ) ).rgb;
 	col = ihGrade( col );
 	col *= mix( 1.0, smoothstep( 0.9, 0.15, sqrt( r2 ) ), vignette );
-	#ifdef USE_GRAIN
-		float n = fract( sin( dot( gl_FragCoord.xy + fract( time * 7.13 ) * 113.0, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) - 0.5;
-		col += n * grain * ( 1.0 - col * 0.6 );
-	#endif
 	gl_FragColor = vec4( clamp( col, 0.0, 1.0 ), 1.0 );
 }`;
 
@@ -353,7 +409,8 @@ const shader = (fragmentShader: string, uniforms: Record<string, THREE.IUniform>
  *
  * Post path (medium/high), all hand-driven full-screen passes:
  *   world → [half-res AO + blur] → [quarter-res sun shafts] → viewmodel
- *   → bloom (downsample/upsample chain) → final composite → [FXAA + grain]
+ *   → bloom (downsample/upsample chain) → eye adaptation → final composite
+ *   → [FXAA] + sharpen + grain
  * Low renders straight to the canvas; the AgX + grade look rides on a
  * patched CustomToneMapping, so it costs no extra pass.
  *
@@ -397,6 +454,11 @@ export class RenderPipeline {
     return m;
   })();
   private finalMat: THREE.ShaderMaterial | null = null;
+  private readonly lumMat = shader(LUM_FRAG, { tIn: { value: null } });
+  private readonly adaptMat = shader(ADAPT_FRAG, { tLum: { value: null }, tPrev: { value: null }, dt: { value: 0 }, snap: { value: 1 } });
+  /** 1x1 log-luminance targets: this frame's, and the adapted pair (ping-pong). */
+  private adapt: { lum: THREE.WebGLRenderTarget; a: THREE.WebGLRenderTarget; b: THREE.WebGLRenderTarget } | null = null;
+  private adaptSnap = true;
   private fxaaMat: THREE.ShaderMaterial | null = null;
 
   // Sun shafts.
@@ -576,6 +638,8 @@ export class RenderPipeline {
       t.dispose();
     }
     this.post = null;
+    if (this.adapt) for (const t of Object.values(this.adapt)) t.dispose();
+    this.adapt = null;
     this.aoMat?.dispose();
     this.aoMat = null;
     this.finalMat?.dispose();
@@ -606,9 +670,20 @@ export class RenderPipeline {
       shaftA: q.godRays ? rt() : null,
       shaftB: q.godRays ? rt() : null,
       bloom: q.bloom ? Array.from({ length: BLOOM_LEVELS }, () => rt()) : [],
-      ldr: fxaa ? rt(THREE.UnsignedByteType) : null,
+      // Always: the last pass (FXAA on medium) sharpens and adds grain.
+      ldr: rt(THREE.UnsignedByteType),
     };
     for (const t of this.post.bloom) t.texture.wrapS = t.texture.wrapT = THREE.ClampToEdgeWrapping;
+    // Eye adaptation rides on the bloom chain's smallest level.
+    if (q.bloom) {
+      const one = () => {
+        const t = rt(THREE.HalfFloatType, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+        t.setSize(1, 1);
+        return t;
+      };
+      this.adapt = { lum: one(), a: one(), b: one() };
+      this.adaptSnap = true;
+    }
 
     if (ao) {
       this.aoMat = shader(
@@ -632,7 +707,7 @@ export class RenderPipeline {
     if (ao) defines.USE_AO = "";
     if (q.bloom) defines.USE_BLOOM = "";
     if (q.godRays) defines.USE_SHAFTS = "";
-    if (!fxaa) defines.USE_GRAIN = "";
+    if (this.adapt) defines.USE_ADAPT = "";
     defines.USE_CA = "";
     this.finalMat = shader(
       FINAL_FRAG,
@@ -649,14 +724,31 @@ export class RenderPipeline {
         grain: { value: POST.grain },
         ca: { value: POST.chromaticAberration },
         time: { value: 0 },
+        tAdapt: { value: null },
+        adaptRef: { value: POST.adaptRef },
       },
       defines,
     );
-    if (fxaa) {
-      // FXAA, then grain on top so the AA doesn't smear it.
-      const frag = `uniform float time;\nuniform float grain;\n${FXAAShader.fragmentShader}`.replace(
+    {
+      // Last pass: [FXAA] → contrast-adaptive sharpen (restores the crispness
+      // AA and the render-scale upsample take away) → grain on top, so
+      // neither the AA nor the sharpen touches it.
+      const frag = `uniform float time;\nuniform float grain;\nuniform float sharpen;\n${FXAAShader.fragmentShader}`.replace(
         "gl_FragColor = ApplyFXAA( tDiffuse, resolution.xy, vUv );",
-        `gl_FragColor = ApplyFXAA( tDiffuse, resolution.xy, vUv );
+        `${fxaa ? "gl_FragColor = ApplyFXAA( tDiffuse, resolution.xy, vUv );" : "gl_FragColor = texture2D( tDiffuse, vUv );"}
+			{
+				vec3 c = gl_FragColor.rgb;
+				vec3 a = texture2D( tDiffuse, vUv + vec2( 0.0, resolution.y ) ).rgb;
+				vec3 b = texture2D( tDiffuse, vUv - vec2( 0.0, resolution.y ) ).rgb;
+				vec3 l = texture2D( tDiffuse, vUv - vec2( resolution.x, 0.0 ) ).rgb;
+				vec3 r = texture2D( tDiffuse, vUv + vec2( resolution.x, 0.0 ) ).rgb;
+				vec3 mn = min( c, min( min( a, b ), min( l, r ) ) );
+				vec3 mx = max( c, max( max( a, b ), max( l, r ) ) );
+				// AMD CAS-style: sharpen less where local contrast is already high.
+				vec3 amp = sqrt( clamp( min( mn, 1.0 - mx ) / max( mx, 1e-4 ), 0.0, 1.0 ) );
+				vec3 w = -amp * sharpen;
+				gl_FragColor.rgb = clamp( ( c + ( a + b + l + r ) * w ) / ( 1.0 + 4.0 * w ), 0.0, 1.0 );
+			}
 			float n = fract( sin( dot( gl_FragCoord.xy + fract( time * 7.13 ) * 113.0, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) - 0.5;
 			gl_FragColor.rgb += n * grain * ( 1.0 - gl_FragColor.rgb * 0.6 );`,
       );
@@ -668,6 +760,7 @@ export class RenderPipeline {
           resolution: { value: new THREE.Vector2() },
           time: { value: 0 },
           grain: { value: POST.grain },
+          sharpen: { value: POST.sharpen },
         },
         depthTest: false,
         depthWrite: false,
@@ -731,6 +824,39 @@ export class RenderPipeline {
     const sc = this.finalMat!.uniforms.shaftColor.value as THREE.Color;
     sc.copy(this.sun.color).multiplyScalar(POST.shafts * this.shaftVisibility);
     return this.shaftVisibility;
+  }
+
+  /**
+   * Eye adaptation. Reads the smallest bloom level before the upsample pass
+   * adds into it... except the up chain never writes the last level, so it
+   * still holds the plain downsampled scene.
+   */
+  private adaptExposure(smallest: THREE.WebGLRenderTarget, dt: number) {
+    const a = this.adapt!;
+    this.lumMat.uniforms.tIn.value = smallest.texture;
+    this.pass(this.lumMat, a.lum);
+    const u = this.adaptMat.uniforms;
+    u.tLum.value = a.lum.texture;
+    u.tPrev.value = a.a.texture;
+    u.dt.value = Math.min(dt, 0.1);
+    u.snap.value = this.adaptSnap ? 1 : 0;
+    this.adaptSnap = false;
+    this.pass(this.adaptMat, a.b);
+    [a.a, a.b] = [a.b, a.a];
+    this.finalMat!.uniforms.tAdapt.value = a.a.texture;
+  }
+
+  /** Snap exposure on the next frame (spawn, teleport, map change). */
+  resetAdaptation() {
+    this.adaptSnap = true;
+  }
+
+  /** Debug: current adapted scene luminance (pre-exposure), or -1 without adaptation. */
+  debugAdaptedLuminance() {
+    if (!this.adapt) return -1;
+    const buf = new Uint16Array(4);
+    this.renderer.readRenderTargetPixels(this.adapt.a, 0, 0, 1, 1, buf);
+    return Math.exp(THREE.DataUtils.fromHalfFloat(buf[0]));
   }
 
   /** @param dt wall-clock seconds since the previous frame (drives dynamic resolution). */
@@ -800,6 +926,7 @@ export class RenderPipeline {
           u.texel.value.set(1 / p.bloom[i].width, 1 / p.bloom[i].height);
           this.pass(this.upMat, p.bloom[i - 1]);
         }
+        if (this.adapt) this.adaptExposure(p.bloom[p.bloom.length - 1], dt);
       }
 
       fm.uniforms.time.value = time;

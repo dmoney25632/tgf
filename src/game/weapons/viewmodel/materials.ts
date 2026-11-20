@@ -218,6 +218,19 @@ ${NOISE_GLSL}`,
         `#include <color_fragment>
 vec4 vmDet = texture(vmDetail, vec3(vNormalMapUv, vSurf.x));
 if (vSurf.y > 0.5) diffuseColor.rgb *= vmTints[int(vSurf.y - 0.5)];
+// Sleeve slot: printed multi-tone camo over the operator colour (tan ground,
+// olive and brown blotches, sparse light specks), domain-warped so it reads
+// as organic print, not noise. Scale ~5 cm blotches in object metres.
+if (vSurf.y > 1.5) {
+  vec3 vmP = vObjPos * 17.0;
+  vmP += (vec3(vmNoise(vmP * 0.45), vmNoise(vmP * 0.45 + 4.1), vmNoise(vmP * 0.45 + 9.7)) - 0.5) * 2.2;
+  vec3 vmBase = diffuseColor.rgb;
+  vec3 vmCamo = vmBase * vec3(1.16, 1.07, 0.9);
+  vmCamo = mix(vmCamo, vmBase, smoothstep(0.47, 0.53, vmNoise(vmP)));
+  vmCamo = mix(vmCamo, vmBase * vec3(0.56, 0.47, 0.37), smoothstep(0.6, 0.65, vmNoise(vmP * 1.8 + 11.7)));
+  vmCamo = mix(vmCamo, vmBase * vec3(1.36, 1.3, 1.1), smoothstep(0.73, 0.77, vmNoise(vmP * 3.3 + 5.3)) * 0.85);
+  diffuseColor.rgb = vmCamo;
+}
 // Wood: the B channel is grain darkness (late wood + pores), not wear.
 if (abs(vSurf.x - 7.0) < 0.5) diffuseColor.rgb *= mix(1.25, 0.38, vmDet.b);
 // Wear: chamfer flag x per-surface amount, broken up by noise; scratches add.
@@ -253,7 +266,7 @@ mapN.xy = (vmDet.rg * 2.0 - 1.0) * vPbr.w;
 mapN.z = sqrt(max(0.0, 1.0 - dot(mapN.xy, mapN.xy)));`,
       );
   };
-  mat.customProgramCacheKey = () => "viewmodel-uber-v1";
+  mat.customProgramCacheKey = () => "viewmodel-uber-v2";
   const dispose = mat.dispose.bind(mat);
   mat.dispose = () => {
     dummy.dispose();

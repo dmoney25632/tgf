@@ -153,6 +153,11 @@ export class WeaponViewmodel {
   private readonly rim = new THREE.DirectionalLight(0xb8c8e6, 0.55);
   private sun: THREE.DirectionalLight | null = null;
   private readonly camInv = new THREE.Quaternion();
+  /** 0..1: how much of the sun reaches the gun / how much open sky is overhead. */
+  private sunVis = 1;
+  private skyVis = 1;
+  /** Sky multiplier currently baked into environmentIntensity (the HDRI swap rescales it externally). */
+  private envMul = 1;
 
   /**
    * Dev / tooling: values merged over the per-frame state (pose a gun
@@ -224,6 +229,21 @@ export class WeaponViewmodel {
   }
 
   /**
+   * Shade the gun like the world around the camera: indoors the sky fill and
+   * reflections drop (see SkyOcclusion), in shadow the sun key goes out.
+   * Engine hook, every frame, with smoothed values.
+   */
+  setOcclusion(skyVis: number, sunVis: number) {
+    this.sunVis = sunVis;
+    this.skyVis = skyVis;
+    const mul = Math.max(0.05, skyVis);
+    this.scene.environmentIntensity *= mul / this.envMul;
+    this.envMul = mul;
+    this.hemi.intensity = 0.35 * mul;
+    this.rim.intensity = 0.55 * (0.35 + 0.65 * mul);
+  }
+
+  /**
    * Re-orient image-based lighting and the key light to the world camera, so
    * reflections and highlights on the gun match where the player is looking.
    * Runs every frame from drainShells(); safe to call directly too.
@@ -241,7 +261,8 @@ export class WeaponViewmodel {
       // Keep the key above the gun's horizon a little so it never goes fully flat.
       this.key.position.copy(tmpV);
       this.key.color.copy(this.sun.color);
-      this.key.intensity = this.sun.intensity * 1.05;
+      // A sliver of key survives in shadow: bounce off sunlit ground nearby.
+      this.key.intensity = this.sun.intensity * 1.05 * (0.06 + 0.94 * this.sunVis) * (0.5 + 0.5 * this.skyVis);
     }
   }
 

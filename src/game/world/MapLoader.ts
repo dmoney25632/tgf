@@ -4,6 +4,7 @@ import type { Surface } from "../effects/EffectsPool";
 import { QUALITY, type QualityPreset } from "../config";
 import type { ModelId } from "../assets/manifest";
 import { Atmosphere, type AtmosphereDef } from "../render/Atmosphere";
+import { SkyOcclusion } from "../render/SkyOcclusion";
 import { MaterialLibrary } from "../render/Materials";
 import { MeshBuilder } from "./MeshBuilder";
 import { WorldMaterials, type WorldMat } from "./WorldMaterials";
@@ -107,6 +108,8 @@ export type LoadedMap = {
   meshes: THREE.Mesh[];
   sun: THREE.DirectionalLight;
   atmosphere: Atmosphere;
+  /** Interior volumes under roofs, where sky light is blocked. */
+  sky: SkyOcclusion;
   /** Rescales foliage density, shadow fit and dust for a preset. */
   setQuality(q: QualityPreset): void;
   /** Approximate static geometry counts (for perf budgeting/debug). */
@@ -306,12 +309,16 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   };
   setQuality(quality);
 
+  const sky = SkyOcclusion.fromRoofs(def.boxes.filter((b) => b.tag === "roof")).activate();
+  sky.patchScene(root);
+
   return {
     def,
     collision,
     meshes,
     sun: atmosphere.sun,
     atmosphere,
+    sky,
     setQuality,
     stats() {
       let drawables = 0;
@@ -327,6 +334,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
       };
     },
     dispose() {
+      sky.deactivate();
       root.removeFromParent();
       for (const d of disposables) d.dispose();
     },

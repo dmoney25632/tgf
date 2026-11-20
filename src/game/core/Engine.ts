@@ -312,6 +312,33 @@ export class GameEngine {
   // Loop
   // ---------------------------------------------------------------------------
 
+  private skyVis = 1;
+  private sunVis = 1;
+  private skyPatchIn = 0;
+  private readonly sunDir = new THREE.Vector3();
+
+  /**
+   * Indoors / in shade: drives the viewmodel's sky fill and sun key from the
+   * camera's position (roof volumes + a ray toward the sun), and keeps sky
+   * occlusion patched into materials that load later (props, enemies).
+   */
+  private updateLightOcclusion(dt: number) {
+    const p = this.camera.position;
+    const sun = this.map.sun;
+    this.sunDir.subVectors(sun.position, sun.target.position).normalize();
+    const d = this.sunDir;
+    const sunTarget = this.map.collision.raycast(p.x, p.y, p.z, d.x || 1e-6, d.y || 1e-6, d.z || 1e-6, 150) === Infinity ? 1 : 0;
+    const skyTarget = this.map.sky.visibilityAt(p);
+    const k = 1 - Math.exp(-dt * 6);
+    this.sunVis += (sunTarget - this.sunVis) * k;
+    this.skyVis += (skyTarget - this.skyVis) * k;
+    this.viewmodel.setOcclusion(this.skyVis, this.sunVis);
+    if ((this.skyPatchIn -= dt) <= 0) {
+      this.skyPatchIn = 1;
+      this.map.sky.patchScene(this.scene);
+    }
+  }
+
   private loop = (now: number) => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
@@ -389,6 +416,7 @@ export class GameEngine {
     this.updateHud(dt, playing);
     input.endFrame();
 
+    this.updateLightOcclusion(dt);
     this.pipeline.render(dt);
     // Dynamic resolution changed the drawing buffer: keep pixel-sized effects in step.
     if (this.pipeline.resolutionVersion !== this.resolutionVersion) {
