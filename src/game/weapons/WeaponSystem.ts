@@ -44,7 +44,8 @@ export type WeaponModifiers = {
 
 export type WeaponHooks = {
   onFire(def: WeaponDef, hitPoint: THREE.Vector3 | null): void;
-  onImpact(point: THREE.Vector3, normal: THREE.Vector3, surface: Surface, distance: number): void;
+  /** `material` = the hit world mesh's userData.material (refines concrete → brick / plaster etc.). */
+  onImpact(point: THREE.Vector3, normal: THREE.Vector3, surface: Surface, distance: number, material?: string): void;
   /** shotId groups pellets of one trigger pull (for rewards). */
   onHit(part: HitPart, damage: number, killed: boolean, name: string, source: string, shotId: number, point: THREE.Vector3): void;
   onDryFire(): void;
@@ -443,7 +444,7 @@ export class WeaponSystem {
         anyHitPoint = true;
         this.lastHitPoint.copy(hit.point);
         // Fewer impact effects for pellets to keep particle counts sane.
-        if (def.pellets === 1 || p % 3 === 0) this.hooks.onImpact(hit.point, this.normalOf(hit, this.dir), data.surface ?? "concrete", hit.distance);
+        if (def.pellets === 1 || p % 3 === 0) this.hooks.onImpact(hit.point, this.normalOf(hit, this.dir), data.surface ?? "concrete", hit.distance, (data as { material?: string }).material);
         break;
       }
     }

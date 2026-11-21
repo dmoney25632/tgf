@@ -166,8 +166,8 @@ export class GameEngine {
     const defs: WeaponDef[] = (opts.loadout ?? DEFAULT_LOADOUT).map((id) => WEAPONS[id]);
     this.weapons = new WeaponSystem(defs, this.player, () => this.collectRaycastTargets(), {
       onFire: (def, hitPoint) => this.onFire(def, hitPoint),
-      onImpact: (point, normal, surface) => {
-        this.effects.impact(point, normal, surface);
+      onImpact: (point, normal, surface, _distance, material) => {
+        this.effects.impact(point, normal, surface, true, material);
         if (surface !== "flesh") this.sfx.impact(point, surface);
       },
       onHit: (part, dmg, killed, name, source, shotId, point) => {
