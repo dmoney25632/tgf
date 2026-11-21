@@ -84,6 +84,8 @@ export interface GameMode {
   /** Player's weapon hit something. Return a medal text, null for none, undefined for default. */
   onWeaponHit(part: HitPart, damage: number, killed: boolean, name: string, source: string, shotId: number, point: THREE.Vector3): string | null | undefined;
   onExplosion(at: THREE.Vector3): void;
+  /** M84 stun went off (blind the AI it reaches). */
+  onFlashbang?(at: THREE.Vector3): void;
   vitals(): Vitals;
   /** Called on manual respawn (range) / ignored in survival. */
   reset(): void;

@@ -285,9 +285,39 @@ export class AgentManager {
   // ---------------------------------------------------------------------------
 
   private canSee(ag: Agent, target: Combatant) {
+    if (ag.blindTimer > 0) return false;
     ag.eye(this.a);
     target.aimPoint(this.b);
+    if (this.obscured?.(this.a, this.b)) return false;
     return this.world.lineOfSight(this.a, this.b);
+  }
+
+  /** Smoke (or any obscurant) between two points: set by the game mode from GrenadeSystem. */
+  obscured: ((a: THREE.Vector3, b: THREE.Vector3) => boolean) | null = null;
+
+  /**
+   * M84 stun: every agent with a clear line to the burst is blinded, longer
+   * when close and facing it. Returns how many were caught.
+   */
+  flashbang(at: THREE.Vector3, radius: number, maxBlind: number) {
+    let caught = 0;
+    this.a.copy(at);
+    this.a.y += 0.25;
+    for (const ag of this.active) {
+      if (!ag.alive) continue;
+      ag.eye(this.b);
+      const dist = this.a.distanceTo(this.b);
+      if (dist > radius || !this.world.lineOfSight(this.a, this.b)) continue;
+      const fx = Math.sin(ag.yaw), fz = Math.cos(ag.yaw);
+      const facing = ((this.a.x - this.b.x) * fx + (this.a.z - this.b.z) * fz) / Math.max(0.01, Math.hypot(this.a.x - this.b.x, this.a.z - this.b.z));
+      const t = maxBlind * (1 - dist / radius) * (0.45 + 0.55 * Math.max(0, facing)) + (dist < 3 ? 1 : 0);
+      if (t <= 0.2) continue;
+      ag.blindTimer = Math.max(ag.blindTimer, t);
+      ag.hasLos = false;
+      ag.flinchTimer = Math.max(ag.flinchTimer, 0.5);
+      caught++;
+    }
+    return caught;
   }
 
   private hostilesOf(ag: Agent) {
@@ -575,6 +605,13 @@ export class AgentManager {
     }
 
     if (ag.flinchTimer > 0) speed *= 0.25;
+    // Flashbanged: stumble about, can't aim.
+    if (ag.blindTimer > 0) {
+      ag.blindTimer = Math.max(0, ag.blindTimer - dt);
+      speed *= 0.35;
+      wantFire = false;
+      faceTarget = false;
+    }
     // Staggered heavy: rooted, weapon off target.
     const staggered = ag.staggerTimer > 0;
     if (staggered) {

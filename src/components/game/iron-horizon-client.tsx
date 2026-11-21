@@ -10,6 +10,7 @@ import { mobileDefaultQuality } from "@/game/mobile/device";
 import { loadSettings, sanitizeSettings, saveSettings, type GameSettings } from "@/game/ui/Settings";
 import { saveMatch } from "@/app/play/[gameId]/actions";
 import { matchReport } from "@/game/core/matchReport";
+import { resolveWeaponId } from "@/game/weapons/weapons";
 import { DEFAULT_CHOICE, Lobby, type LobbyChoice, type PartyActions } from "./lobby";
 import { CoopApp } from "@/components/coop/coop-app";
 import { makeRoomCode, normalizeRoomCode } from "@/game/net/transport";
@@ -26,7 +27,10 @@ const LOBBY_KEY = "tgf.iron-horizon.lobby";
 function loadLobby(): LobbyChoice {
   try {
     const raw = window.localStorage.getItem(LOBBY_KEY);
-    return raw ? { ...DEFAULT_CHOICE, ...(JSON.parse(raw) as Partial<LobbyChoice>) } : DEFAULT_CHOICE;
+    if (!raw) return DEFAULT_CHOICE;
+    const c = { ...DEFAULT_CHOICE, ...(JSON.parse(raw) as Partial<LobbyChoice>) };
+    // Old saves may name retired weapons (vk7, marrow9…): map them onto the current library.
+    return { ...c, primary: resolveWeaponId(c.primary, "primary", DEFAULT_CHOICE.primary), secondary: resolveWeaponId(c.secondary, "secondary", DEFAULT_CHOICE.secondary) };
   } catch {
     return DEFAULT_CHOICE;
   }

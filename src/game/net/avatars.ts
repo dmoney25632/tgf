@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { HitPart, HitResult, Hittable } from "../core/types";
 import { Humanoid } from "../ai/Humanoid";
+import { WEAPONS } from "../weapons/weapons";
 import { ENEMIES, OPERATORS, type EnemyDef, type EnemyType, type OperatorId } from "../survival/config";
 import { humanoidLook, sanitizeLook } from "../character";
 import { InterpBuffer } from "./interpolation";
@@ -78,11 +79,11 @@ export class RemoteAvatar {
     operator: OperatorId,
     look?: unknown,
   ) {
-    const c = OPERATORS[operator]?.colors ?? OPERATORS.ridge.colors;
-    this.model = new Humanoid(
-      NO_HIT,
-      look ? humanoidLook(sanitizeLook(look)) : { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent, skin: 0xb08a6a, kit: "standard", scale: 1 },
-    );
+    const op = OPERATORS[operator] ?? OPERATORS.ridge;
+    const c = op.colors;
+    // Custom character look when the player saved one; teammates carry their operator's primary in third person.
+    const base = look ? humanoidLook(sanitizeLook(look)) : { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent, skin: 0xb08a6a, kit: "standard" as const, scale: 1 };
+    this.model = new Humanoid(NO_HIT, { ...base, gun: WEAPONS[op.primary]?.tp });
     this.model.root.visible = false;
     this.tag.sprite.position.set(0, 2.15, 0);
     this.model.root.add(this.tag.sprite);
@@ -151,6 +152,9 @@ export class RemoteEnemy implements Hittable {
   readonly buffer = new InterpBuffer(5, 32, [3]);
   readonly position = new THREE.Vector3();
   yaw = 0;
+  heading() {
+    return this.yaw;
+  }
   pitch = 0;
   health = 1;
   maxHealth = 1;

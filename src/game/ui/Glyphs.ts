@@ -37,6 +37,9 @@ export const PAD_ACTIONS: Record<ActionId, PadButtonName> = {
   interact: "X",
   melee: "R3",
   grenade: "RB",
+  flashbang: "LB",
+  smoke: "LEFT",
+  fireMode: "RIGHT",
   swap: "Y",
   scoreboard: "UP",
   readyUp: "DOWN",
@@ -165,7 +168,7 @@ export function keyGlyph(code: string, size = 18): string {
 /** On-screen touch button names (see src/game/mobile/layout.ts). */
 export const TOUCH_ACTIONS: Record<ActionId, string> = {
   forward: "MOVE", back: "MOVE", left: "MOVE", right: "MOVE", jump: "JUMP", sprint: "MOVE", crouch: "CROUCH", crouchHold: "CROUCH",
-  fire: "FIRE", ads: "AIM", reload: "RELOAD", interact: "USE", melee: "KNIFE", grenade: "FRAG", swap: "SWAP", scoreboard: "SCORE", readyUp: "READY",
+  fire: "FIRE", ads: "AIM", reload: "RELOAD", interact: "USE", melee: "KNIFE", grenade: "FRAG", flashbang: "FRAG", smoke: "FRAG", fireMode: "FIRE", swap: "SWAP", scoreboard: "SCORE", readyUp: "READY",
 };
 
 /** Touch prompt: a rounded pill naming the on-screen button. */

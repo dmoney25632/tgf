@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { cyl, dome, ellipsoid, GeoBuilder, loft, MIRROR_X, paint, QUALITY, rbox, seeded, shade, T, type ColorFn, type Paint } from "./geo";
 import type { FaceCover } from "./head";
 import type { CamoStyle, Kit } from "./kit";
+import type { ThirdPersonKind } from "../../weapons/weapons";
 import { SURF } from "./materials";
 import { BONES, RIG, type BoneName } from "./rig";
 
@@ -56,6 +57,8 @@ export type LookDef = {
   camo?: CamoStyle;
   /** Optional look variant (headgear, sleeves, rig, facial hair; standard kit has 6); cycles per instance when omitted. */
   variant?: number;
+  /** Third-person weapon family; the kit picks one when omitted (teammates pass their primary's). */
+  gun?: ThirdPersonKind;
 };
 
 export type HitDims = { size: [number, number, number]; at: [number, number, number] };

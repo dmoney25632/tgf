@@ -12,6 +12,9 @@ export type HitResult = {
 /** Anything bullets can damage (targets, enemies, bots). */
 export interface Hittable {
   readonly name: string;
+  /** Facing (radians, 0 = +Z) and position: lets knives detect backstabs. */
+  heading?(): number;
+  readonly position?: THREE.Vector3;
   applyDamage(amount: number, part: HitPart, from?: THREE.Vector3, source?: string): HitResult;
 }
 

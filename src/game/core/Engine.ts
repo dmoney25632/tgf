@@ -6,7 +6,7 @@ import { PlayerController, type CameraOffsets, type MoveIntent } from "../player
 import { WeaponSystem } from "../weapons/WeaponSystem";
 import { WeaponViewmodel, type ViewmodelState } from "../weapons/WeaponViewmodel";
 import { GrenadeSystem } from "../weapons/GrenadeSystem";
-import { DEFAULT_LOADOUT, WEAPONS, type WeaponDef, type WeaponId } from "../weapons/weapons";
+import { DEFAULT_LOADOUT, FLASHBANG, GRENADE, WEAPONS, fireModeLabel, type GrenadeType, type WeaponDef, type WeaponId } from "../weapons/weapons";
 import { loadMap, type LoadedMap, type MapDef } from "../world/MapLoader";
 import { KESTREL_YARD } from "../world/maps/kestrelYard";
 import { DUSTFALL_OUTPOST } from "../world/maps/dustfallOutpost";
@@ -59,6 +59,10 @@ export type EngineOptions = {
  *   → weapons + grenades (fire from the fresh aim) → mode (AI, waves)
  *   → viewmodel/effects/audio → HUD → render
  */
+/** Throwable per key (canonical codes; rebindable in Settings). */
+const GRENADE_KEYS: [string, GrenadeType][] = [["KeyG", "frag"], ["KeyT", "flash"], ["KeyH", "smoke"]];
+const GRENADE_FUSE = GRENADE.fuse;
+
 export class GameEngine {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(CAMERA.fov, 1, CAMERA.near, CAMERA.far);
@@ -93,6 +97,9 @@ export class GameEngine {
   private disposed = false;
   private crouchToggle = false;
   private lastYaw = 0;
+  /** Seconds of flashbang white-out left. */
+  private flashBlind = 0;
+  private grenadeKey = "KeyG";
   private lastPitch = 0;
 
   // Reused per-frame objects (no allocations in the loop).
@@ -177,17 +184,30 @@ export class GameEngine {
         this.sfx.swap();
       },
       onAdsStart: () => this.sfx.adsIn(),
-      onMelee: (hit) => {
-        this.sfx.knife(hit);
-        if (hit) this.shake.add(0.06);
+      onMelee: (hit, kind, backstab, flesh) => {
+        this.sfx.knife(hit, flesh ?? true, backstab ?? false, kind === "butt");
+        if (hit) this.shake.add(backstab ? 0.12 : 0.06);
+        if (hit && flesh) this.input.rumble(0.3, 0.5, backstab ? 140 : 70);
+      },
+      onMeleeStart: (kind) => this.sfx.swing(kind === "butt" || kind === "stab"),
+      onFireMode: () => {
+        this.sfx.fireMode();
+        this.viewmodel.fireModeFlick();
+      },
+      onLoadout: (defs) => {
+        this.viewmodel.preload(defs);
+        this.sfx.preloadGuns(defs);
       },
     });
     this.viewmodel.setWeapon(defs[0]);
 
     this.grenades = new GrenadeSystem(this.scene, this.map.collision, {
       onThrow: () => this.sfx.grenadeThrow(),
+      onPin: () => this.sfx.grenadePin(),
       onBounce: (at) => this.sfx.grenadeBounce(at),
       onExplode: (at) => this.onExplosion(at),
+      onFlash: (at) => this.onFlashbang(at),
+      onSmoke: (at) => this.sfx.smokePop(at, at.distanceTo(this.camera.position)),
     });
 
     const ctx: EngineContext = {
@@ -460,7 +480,12 @@ export class GameEngine {
     if (playing) {
       // Grenade wind-up blocks the gun; the gun blocks the throw.
       const throwing = this.grenades.throwProgress >= 0;
-      if (input.pressed("KeyG") && !this.weapons.reloading && this.weapons.meleeProgress < 0 && !this.player.sprinting) this.grenades.tryThrow();
+      // Hold to pull the pin / cook (arc preview), release to throw.
+      const canThrow = !this.weapons.reloading && this.weapons.meleeProgress < 0 && !this.player.sprinting;
+      for (const [code, type] of GRENADE_KEYS) {
+        if (input.pressed(code) && canThrow && this.grenades.begin(type)) this.grenadeKey = code;
+      }
+      if (this.grenades.isHolding && !input.isDown(this.grenadeKey)) this.grenades.release();
       const wasDisabled = this.weapons.disabled;
       if (throwing) this.weapons.disabled = true;
       this.weapons.update(dt, input, this.camera.position);
@@ -595,6 +620,8 @@ export class GameEngine {
     s.grounded = p.grounded;
     s.melee = this.weapons.meleeProgress;
     s.throwing = this.grenades.throwProgress;
+    s.grenade = this.grenades.held;
+    s.meleeKind = this.weapons.meleeKind;
     s.sinceShot = this.weapons.timeSinceShot;
     s.shellReload = this.weapons.shellReloading;
     s.empty = this.weapons.active.ammo === 0;
@@ -615,6 +642,29 @@ export class GameEngine {
     this.effects.muzzleFlash(this.tmpA, this.forward, def.shake / 0.16);
     if (hitPoint) this.effects.tracer(this.tmpA, hitPoint);
     else this.effects.tracer(this.tmpA, this.tmpB.copy(this.camera.position).addScaledVector(this.forward, 200));
+  }
+
+  /**
+   * M84: blinds whoever sees it — you included (white-out scaled by distance,
+   * cover and whether you were looking at it) — and rings your ears.
+   */
+  private onFlashbang(at: THREE.Vector3) {
+    this.effects.muzzleFlash(at, undefined, 2);
+    const eye = this.camera.position;
+    const dist = at.distanceTo(eye);
+    this.tmpB.copy(at);
+    this.tmpB.y += 0.2;
+    let blind = 0;
+    if (dist < FLASHBANG.radius && this.map.collision.lineOfSight(this.tmpB, eye)) {
+      this.camera.getWorldDirection(this.forward);
+      const facing = this.tmpA.subVectors(at, eye).normalize().dot(this.forward);
+      blind = FLASHBANG.blind * Math.pow(1 - dist / FLASHBANG.radius, 0.8) * (0.3 + 0.7 * Math.max(0, facing));
+    }
+    const deafen = Math.max(0, 1 - dist / (FLASHBANG.radius * 0.8));
+    this.flashBlind = Math.max(this.flashBlind, blind);
+    this.sfx.flashbang(at, dist, deafen);
+    this.shake.add(0.25 * deafen);
+    this.mode.onFlashbang?.(at);
   }
 
   private onExplosion(at: THREE.Vector3) {
@@ -648,6 +698,13 @@ export class GameEngine {
     f.maxHealth = v.maxHealth;
     f.armor = v.armor;
     f.grenades = this.grenades.count >= 50 ? -1 : this.grenades.count;
+    f.flashbangs = this.grenades.flashCount;
+    f.smokes = this.grenades.smokeCount;
+    f.cook = this.grenades.cookTime >= 0 ? this.grenades.cookTime / GRENADE_FUSE : -1;
+    f.fireMode = w.def.modes.length > 1 ? fireModeLabel(w.def, w.mode) : "";
+    f.optic = w.def.optic;
+    this.flashBlind = Math.max(0, this.flashBlind - dt);
+    f.flash = Math.min(1, this.flashBlind / 1.4);
     f.scope = w.def.scope ? ads : 0;
     f.yaw = this.player.yaw;
     this.hud.frame(f, dt);

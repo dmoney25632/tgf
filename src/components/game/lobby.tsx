@@ -39,8 +39,8 @@ export type LobbyChoice = {
 export const DEFAULT_CHOICE: LobbyChoice = {
   mode: "survival",
   operator: "ridge",
-  primary: "vk7",
-  secondary: "marrow9",
+  primary: "m4a1",
+  secondary: "m9",
   difficulty: "regular",
   waveTarget: 10,
   squad: 2,

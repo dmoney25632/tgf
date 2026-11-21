@@ -1,4 +1,4 @@
-// Bakes the landing page's particle rifle from the game's own VK-7 Carbine
+// Bakes the landing page's particle rifle from the game's own M4A1
 // viewmodel (no hands, no optics glow): samples points over its surface and
 // writes them to public/assets/landing/rifle-points.bin.
 //
@@ -34,7 +34,7 @@ class GunOnly extends GeoBuilder {
 }
 
 const b = new GunOnly(mats.render);
-const spec = GUN_BUILDERS.rifle({ b, m: mats });
+const spec = GUN_BUILDERS.m4a1({ b, m: mats });
 b.finish([]);
 spec.root.updateMatrixWorld(true);
 

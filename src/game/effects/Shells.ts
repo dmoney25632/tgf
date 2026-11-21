@@ -1,12 +1,20 @@
 import * as THREE from "three";
 
-export type ShellKind = "rifle" | "pistol" | "shotgun" | "magnum" | "heavy";
+/**
+ * Casing per calibre: rifle 5.56×45, x39 7.62×39, heavy 7.62×51 / 7.62×54R,
+ * bmg .50 BMG, pdw 5.7×28, pistol 9×19, acp .45 ACP, magnum .44 Mag, shotgun 12 ga.
+ */
+export type ShellKind = "rifle" | "x39" | "heavy" | "bmg" | "pdw" | "pistol" | "acp" | "magnum" | "shotgun";
 
-/** Per-kind scale of the base (rifle) casing: [radius, length]. */
+/** Per-kind scale of the base (5.56) casing: [radius, length]. */
 const SCALE: Record<Exclude<ShellKind, "shotgun">, [number, number]> = {
   rifle: [1, 1],
-  pistol: [1.18, 0.43],
+  x39: [1.2, 0.87],
   heavy: [1.22, 1.13],
+  bmg: [2.15, 2.2],
+  pdw: [0.82, 0.64],
+  pistol: [1.18, 0.43],
+  acp: [1.26, 0.51],
   magnum: [1.45, 0.72],
 };
 

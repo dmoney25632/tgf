@@ -2,18 +2,35 @@ import * as THREE from "three";
 import { MOVEMENT } from "../config";
 import { damp } from "../core/Spring";
 import type { Input } from "../core/Input";
-import type { HitboxUserData, HitPart } from "../core/types";
+import type { HitboxUserData, HitPart, Hittable } from "../core/types";
 import type { PlayerController } from "../player/PlayerController";
 import type { Surface } from "../effects/EffectsPool";
-import { damageAt, MELEE, type WeaponDef } from "./weapons";
+import { BUTT_STROKE, damageAt, KNIFE, MELEE, WEAPONS, type FireMode, type WeaponDef } from "./weapons";
 
 const DEG = Math.PI / 180;
 const STAGES_TACTICAL: readonly [number, ReloadStage][] = [[0.25, "magOut"], [0.6, "magIn"]];
 const STAGES_EMPTY: readonly [number, ReloadStage][] = [[0.25, "magOut"], [0.6, "magIn"], [0.82, "bolt"]];
 const MELEE_FAN = [0, -0.14, 0.14, -0.28, 0.28];
+/** Pause between bursts (s), on top of the cyclic rate. */
+const BURST_GAP = 0.14;
+/** Damage kept after passing through a body. */
+const PEN_KEEP = 0.7;
 
-export type Slot = { def: WeaponDef; ammo: number; reserve: number };
+export type Slot = { def: WeaponDef; ammo: number; reserve: number; mode: FireMode };
 export type ReloadStage = "start" | "magOut" | "magIn" | "bolt" | "shell" | "done";
+/** quick: knife slash (V with sidearm / knife) · butt: rifle-butt stroke (V with a long gun) · slash / stab: equipped knife. */
+export type MeleeKind = "quick" | "butt" | "slash" | "stab";
+
+type MeleeSpec = { name: string; damage: number; range: number; duration: number; hitDelay: number; knife: boolean };
+const MELEE_SPECS: Record<MeleeKind, MeleeSpec> = {
+  quick: { name: MELEE.name, damage: MELEE.damage, range: MELEE.range, duration: MELEE.cooldown, hitDelay: MELEE.hitDelay, knife: true },
+  butt: { name: BUTT_STROKE.name, damage: BUTT_STROKE.damage, range: BUTT_STROKE.range, duration: BUTT_STROKE.cooldown, hitDelay: BUTT_STROKE.hitDelay, knife: false },
+  slash: { name: MELEE.name, damage: KNIFE.slash.damage, range: KNIFE.slash.range, duration: KNIFE.slash.duration, hitDelay: KNIFE.slash.hitDelay, knife: true },
+  stab: { name: MELEE.name, damage: KNIFE.stab.damage, range: KNIFE.stab.range, duration: KNIFE.stab.duration, hitDelay: KNIFE.stab.hitDelay, knife: true },
+};
+
+/** True for kill-feed / medal sources that came from a melee attack. */
+export const isMeleeName = (name: string) => name === MELEE.name || name === BUTT_STROKE.name;
 
 /** Multipliers from operators and perks. 1 = no change. */
 export type WeaponModifiers = {
@@ -34,15 +51,22 @@ export type WeaponHooks = {
   onReload(stage: ReloadStage, def: WeaponDef): void;
   onSwap(def: WeaponDef): void;
   onAdsStart(): void;
-  onMelee(hit: boolean): void;
+  /** Melee swing resolved: `hit` = struck something (body or wall). */
+  onMelee(hit: boolean, kind?: MeleeKind, backstab?: boolean, flesh?: boolean): void;
+  /** Melee swing started (whoosh). */
+  onMeleeStart?(kind: MeleeKind): void;
+  onFireMode?(mode: FireMode, def: WeaponDef): void;
+  /** Carried weapons changed (viewmodel preloads their models). */
+  onLoadout?(defs: WeaponDef[]): void;
 };
 
 export type WeaponStats = { shotsFired: number; shotsHit: number; kills: number; headshots: number; damage: number };
 
 /**
- * Gunplay logic: fire timing, hitscan (incl. shotgun pellets), damage,
- * recoil, spread/bloom, ADS, reload (mag or shell-by-shell), swap and melee.
- * Visuals live in WeaponViewmodel / EffectsPool.
+ * Gunplay logic: fire timing and fire modes (auto / burst / semi), hitscan
+ * with penetration (incl. shotgun pellets), damage, recoil, spread/bloom,
+ * ADS, reload (mag or round-by-round), swap, and melee (knife, rifle butt,
+ * lunge, backstab). Visuals live in WeaponViewmodel / EffectsPool.
  */
 const SLOT_KEYS = ["Digit1", "Digit2", "Digit3", "Digit4"];
 
@@ -63,6 +87,8 @@ export class WeaponSystem {
   recoilYaw = 0;
   /** 0..1 progress of the current melee swing, or -1. */
   meleeProgress = -1;
+  /** Which swing `meleeProgress` belongs to. */
+  meleeKind: MeleeKind = "quick";
 
   private recoilTargetPitch = 0;
   private recoilTargetYaw = 0;
@@ -70,6 +96,7 @@ export class WeaponSystem {
   private sinceShot = 10;
   private fireCooldown = 0;
   private semiBuffer = 0;
+  private burstLeft = 0;
   private sprintOut = 0;
   private reloadTime = 0;
   private reloadDuration = 0;
@@ -86,6 +113,7 @@ export class WeaponSystem {
   private meleeTime = 0;
   private meleeCooldown = 0;
   private meleeApplied = false;
+  private readonly struck = new Set<Hittable>();
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly hits: THREE.Intersection[] = [];
@@ -95,7 +123,6 @@ export class WeaponSystem {
   private readonly up = new THREE.Vector3();
   private readonly origin = new THREE.Vector3();
   private readonly normal = new THREE.Vector3();
-  private readonly hitPoint = new THREE.Vector3();
   private readonly lastHitPoint = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, "YXZ");
 
@@ -138,15 +165,28 @@ export class WeaponSystem {
   get timeSinceShot() {
     return this.sinceShot;
   }
+  get fireMode() {
+    return this.active.mode;
+  }
+  /** The knife is in hand (slot 3). */
+  get knifeOut() {
+    return this.active.def.slot === "melee";
+  }
 
-  /** Replace the carried weapons. Keeps ammo for weapons you already had. */
+  /**
+   * Replace the carried weapons (the knife is always carried as the last
+   * slot). Keeps ammo and fire mode for weapons you already had.
+   */
   setLoadout(defs: WeaponDef[]) {
+    const all = defs.some((d) => d.slot === "melee") ? defs : [...defs, WEAPONS.knife];
     const old = new Map(this.slots.map((s) => [s.def.id, s]));
-    this.slots = defs.map((def) => old.get(def.id) ?? { def, ammo: def.magSize, reserve: Math.round(def.reserveAmmo * this.mods.reserve) });
+    this.slots = all.map((def) => old.get(def.id) ?? { def, ammo: def.magSize, reserve: Math.round(def.reserveAmmo * this.mods.reserve), mode: def.modes[0] });
     this.current = Math.min(this.current, this.slots.length - 1);
     this.cancelReload();
     this.swapDuration = 0;
     this.adsAmount = 0;
+    this.burstLeft = 0;
+    this.hooks.onLoadout?.(this.slots.map((x) => x.def));
   }
 
   /** Survival: the sidearm never runs dry (reserve stays full, HUD shows the infinity sign). */
@@ -154,7 +194,7 @@ export class WeaponSystem {
 
   /** True when this slot's reserve is unlimited. */
   unlimited(slot: Slot) {
-    return this.infiniteSecondary && slot.def.slot === "secondary";
+    return (this.infiniteSecondary && slot.def.slot === "secondary") || slot.def.slot === "melee";
   }
 
   /** Refill reserves (fraction of max) and top up magazines. */
@@ -176,7 +216,7 @@ export class WeaponSystem {
 
   /** Aim intent this frame (read before the player step so movement slows). */
   wantsAds(input: Input) {
-    return input.isDown("Mouse2") && !this.swapping && !this.player.sprinting && !this.disabled && this.meleeProgress < 0;
+    return input.isDown("Mouse2") && !this.knifeOut && !this.swapping && !this.player.sprinting && !this.disabled && this.meleeProgress < 0;
   }
 
   update(dt: number, input: Input, eye: THREE.Vector3) {
@@ -188,6 +228,7 @@ export class WeaponSystem {
     if (this.disabled) {
       this.adsAmount = Math.max(0, this.adsAmount - dt * 4);
       this.cancelReload();
+      this.burstLeft = 0;
       // Don't leave a knife swing or swap frozen mid-way (its hit would land later).
       this.meleeProgress = -1;
       if (this.swapDuration > 0) {
@@ -201,30 +242,38 @@ export class WeaponSystem {
       return;
     }
 
-    // ---- Melee (V) ------------------------------------------------------------
-    if (input.pressed("KeyV") && this.meleeCooldown <= 0 && !this.swapping) {
-      this.cancelReload();
-      this.meleeProgress = 0;
-      this.meleeTime = 0;
-      this.meleeApplied = false;
-      this.meleeCooldown = MELEE.cooldown;
-      this.adsAmount = 0;
+    // ---- Melee: V (quick), or fire / aim with the knife out --------------------
+    if (this.meleeCooldown <= 0 && !this.swapping) {
+      let kind: MeleeKind | null = null;
+      if (input.pressed("KeyV")) kind = this.knifeOut ? "slash" : def.slot === "primary" ? "butt" : "quick";
+      else if (this.knifeOut && input.isDown("Mouse0")) kind = "slash";
+      else if (this.knifeOut && input.pressed("Mouse2")) kind = "stab";
+      if (kind) this.startMelee(kind, eye);
     }
     if (this.meleeProgress >= 0) {
+      const m = MELEE_SPECS[this.meleeKind];
       this.meleeTime += dt;
-      this.meleeProgress = this.meleeTime / MELEE.cooldown;
-      if (!this.meleeApplied && this.meleeTime >= MELEE.hitDelay) {
+      this.meleeProgress = this.meleeTime / m.duration;
+      if (!this.meleeApplied && this.meleeTime >= m.hitDelay) {
         this.meleeApplied = true;
-        this.doMelee(eye);
+        this.doMelee(eye, m);
       }
       if (this.meleeProgress >= 1) this.meleeProgress = -1;
+    }
+
+    // ---- Fire mode (B) ------------------------------------------------------
+    if (input.pressed("KeyB") && def.modes.length > 1 && !this.knifeOut) {
+      slot.mode = def.modes[(def.modes.indexOf(slot.mode) + 1) % def.modes.length];
+      this.burstLeft = 0;
+      this.hooks.onFireMode?.(slot.mode, def);
     }
 
     // ---- Swap -------------------------------------------------------------
     const wheel = input.consumeWheel();
     for (let i = 0; i < this.slots.length; i++) if (input.pressed(SLOT_KEYS[i])) this.requestSwap(i);
     if (wheel !== 0) this.requestSwap((this.current + (wheel > 0 ? 1 : this.slots.length - 1)) % this.slots.length);
-    if (input.pressed("KeyQ")) this.requestSwap((this.current + 1) % this.slots.length);
+    // Q toggles between the two guns (the knife is on 3 / the wheel).
+    if (input.pressed("KeyQ")) this.requestSwap(this.current === 0 ? 1 : 0);
     if (this.swapDuration > 0) {
       const before = this.swapTime / this.swapDuration;
       this.swapTime += dt;
@@ -267,14 +316,22 @@ export class WeaponSystem {
     this.fireCooldown -= dt;
     if (input.pressed("Mouse0")) this.semiBuffer = 0.12;
     else this.semiBuffer = Math.max(0, this.semiBuffer - dt);
-    const trigger = def.auto ? input.isDown("Mouse0") : this.semiBuffer > 0;
+    const mode = slot.mode;
+    if (this.knifeOut) {
+      this.semiBuffer = 0;
+    } else if (mode === "burst" && this.semiBuffer > 0 && this.burstLeft === 0 && this.fireCooldown <= 0) {
+      this.burstLeft = Math.min(def.burst ?? 3, Math.max(1, slot.ammo));
+      this.semiBuffer = 0;
+    }
+    const trigger = this.knifeOut ? false : mode === "auto" ? input.isDown("Mouse0") : mode === "burst" ? this.burstLeft > 0 || (slot.ammo <= 0 && input.pressed("Mouse0")) : this.semiBuffer > 0;
 
-    // Shotguns can interrupt a shell reload by firing.
+    // Shotguns / bolt guns can interrupt a round-by-round reload by firing.
     if (trigger && this.shellMode && this.reloading && slot.ammo > 0) this.cancelReload();
 
     const ready = !this.reloading && !this.swapping && this.sprintOut <= 0 && !this.player.sprinting && this.meleeProgress < 0;
     if (trigger && ready) {
       if (slot.ammo <= 0) {
+        this.burstLeft = 0;
         if (input.pressed("Mouse0")) {
           this.hooks.onDryFire();
           if (slot.reserve > 0) this.startReload();
@@ -284,15 +341,22 @@ export class WeaponSystem {
         while (this.fireCooldown <= 0 && slot.ammo > 0 && guard++ < 4) {
           this.fire(eye);
           this.fireCooldown += 60 / def.rpm;
-          if (!def.auto) {
+          if (mode === "burst") {
+            this.burstLeft = Math.max(0, this.burstLeft - 1);
+            if (this.burstLeft === 0 || slot.ammo === 0) {
+              this.burstLeft = 0;
+              this.fireCooldown += BURST_GAP;
+              break;
+            }
+          } else if (mode === "semi") {
             this.semiBuffer = 0;
             break;
           }
         }
       }
-    }
+    } else if (!ready) this.burstLeft = 0;
     if (this.fireCooldown < 0) this.fireCooldown = 0;
-    if (!input.isDown("Mouse0") && this.sinceShot > 0.25) this.shotIndex = 0;
+    if (!input.isDown("Mouse0") && this.burstLeft === 0 && this.sinceShot > 0.25) this.shotIndex = 0;
 
     this.settleRecoil(dt, def);
   }
@@ -342,31 +406,46 @@ export class WeaponSystem {
       const rad = Math.tan(this.spread * DEG) * Math.sqrt(u);
       this.dir.copy(this.aimDir).addScaledVector(this.right, Math.cos(a) * rad).addScaledVector(this.up, Math.sin(a) * rad).normalize();
 
-      const hit = this.cast(this.dir, def.range);
-      if (!hit) continue;
-      anyHitPoint = true;
-      this.lastHitPoint.copy(hit.point);
-      const data = hit.object.userData as Partial<HitboxUserData> & { surface?: Surface };
-      if (data.hittable && data.part) {
-        let dmg = damageAt(def, hit.distance) * this.mods.damage;
-        if (data.part === "head") dmg *= def.headMultiplier * this.mods.headshotDamage;
-        else if (data.part === "legs") dmg *= def.limbMultiplier;
-        const res = data.hittable.applyDamage(dmg, data.part, this.origin);
-        if (res.counts) {
-          if (!countedHit) {
-            this.stats.shotsHit++;
-            countedHit = true;
+      this.castAll(this.dir, def.range);
+      // Walk the hits front to back: bodies take damage (full-power rounds
+      // carry on through `penetration` of them), the first wall stops it.
+      this.struck.clear();
+      let passes = def.penetration;
+      let keep = 1;
+      for (const hit of this.hits) {
+        const data = hit.object.userData as Partial<HitboxUserData> & { surface?: Surface };
+        if (data.hittable && data.part) {
+          if (this.struck.has(data.hittable)) continue;
+          this.struck.add(data.hittable);
+          anyHitPoint = true;
+          this.lastHitPoint.copy(hit.point);
+          let dmg = damageAt(def, hit.distance) * this.mods.damage * keep;
+          if (data.part === "head") dmg *= def.headMultiplier * this.mods.headshotDamage;
+          else if (data.part === "legs") dmg *= def.limbMultiplier;
+          const res = data.hittable.applyDamage(dmg, data.part, this.origin);
+          if (res.counts) {
+            if (!countedHit) {
+              this.stats.shotsHit++;
+              countedHit = true;
+            }
+            this.stats.damage += res.damage;
+            if (res.killed) {
+              this.stats.kills++;
+              if (data.part === "head") this.stats.headshots++;
+            }
+            this.hooks.onHit(data.part, res.damage, res.killed, data.hittable.name, def.name, shotId, hit.point);
           }
-          this.stats.damage += res.damage;
-          if (res.killed) {
-            this.stats.kills++;
-            if (data.part === "head") this.stats.headshots++;
-          }
-          this.hooks.onHit(data.part, res.damage, res.killed, data.hittable.name, def.name, shotId, hit.point);
+          if (def.pellets === 1 || p % 3 === 0) this.hooks.onImpact(hit.point, this.normalOf(hit, this.dir), data.surface ?? "flesh", hit.distance);
+          if (passes-- <= 0) break;
+          keep *= PEN_KEEP;
+          continue;
         }
+        anyHitPoint = true;
+        this.lastHitPoint.copy(hit.point);
+        // Fewer impact effects for pellets to keep particle counts sane.
+        if (def.pellets === 1 || p % 3 === 0) this.hooks.onImpact(hit.point, this.normalOf(hit, this.dir), data.surface ?? "concrete", hit.distance);
+        break;
       }
-      // Fewer impact effects for pellets to keep particle counts sane.
-      if (def.pellets === 1 || p % 3 === 0) this.hooks.onImpact(hit.point, this.normal, data.surface ?? "concrete", hit.distance);
     }
     this.hooks.onFire(def, anyHitPoint ? this.lastHitPoint : null);
 
@@ -382,48 +461,102 @@ export class WeaponSystem {
     this.shotIndex++;
     this.bloom = Math.min(def.spread.max, this.bloom + def.spread.perShot);
 
-    if (slot.ammo === 0 && slot.reserve > 0) this.startReload();
+    if (slot.ammo === 0 && slot.reserve > 0 && this.burstLeft <= 1) this.startReload();
   }
 
-  /** Raycast; fills this.normal with the world-space surface normal. */
-  private cast(dir: THREE.Vector3, far: number) {
+  /** All hits along a ray, nearest first. */
+  private castAll(dir: THREE.Vector3, far: number) {
     this.raycaster.set(this.origin, dir);
     this.raycaster.far = far;
     this.hits.length = 0;
     this.raycaster.intersectObjects(this.targets, false, this.hits);
-    const hit = this.hits[0];
+    return this.hits;
+  }
+
+  /** Nearest hit; fills this.normal with the world-space surface normal. */
+  private cast(dir: THREE.Vector3, far: number) {
+    const hit = this.castAll(dir, far)[0];
     if (!hit) return null;
-    if (hit.face) this.normal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
-    else this.normal.copy(dir).negate();
+    this.normalOf(hit, dir);
     return hit;
   }
 
-  private doMelee(eye: THREE.Vector3) {
+  private normalOf(hit: THREE.Intersection, dir: THREE.Vector3) {
+    if (hit.face) this.normal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+    else this.normal.copy(dir).negate();
+    return this.normal;
+  }
+
+  private startMelee(kind: MeleeKind, eye: THREE.Vector3) {
+    const m = MELEE_SPECS[kind];
+    this.cancelReload();
+    this.burstLeft = 0;
+    this.meleeKind = kind;
+    this.meleeProgress = 0;
+    this.meleeTime = 0;
+    this.meleeApplied = false;
+    this.meleeCooldown = m.duration;
+    this.adsAmount = 0;
+    this.hooks.onMeleeStart?.(kind);
+    if (!m.knife) return;
+    // Lunge: close the gap to an enemy under the crosshair.
+    this.aimBasis();
+    this.origin.copy(eye);
+    this.targets = this.getTargets();
+    const hit = this.cast(this.aimDir, KNIFE.lungeRange);
+    const data = hit?.object.userData as Partial<HitboxUserData> | undefined;
+    if (hit && data?.hittable && hit.distance > m.range * 0.7) {
+      const time = Math.min(0.2, (hit.distance - m.range * 0.55) / KNIFE.lungeSpeed);
+      if (time > 0.02) this.player.lunge(this.aimDir, KNIFE.lungeSpeed, time);
+    }
+  }
+
+  private doMelee(eye: THREE.Vector3, m: MeleeSpec) {
+    const kind = this.meleeKind;
     this.aimBasis();
     this.origin.copy(eye);
     this.targets = this.getTargets();
     for (const yawOff of MELEE_FAN) {
       this.dir.copy(this.aimDir).addScaledVector(this.right, yawOff).addScaledVector(this.up, -0.05).normalize();
-      const hit = this.cast(this.dir, MELEE.range);
+      const hit = this.cast(this.dir, m.range);
       if (!hit) continue;
       const data = hit.object.userData as Partial<HitboxUserData> & { surface?: Surface };
       if (data.hittable && data.part) {
-        const res = data.hittable.applyDamage(MELEE.damage * this.mods.damage, data.part, this.origin, "melee");
+        const target = data.hittable;
+        const backstab = m.knife && this.isBehind(target);
+        let dmg = m.damage * this.mods.damage;
+        if (backstab) dmg = Math.max(dmg, KNIFE.backstab * this.mods.damage);
+        else if (!m.knife && this.isBehind(target)) dmg *= 1.5;
+        if (data.part === "head" && !backstab) dmg *= 1.2;
+        const res = target.applyDamage(dmg, data.part, this.origin, "melee");
         if (res.counts) {
           this.stats.damage += res.damage;
           if (res.killed) this.stats.kills++;
-          this.hooks.onHit(data.part, res.damage, res.killed, data.hittable.name, MELEE.name, ++this.shotCounter, hit.point);
+          this.hooks.onHit(data.part, res.damage, res.killed, target.name, m.name, ++this.shotCounter, hit.point);
         }
-        this.hooks.onMelee(true);
+        this.hooks.onImpact(hit.point, this.normal, data.surface ?? "flesh", hit.distance);
+        this.hooks.onMelee(true, kind, backstab, (data.surface ?? "flesh") === "flesh");
         return;
       }
       if (yawOff === 0) {
         this.hooks.onImpact(hit.point, this.normal, data.surface ?? "concrete", hit.distance);
-        this.hooks.onMelee(true);
+        this.hooks.onMelee(true, kind, false, false);
         return;
       }
     }
-    this.hooks.onMelee(false);
+    this.hooks.onMelee(false, kind, false, false);
+  }
+
+  /** Attacker stands in the target's rear arc (needs the target's facing). */
+  private isBehind(t: Hittable) {
+    if (!t.heading || !t.position) return false;
+    const yaw = t.heading();
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const dx = this.origin.x - t.position.x;
+    const dz = this.origin.z - t.position.z;
+    const len = Math.hypot(dx, dz) || 1;
+    return (dx * fx + dz * fz) / len < -0.35;
   }
 
   /** Instantly switch to a slot (no animation), e.g. drawing the sidearm when downed. */
@@ -436,6 +569,7 @@ export class WeaponSystem {
     this.cancelReload();
     this.current = index;
     this.adsAmount = 0;
+    this.burstLeft = 0;
     this.hooks.onSwap(this.active.def);
   }
 
@@ -453,17 +587,21 @@ export class WeaponSystem {
     this.adsAmount = 0;
     this.shotIndex = 0;
     this.bloom = 0;
+    this.burstLeft = 0;
   }
 
   private startReload() {
     const def = this.active.def;
+    if (def.magSize <= 0) return;
     this.reloadEmpty = this.active.ammo === 0;
     this.shellMode = Boolean(def.shellReload);
     this.reloadTime = 0;
     this.reloadStageIdx = 0;
+    this.burstLeft = 0;
     // Shell reloads: a short "start" plus one interval per shell.
     this.reloadDuration = this.shellMode ? (0.3 + def.reloadTime) / this.mods.reloadSpeed : (this.reloadEmpty ? def.reloadEmptyTime : def.reloadTime) / this.mods.reloadSpeed;
     if (!this.shellMode) this.adsAmount = Math.min(this.adsAmount, 0.25);
+    else if (def.scope) this.adsAmount = 0;
     this.hooks.onReload("start", def);
   }
 
