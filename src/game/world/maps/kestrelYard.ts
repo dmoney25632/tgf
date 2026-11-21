@@ -40,7 +40,17 @@ export const KESTREL_YARD: MapDef = {
   sunIntensity: 3.3,
   hemiSky: 0xc3cacc,
   hemiGround: 0x545040,
-  atmosphere: { fogDensity: 0.0042, fogColor: 0xb3b7ae, cloudCover: 0.5, hemiIntensity: 0.6, envIntensity: 0.42, exposure: 1.08 },
+  atmosphere: {
+    fogDensity: 0.0042,
+    fogColor: 0xb3b7ae,
+    cloudCover: 0.5,
+    hemiIntensity: 0.6,
+    envIntensity: 0.42,
+    exposure: 1.08,
+    // Grey range day: cool and neutral.
+    grade: { saturation: 1.0, shadowTint: [0.93, 0.99, 1.06], highlightTint: [1.03, 1.0, 0.95] },
+  },
+  weather: { color: 0x7e8062, amount: 0.4 },
   dressing: "kestrel",
   spawns: [{ x: 0, z: 34, yaw: 0 }],
   boxes: [

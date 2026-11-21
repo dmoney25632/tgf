@@ -5,7 +5,7 @@ import { QUALITY, type QualityPreset } from "../config";
 import type { ModelId } from "../assets/manifest";
 import { Atmosphere, type AtmosphereDef } from "../render/Atmosphere";
 import { SkyOcclusion } from "../render/SkyOcclusion";
-import { MaterialLibrary } from "../render/Materials";
+import { MaterialLibrary, setWorldWeather, type WeatherDef } from "../render/Materials";
 import { MeshBuilder } from "./MeshBuilder";
 import { WorldMaterials, type WorldMat } from "./WorldMaterials";
 import { qualityName, worldDetail } from "./quality";
@@ -97,6 +97,8 @@ export type MapDef = {
   atmosphere?: Partial<AtmosphereDef>;
   /** Set-dressing id (terrain, foliage, props) — see world/dressing. */
   dressing?: string;
+  /** Moss / dust weathering on upward faces and wall feet (default: light dust). */
+  weather?: Partial<WeatherDef>;
 };
 
 export type MapStats = { drawables: number; triangles: number; grassTriangles: number; treeTriangles: number; terrainTriangles: number };
@@ -158,6 +160,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   // ---- Atmosphere -----------------------------------------------------------
   const atmosphere = new Atmosphere(scene, resolveAtmosphere(def), half);
   disposables.push(atmosphere);
+  setWorldWeather(def.weather);
   const lib = new MaterialLibrary(quality);
   disposables.push(lib);
   const wm = new WorldMaterials(lib, quality);

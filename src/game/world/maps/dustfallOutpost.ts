@@ -262,7 +262,10 @@ export const DUSTFALL_OUTPOST: MapDef = {
     cloudCover: 0.55,
     envIntensity: 0.4,
     exposure: 0.96,
+    // Dusty compound: warm, slightly bleached highlights.
+    grade: { saturation: 1.0, vibrance: 0.25, highlightTint: [1.07, 1.0, 0.88] },
   },
+  weather: { color: 0xb2a07c, amount: 0.5 },
   dressing: "dustfall",
   spawns: [{ x: 0, z: 2.5, yaw: 0 }],
   boxes,

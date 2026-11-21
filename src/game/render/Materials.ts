@@ -67,6 +67,76 @@ function flatTexture(bytes: Uint8Array) {
 }
 
 /**
+ * Per-map weathering shared by every grime-patched material (process-wide,
+ * like SkyOcclusion's uniforms: materials are patched once, each map writes
+ * its own values on load). Upward faces and the splash zone at the foot of
+ * walls pick up the colour: moss and lichen in green maps, dust in dry ones.
+ */
+export const WORLD_WEATHER = {
+  weatherColor: { value: new THREE.Color(0xa89878) },
+  weatherAmount: { value: 0.35 },
+};
+
+export type WeatherDef = { color: number; amount: number };
+
+export function setWorldWeather(w: Partial<WeatherDef> | undefined) {
+  WORLD_WEATHER.weatherColor.value.setHex(w?.color ?? 0xa89878);
+  WORLD_WEATHER.weatherAmount.value = w?.amount ?? 0.35;
+}
+
+/**
+ * Weathering GLSL (inside main, after map_fragment): needs a world position,
+ * a noise texture and the world-space face normal. Defines float gW.
+ */
+const weatherGlsl = (world: string, noise: string, normal: string, strength: string) => /* glsl */ `
+        // Weathering: patchy on upward faces, creeping up from the ground on walls.
+        vec4 gWA = texture2D(${noise}, ${world}.xz * 0.037 + vec2(${world}.y * 0.021));
+        vec4 gWC = texture2D(${noise}, ${world}.xz * 0.21 + ${world}.y * 0.13);
+        float gPatch = smoothstep(0.46, 0.72, gWA.g * 0.3 + gWC.r * 0.7);
+        // Crevices (dark mortar lines, seams; linear albedo) fill first.
+        float gCrev = 1.0 - smoothstep(0.012, 0.07, dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+        float gTop = smoothstep(0.6, 0.92, ${normal}.y);
+        float gFoot = (1.0 - abs(${normal}.y)) * (1.0 - smoothstep(0.0, 0.4 + gWC.b * 1.1, ${world}.y));
+        float gW = clamp(weatherAmount * max(gPatch, gCrev * 0.85) * (gTop * 0.9 + gFoot * 0.8) * ${strength}, 0.0, 0.9);
+        diffuseColor.rgb = mix(diffuseColor.rgb, weatherColor * mix(0.72, 1.18, gWC.g), gW);`;
+
+let sharedNoise: THREE.DataTexture | null = null;
+/** Process-wide grime/noise texture for materials outside a MaterialLibrary (never disposed; 256²). */
+function weatherNoise() {
+  return (sharedNoise ??= makeDataTexture(grimePixels(256), 256, false, 2));
+}
+
+/**
+ * Adds the map's weathering (moss / dust, see WORLD_WEATHER) to any lit
+ * standard material that isn't built by the MaterialLibrary, e.g. a map's
+ * own procedural stone. `strength` scales it for this material (setts < walls).
+ */
+export function applyWeathering(m: THREE.MeshStandardMaterial, strength = 1) {
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey.bind(m);
+  const uniforms = { weatherNoiseMap: { value: weatherNoise() }, weatherStrength: { value: strength } };
+  m.onBeforeCompile = (shader, renderer) => {
+    prev.call(m, shader, renderer);
+    Object.assign(shader.uniforms, uniforms, WORLD_WEATHER);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWxWorld;")
+      .replace("#include <fog_vertex>", "#include <fog_vertex>\nvWxWorld = transpose(mat3(viewMatrix)) * mvPosition.xyz + cameraPosition;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform sampler2D weatherNoiseMap;\nuniform float weatherStrength;\nuniform vec3 weatherColor;\nuniform float weatherAmount;\nvarying vec3 vWxWorld;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        vec3 gWN = normalize(cross(dFdx(vWxWorld), dFdy(vWxWorld)));${weatherGlsl("vWxWorld", "weatherNoiseMap", "gWN", "weatherStrength")}`,
+      )
+      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 1.0, gW);");
+  };
+  m.customProgramCacheKey = () => `${prevKey()}|weather`;
+}
+
+/**
  * Shared world-space grime used by every structural material: macro albedo
  * variation (breaks up tiling), dirt splash near the ground, and vertical
  * rain streaks on walls. Needs only the world position, which it derives
@@ -74,14 +144,14 @@ function flatTexture(bytes: Uint8Array) {
  */
 function grimeHook(uniforms: { grimeMap: { value: THREE.Texture }; grimeAmount: { value: number }; grimeColor: { value: THREE.Color } }) {
   return (shader: THREE.WebGLProgramParametersWithUniforms) => {
-    Object.assign(shader.uniforms, uniforms);
+    Object.assign(shader.uniforms, uniforms, WORLD_WEATHER);
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vGrimeWorld;")
       .replace("#include <fog_vertex>", "#include <fog_vertex>\nvGrimeWorld = transpose(mat3(viewMatrix)) * mvPosition.xyz + cameraPosition;");
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nuniform sampler2D grimeMap;\nuniform float grimeAmount;\nuniform vec3 grimeColor;\nvarying vec3 vGrimeWorld;",
+        "#include <common>\nuniform sampler2D grimeMap;\nuniform float grimeAmount;\nuniform vec3 grimeColor;\nuniform vec3 weatherColor;\nuniform float weatherAmount;\nvarying vec3 vGrimeWorld;",
       )
       .replace(
         "#include <map_fragment>",
@@ -94,11 +164,12 @@ function grimeHook(uniforms: { grimeMap: { value: THREE.Texture }; grimeAmount: 
         float gSplash = clamp((1.0 - smoothstep(0.0, 0.8 + gA.b * 0.7, vGrimeWorld.y)) * grimeAmount * (0.45 + gB.g), 0.0, 0.85);
         float gStreak = gVert * smoothstep(0.55, 0.85, gB.g) * grimeAmount * 0.35;
         diffuseColor.rgb = mix(diffuseColor.rgb, grimeColor, gSplash);
-        diffuseColor.rgb *= 1.0 - gStreak;`,
+        diffuseColor.rgb *= 1.0 - gStreak;
+        ${weatherGlsl("vGrimeWorld", "grimeMap", "gN", "(0.55 + grimeAmount)")}`,
       )
       .replace(
         "#include <roughnessmap_fragment>",
-        "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 1.0, gSplash);",
+        "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 1.0, max(gSplash, gW));",
       );
   };
 }
@@ -269,7 +340,7 @@ export class MaterialLibrary {
         grimeAmount: { value: def.grime },
         grimeColor: { value: new THREE.Color(0x3b3428) },
       });
-      m.customProgramCacheKey = () => "ih-grime";
+      m.customProgramCacheKey = () => "ih-grime-v2";
     }
     this.materials.set(name, m);
     return m;

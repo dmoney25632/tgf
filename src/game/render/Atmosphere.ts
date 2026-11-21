@@ -76,6 +76,44 @@ export function installHeightFog() {
   }
 }
 
+/**
+ * Display-referred colour grade (applied after AgX, in sRGB): a per-map
+ * "LUT" built from a few photographic controls.
+ */
+export type GradeDef = {
+  /** Plain saturation multiplier (1 = AgX's own). */
+  saturation: number;
+  /** Extra saturation for muted colours only (protects skin and sky). */
+  vibrance: number;
+  /** 0..1 strength of the smoothstep S-curve. */
+  contrast: number;
+  /** Midtone gamma (>1 deepens mids, <1 opens them). */
+  gamma: number;
+  /** Multipliers for shadows and highlights (split toning). */
+  shadowTint: [number, number, number];
+  highlightTint: [number, number, number];
+  /** Raises black level (0 = true black). */
+  lift: number;
+};
+
+export const DEFAULT_GRADE: GradeDef = {
+  saturation: 1.04,
+  vibrance: 0.22,
+  contrast: 0.7,
+  gamma: 1.05,
+  shadowTint: [0.93, 0.99, 1.06],
+  highlightTint: [1.05, 1.0, 0.92],
+  lift: 0.0,
+};
+
+/**
+ * Global key/fill balance. The maps were lit with a soft ~2:1 sun-to-sky
+ * ratio, which flattens everything; real daylight is closer to 4-6:1. The sun
+ * goes up and the sky/IBL fill comes down, and eye adaptation keeps the
+ * overall exposure where the maps were tuned.
+ */
+export const LIGHT_BALANCE = { sun: 1.32, hemi: 0.66, env: 0.7 } as const;
+
 export type AtmosphereDef = {
   skyTop: number;
   skyHorizon: number;
@@ -94,6 +132,8 @@ export type AtmosphereDef = {
   /** Image-based light strength (procedural or HDRI environment). */
   envIntensity: number;
   exposure: number;
+  /** Colour grade overrides (post-processed presets only). */
+  grade?: Partial<GradeDef>;
 };
 
 const SKY_VERT = /* glsl */ `
@@ -225,6 +265,12 @@ export class Atmosphere {
 
   constructor(private readonly scene: THREE.Scene, def: AtmosphereDef, mapHalf: number) {
     installHeightFog();
+    def = {
+      ...def,
+      sunIntensity: def.sunIntensity * LIGHT_BALANCE.sun,
+      hemiIntensity: def.hemiIntensity * LIGHT_BALANCE.hemi,
+      envIntensity: def.envIntensity * LIGHT_BALANCE.env,
+    };
     this.def = def;
     const [sx, sy, sz] = def.sunDirection;
     this.sunDir.set(sx, sy, sz).normalize();

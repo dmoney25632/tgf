@@ -308,7 +308,10 @@ export const SALTPAN_GANTRY: MapDef = {
     cloudCover: 0.3,
     envIntensity: 0.45,
     exposure: 1.0,
+    // Salt flats: bright and airy, deep blue shadows.
+    grade: { gamma: 1.08, shadowTint: [0.9, 0.97, 1.08], highlightTint: [1.05, 1.0, 0.92] },
   },
+  weather: { color: 0xd6cbb2, amount: 0.5 },
   dressing: "saltpanGantry",
   spawns: [{ x: 0, z: 8, yaw: 0 }],
   boxes,
