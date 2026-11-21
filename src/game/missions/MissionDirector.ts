@@ -37,6 +37,10 @@ export type MissionFacts = {
   teamWiped: boolean;
   /** Free slots under the alive cap. */
   spawnRoom: number;
+  /** assassinate: the target is dead. */
+  targetDead?: boolean;
+  /** Stealth: the team was compromised (fails the attempt with this reason). */
+  compromised?: string;
 };
 
 export type DirectorHost = {
@@ -80,6 +84,7 @@ export const MISSION = {
     timeBonus: 10,
     retry: -1500,
   },
+  stealthPoints: { takedown: 150, alarm: -2000, ghost: 5000 },
 };
 
 type SpawnReq = { type: EnemyType; x: number; z: number; elite: boolean; y: number };
@@ -174,8 +179,8 @@ export class MissionDirector {
       if (this.retryTimer < 0) this.rollback();
       return;
     }
-    if (f.teamWiped || f.vipDead) {
-      this.fail(f.teamWiped ? "TEAM WIPED" : "THE VIP WAS KILLED");
+    if (f.teamWiped || f.vipDead || f.compromised) {
+      this.fail(f.teamWiped ? "TEAM WIPED" : f.vipDead ? "THE VIP WAS KILLED" : f.compromised!);
       return;
     }
 
@@ -346,6 +351,9 @@ export class MissionDirector {
         }
         break;
       }
+      case "assassinate":
+        if (f.targetDead && cleared) this.complete();
+        break;
       case "eliminate":
         if (s.objectiveTime > 1 && f.hostiles === 0 && s.pending === 0) this.complete();
         break;
@@ -465,6 +473,14 @@ export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1
     { label: "Time bonus", value: Math.round(under * P.timeBonus) },
     { label: "Retries", value: s.retries ? s.retries * P.retry : 0 },
   ];
+  const st = s.stealth;
+  const stealth = st ? { alarms: st.alarms, spotted: st.spotted, kills: st.kills, takedowns: st.takedowns, bodies: st.bodies } : undefined;
+  if (stealth) {
+    const P2 = MISSION.stealthPoints;
+    breakdown.push({ label: "Silent takedowns", value: stealth.takedowns * P2.takedown });
+    breakdown.push({ label: "Alarms raised", value: stealth.alarms * P2.alarm });
+    if (victory && !stealth.spotted && !stealth.alarms && !stealth.kills && !stealth.bodies) breakdown.push({ label: "Ghost", value: P2.ghost });
+  }
   const raw = breakdown.reduce((a, b) => a + b.value, 0);
   const score = Math.max(0, Math.round(raw * difficultyMul));
   let grade: MissionResult["grade"] = "D";
@@ -479,8 +495,9 @@ export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1
     objectivesDone: done, objectivesTotal: def.objectives.length,
     seconds, par: def.par, retries: s.retries, kills: s.kills, headshots: s.headshots, gunships: s.gunships,
     score, grade, breakdown, failReason: victory ? "" : s.failReason,
-    stars: rateMission(def, { victory, seconds, difficulty, retries: s.retries, downs: s.downs ?? 0 }).stars,
+    stars: rateMission(def, { victory, seconds, difficulty, retries: s.retries, downs: s.downs ?? 0, stealth }).stars,
     downs: s.downs ?? 0,
     difficulty,
+    stealth,
   };
 }

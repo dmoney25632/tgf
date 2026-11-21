@@ -1,5 +1,6 @@
 import { BUNKER, BUNKER_CHARGE, CHURCH, LZ, MAST, TOWER, YARD, AMMO } from "../world/maps/ironCrossing";
 import type { MissionDef, Point } from "./types";
+import { NIGHTJAR_AMMO, NIGHTJAR_MISSION } from "./stealth/nightjar";
 
 /**
  * Standalone operations: single missions outside the Sarrow Basin campaign,
@@ -209,7 +210,8 @@ export const IRON_CROSSING_MISSION: MissionDef = {
 /** Hold-[F] ammo crates per mission id (map points). */
 export const MISSION_AMMO: Record<string, Point[]> = {
   "iron-crossing": AMMO.map((a) => ({ x: a.x, z: a.z })),
+  nightjar: NIGHTJAR_AMMO,
 };
 
-export const OPERATIONS: MissionDef[] = [IRON_CROSSING_MISSION];
+export const OPERATIONS: MissionDef[] = [IRON_CROSSING_MISSION, NIGHTJAR_MISSION];
 

@@ -1,4 +1,4 @@
-import type { MissionDef } from "./types";
+import type { MissionDef, StealthTally } from "./types";
 
 /**
  * Star rating (1–3) for a finished mission run, from completion time, the
@@ -13,6 +13,15 @@ import type { MissionDef } from "./types";
  *  - Recruit caps at two stars; Veteran never drops below two on a clean run.
  *  - A loss is always zero stars.
  *
+ * Stealth missions (`run.stealth` present) add, after the time and deaths
+ * rules:
+ *  - each hard alarm raised: −1 star (a run never drops below 1);
+ *  - more than `STARS.stealthKills` non-target kills: −1 (it's an
+ *    assassination, not a massacre);
+ *  - Ghost: never fully spotted, no alarms, no non-target kills and no
+ *    bodies found → +1 (still subject to the difficulty cap).
+ *  The Veteran "clean run" floor only applies without alarms.
+ *
  * Pure and engine-free: the mission screen shows `starTargets` before a run
  * and the debrief shows `rateMission`'s reasons after.
  */
@@ -26,6 +35,8 @@ export const STARS = {
   cap: { recruit: 2, regular: 3, veteran: 3 } as Record<string, number>,
   /** A checkpoint restart counts as this many downs. */
   retryWeight: 2,
+  /** Stealth: non-target kills allowed before losing a star. */
+  stealthKills: 12,
 };
 
 export type StarTargets = { three: number; two: number };
@@ -37,7 +48,12 @@ export function starTargets(def: Pick<MissionDef, "stars" | "par">, difficulty: 
   return { three: Math.round(three * k), two: Math.round(two * k) };
 }
 
-export type RunFacts = { victory: boolean; seconds: number; difficulty: string; retries: number; downs: number };
+export type RunFacts = { victory: boolean; seconds: number; difficulty: string; retries: number; downs: number; stealth?: StealthTally };
+
+/** Ghost: the run was never noticed at all. */
+export function isGhost(t: StealthTally) {
+  return t.spotted === 0 && t.alarms === 0 && t.kills === 0 && t.bodies === 0;
+}
 export type Rating = { stars: number; targets: StarTargets; deaths: number; notes: string[] };
 
 export function rateMission(def: Pick<MissionDef, "stars" | "par">, run: RunFacts): Rating {
@@ -53,7 +69,22 @@ export function rateMission(def: Pick<MissionDef, "stars" | "par">, run: RunFact
     stars -= lost;
     notes.push(`${deaths} death${deaths === 1 ? "" : "s"} (allowance ${allow}): −${lost}`);
   }
-  if (run.difficulty === "veteran" && deaths <= allow && stars < 2) {
+  const st = run.stealth;
+  if (st) {
+    if (st.alarms > 0) {
+      stars -= st.alarms;
+      notes.push(`${st.alarms} alarm${st.alarms === 1 ? "" : "s"} raised: −${st.alarms}`);
+    }
+    if (st.kills > STARS.stealthKills) {
+      stars -= 1;
+      notes.push(`${st.kills} non-target kills (allowance ${STARS.stealthKills}): −1`);
+    }
+    if (isGhost(st)) {
+      stars += 1;
+      notes.push("Ghost: never seen, nobody else hurt: +1");
+    }
+  }
+  if (run.difficulty === "veteran" && deaths <= allow && stars < 2 && !(st && st.alarms > 0)) {
     stars = 2;
     notes.push("Veteran, clean run: at least two stars");
   }

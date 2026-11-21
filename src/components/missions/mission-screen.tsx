@@ -5,18 +5,20 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ALL_MISSIONS, getMission } from "@/game/missions/campaign";
 import { OPERATIONS } from "@/game/missions/operations";
-import { starTargets, clock } from "@/game/missions/rating";
+import { starTargets, clock, STARS } from "@/game/missions/rating";
 import { DIFFICULTY, OPERATORS, type DifficultyId } from "@/game/survival/config";
 import { getMissionBoard, type MissionBoard } from "@/app/play/[gameId]/mission-actions";
 import { PAD_FOCUS_CSS, useGamepadNav } from "@/components/game/gamepad";
 import type { LobbyChoice } from "@/components/game/lobby";
 import { MissionBoardTable, Stars } from "./mission-board";
+import { IntelMap } from "./intel-map";
 
 /** Standalone operations first, then the Sarrow Basin campaign. */
 const LIST = [...OPERATIONS, ...ALL_MISSIONS.filter((m) => !OPERATIONS.includes(m))];
 
 const ART: Record<string, string> = {
   "iron-crossing": "radial-gradient(ellipse at 70% 10%, rgba(214,226,236,.36), transparent 55%), linear-gradient(170deg, #46505a, #10141a 72%)",
+  nightjar: "radial-gradient(ellipse at 22% 18%, rgba(170,196,236,.22), transparent 45%), radial-gradient(ellipse at 80% 70%, rgba(255,196,120,.12), transparent 40%), linear-gradient(175deg, #141c2a, #05070b 70%)",
 };
 const art = (id: string) => ART[id] ?? "radial-gradient(ellipse at 75% 20%, rgba(220,226,232,.3), transparent 60%), linear-gradient(160deg, #3a3d40, #121314 70%)";
 
@@ -64,7 +66,7 @@ export function MissionScreen({
   const def = getMission(c.mission!) ?? LIST[0];
   const board = useMissionBoard(def.id);
   const rootRef = useRef<HTMLDivElement>(null);
-  const deploy = () => onDeploy({ ...c, mission: def.id });
+  const deploy = () => onDeploy({ ...c, mission: def.id, squad: def.stealth?.noSquad ? 0 : c.squad });
   useGamepadNav(rootRef, { onStart: deploy, onBack });
   const set = (patch: Partial<LobbyChoice>) => setC((p) => ({ ...p, ...patch }));
   const op = OPERATORS[c.operator];
@@ -127,6 +129,12 @@ export function MissionScreen({
                   ))}
                 </ul>
               )}
+              {def.intel && (
+                <>
+                  <h2 className="mt-5 font-mono text-[11px] tracking-[0.25em] text-neutral-400 uppercase">Intel</h2>
+                  <IntelMap intel={def.intel} />
+                </>
+              )}
               <h2 className="mt-5 font-mono text-[11px] tracking-[0.25em] text-neutral-400 uppercase">Objectives</h2>
               <ol className="mt-2 space-y-1.5">
                 {def.objectives.map((o, i) => (
@@ -185,15 +193,27 @@ export function MissionScreen({
                 <p className="mt-2 text-xs text-neutral-500">
                   Finish under a target time for its stars. Deaths past the allowance (none on Recruit, one on Regular, two on Veteran; a checkpoint restart counts as two) cost a star. Recruit tops out at two.
                 </p>
+                {def.stealth && (
+                  <p className="mt-2 text-xs text-neutral-400">
+                    Stealth: every alarm raised costs a star (never below one), and more than {STARS.stealthKills} kills besides the target cost one more. A ghost run (never spotted, no alarms, nobody else killed, no bodies found) earns a star back.{" "}
+                    {def.stealth.failOnDetect.length > 0 && `On ${def.stealth.failOnDetect.map((d) => DIFFICULTY[d as DifficultyId]?.name ?? d).join(" / ")}, being spotted compromises the mission and you restart from the checkpoint.`}
+                  </p>
+                )}
 
-                <h2 className="mt-4 font-mono text-[11px] tracking-[0.25em] text-neutral-400 uppercase">Solo squad bots</h2>
-                <div className="mt-2 flex gap-1.5">
-                  {[0, 1, 2].map((n) => (
-                    <button key={n} type="button" onClick={() => set({ squad: n })} className={cn("rounded-md border px-3 py-1.5 text-sm", c.squad === n ? "border-white/80 bg-white/15" : "border-white/10 bg-white/[0.03] hover:border-white/30")}>
-                      {n === 0 ? "None" : `+${n}`}
-                    </button>
-                  ))}
-                </div>
+                {def.stealth?.noSquad ? (
+                  <p className="mt-4 text-xs text-neutral-400">No squad bots on this one. Go alone, or bring friends in co-op.</p>
+                ) : (
+                  <>
+                    <h2 className="mt-4 font-mono text-[11px] tracking-[0.25em] text-neutral-400 uppercase">Solo squad bots</h2>
+                    <div className="mt-2 flex gap-1.5">
+                      {[0, 1, 2].map((n) => (
+                        <button key={n} type="button" onClick={() => set({ squad: n })} className={cn("rounded-md border px-3 py-1.5 text-sm", c.squad === n ? "border-white/80 bg-white/15" : "border-white/10 bg-white/[0.03] hover:border-white/30")}>
+                          {n === 0 ? "None" : `+${n}`}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <p className="mt-3 text-xs text-neutral-400">
                   Loadout: <span className="text-neutral-200">{op.name}</span> (change it in the lobby).
                 </p>

@@ -10,6 +10,11 @@ import type { RoomSettings } from "../src/game/net/transport";
 import { newMissionState } from "../src/game/missions/MissionDirector";
 import { IRON_CROSSING_MISSION } from "../src/game/missions/operations";
 import { BOUNDS } from "../src/game/world/maps/ironCrossing";
+import { ENEMY_TYPES, WEAPON_IDS } from "../src/game/net/ids";
+import { AGENT_STATES, STATE_DEAD } from "../src/game/net/protocol";
+import { NIGHTJAR_MISSION } from "../src/game/missions/stealth/nightjar";
+import { BOUNDS as GW_BOUNDS, EXFIL, INSERT } from "../src/game/world/maps/greywater";
+import type { StealthSnapshot } from "../src/game/missions/types";
 
 const msg = (over: Partial<PlayerStateMsg> = {}): PlayerStateMsg => ({
   slot: 1, seq: 7, time: 123456, x: BOUNDS.x1 - 1, y: 2.4, z: BOUNDS.z1 - 1, yaw: 1, pitch: 0.2,
@@ -65,4 +70,40 @@ test("mission co-op: rooms without a mission are Survival rooms, escorts stay so
   assert.equal(coopRoomMap(old.mapId, "iron-crossing").id, "iron-crossing");
   assert.equal(coopMission("black-pipe"), undefined, "escort missions need a replicated VIP");
   assert.equal(coopMission("not-a-mission"), undefined);
+});
+
+test("Nightjar co-op: wire tables only grew at the end", () => {
+  // Enemy types, weapon ids and agent states are indices on the wire: new entries go last.
+  assert.equal(ENEMY_TYPES[ENEMY_TYPES.length - 1], "officer");
+  assert.deepEqual(WEAPON_IDS.slice(WEAPON_IDS.indexOf("knife")), ["knife", "mp5sd", "mk23"]);
+  assert.equal(AGENT_STATES[AGENT_STATES.length - 1], "patrol");
+  assert.equal(STATE_DEAD, 9, "existing states keep their codes");
+  assert.ok(AGENT_STATES.length <= 16, "the state code still fits its 4 bits");
+});
+
+test("Nightjar co-op: playable online, the map fits the int16 cm encoding, stealth state is plain JSON", () => {
+  assert.equal(coopMission("nightjar"), NIGHTJAR_MISSION);
+  assert.equal(coopRoomMap(COOP_MAPS[0].id, "nightjar").id, "greywater");
+  for (const v of [GW_BOUNDS.x0, GW_BOUNDS.x1, GW_BOUNDS.z0, GW_BOUNDS.z1]) assert.ok(Math.abs(v) < 300);
+  for (const p of [INSERT, EXFIL, { x: GW_BOUNDS.x0 + 1, z: GW_BOUNDS.z0 + 1 }, { x: GW_BOUNDS.x1 - 1, z: GW_BOUNDS.z1 - 1 }]) {
+    const back = decodePlayerState(encodePlayerState(msg({ x: p.x, z: p.z })))!;
+    assert.ok(Math.abs(back.x - p.x) < 0.02 && Math.abs(back.z - p.z) < 0.02);
+  }
+  // A guard on a tower deck (y 5.6) in a snapshot.
+  const tower: EnemyRec = {
+    id: 4, type: ENEMY_TYPES.indexOf("rifleman"), elite: false, maxHealth: 100, x: -46, y: 5.6, z: 31, yaw: 2, pitch: 0,
+    state: AGENT_STATES.indexOf("patrol"), crouched: false, aiming: false, health: 100, target: 255, charge: 0, shots: 0,
+  };
+  const f = new SnapshotDecoder().apply(new SnapshotEncoder().encode({ time: 1, wave: 0, phase: 1, timer: 0, remaining: 1, players: [], enemies: [tower] }))!;
+  const e = f.enemies.get(4)!;
+  assert.equal(e.state, AGENT_STATES.indexOf("patrol"));
+  assert.ok(Math.abs(e.y - 5.6) < 0.02);
+  const s = newMissionState(NIGHTJAR_MISSION.id);
+  const stealth: StealthSnapshot = {
+    alarms: 1, spotted: 2, kills: 3, takedowns: 2, bodies: 1, status: "suspicious", timer: 41.5,
+    sus: [4, 80, 1, 7, 100, 4], target: 24, identified: true, cue: "BODY FOUND", clock: 312.4, truck: [118.2, 1, 1],
+  };
+  s.stealth = stealth;
+  const ev: HostEvent = { k: "ms", s };
+  assert.deepEqual(JSON.parse(JSON.stringify(ev)), ev);
 });

@@ -6,6 +6,7 @@ import { SALTPAN_GANTRY } from "./saltpanGantry";
 import { BRENNHOLLOW } from "./brennhollow";
 import { MORRO_AZUL } from "./morroAzul";
 import { IRON_CROSSING } from "./ironCrossing";
+import { GREYWATER } from "./greywater";
 
 /** Lobby / mission metadata for a playable map. */
 export type MapEntry = { id: string; name: string; blurb: string; survival: boolean; def: MapDef };
@@ -22,6 +23,7 @@ export const MAPS: MapEntry[] = [
   { id: BRENNHOLLOW.id, name: BRENNHOLLOW.name, blurb: "Shelled hillside village: stone houses, a statue square and a burning manor. Tight streets, gardens and courtyards.", survival: true, def: BRENNHOLLOW },
   { id: MORRO_AZUL.id, name: MORRO_AZUL.name, blurb: "Huge hillside favela: stacked brick houses up to five storeys, rooftop firefights, narrow becos, a walled futsal court. Climb inside for the high ground.", survival: true, def: MORRO_AZUL },
   { id: IRON_CROSSING.id, name: IRON_CROSSING.name, blurb: "Mission map: a three-span truss bridge over the Vellen gorge, the town of Brask on the south rim and a fortified bridgehead to the north.", survival: false, def: IRON_CROSSING },
+  { id: GREYWATER.id, name: GREYWATER.name, blurb: "Mission map: a wired supply depot in a misty valley at night, with watchtowers, a vehicle checkpoint and a two-level command house by the river.", survival: false, def: GREYWATER },
   { id: KESTREL_YARD.id, name: KESTREL_YARD.name, blurb: "Walled training yard and firing range.", survival: false, def: KESTREL_YARD },
 ];
 
