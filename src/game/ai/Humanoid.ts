@@ -88,24 +88,25 @@ function skinMerge(parts: [number, THREE.BufferGeometry | null | undefined][]) {
 
 const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute("position").count) / 3;
 
-function gunFor(kit: LookDef["kit"], accent: number, vest: number, lod: number) {
-  const k = `${kit}|${accent}|${vest}|${lod}`;
+function gunFor(look: LookDef, lod: number) {
+  const { kit, accent, vest, gun } = look;
+  const k = `${kit}|${gun ?? ""}|${accent}|${vest}|${lod}`;
   let s = gunCache.get(k);
-  if (!s) gunCache.set(k, (s = withQuality(lod, () => buildGun(kit, accent, vest))));
+  if (!s) gunCache.set(k, (s = withQuality(lod, () => buildGun(kit, accent, vest, gun))));
   return s;
 }
 
 function soldierGeo(look: LookDef, variant: number): SoldierGeo {
-  const key = `${look.kit}|${look.uniform}|${look.vest}|${look.helmet}|${look.accent}|${look.camo ?? ""}|${variant}`;
+  const key = `${look.kit}|${look.gun ?? ""}|${look.uniform}|${look.vest}|${look.helmet}|${look.accent}|${look.camo ?? ""}|${variant}`;
   const hit = geoCache.get(key);
   if (hit) return hit;
   const parts = (b: BodyBuild, gun: GunSpec): [number, THREE.BufferGeometry | undefined][] => [...BONES.map((n, i) => [i, b.bones[n]] as [number, THREE.BufferGeometry | undefined]), [GUN_BONE, gun.geo]];
   const b0 = buildBody(look, variant, 0);
   const b1 = buildBody(look, variant, 1);
   const b2 = buildBody(look, variant, 2);
-  const near = skinMerge(parts(b0, gunFor(look.kit, look.accent, look.vest, 0)));
-  const mid = skinMerge(parts(b1, gunFor(look.kit, look.accent, look.vest, 1)));
-  const far = skinMerge(parts(b2, gunFor(look.kit, look.accent, look.vest, 2)));
+  const near = skinMerge(parts(b0, gunFor(look, 0)));
+  const mid = skinMerge(parts(b1, gunFor(look, 1)));
+  const far = skinMerge(parts(b2, gunFor(look, 2)));
   const gh = BONES.filter((n) => b0.ghillie[n]).map((n) => [BONES.indexOf(n), b0.ghillie[n]] as [number, THREE.BufferGeometry]);
   const ghillie = gh.length ? skinMerge(gh) : null;
   const elite = skinMerge([[BONES.indexOf("uArmR"), b0.elite.armR], [BONES.indexOf("uArmL"), b0.elite.armL], [HEAD_BONE, b0.elite.head]]);
@@ -368,7 +369,7 @@ export class Humanoid {
     this.hipFire = kit === "warden";
     const variant = kit === "standard" ? (look.variant ?? variantCounter++) % STD_LOOKS.length : 0;
     const geo = soldierGeo(look, variant);
-    this.spec = gunFor(kit, look.accent, look.vest, 0);
+    this.spec = gunFor(look, 0);
     this.w = geo.w;
 
     // Per-soldier face: skin tone, facial hair, eye colour. An explicit

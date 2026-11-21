@@ -6,8 +6,8 @@ import { DIFFICULTY, ENEMIES, WAVES } from "../src/game/survival/config";
 import { matchReport, matchScore } from "../src/game/core/matchReport";
 import type { MatchSummary } from "../src/game/core/GameMode";
 
-test("sniper one-shots every regular enemy through wave 25 on Veteran, even elites, at long range", () => {
-  const w = WEAPONS.longreach;
+test("bolt / anti-materiel snipers one-shot every regular enemy through wave 25 on Veteran, even elites, at long range", () => {
+  for (const w of [WEAPONS.m24, WEAPONS.m82]) {
   for (const type of ["rifleman", "rusher", "sniper"] as const) {
     const hp = ENEMIES[type].health * (1 + WAVES.healthPerWave * 24) * WAVES.elite.health * DIFFICULTY.veteran.enemyHealth;
     for (const dist of [5, 80, 250]) {
@@ -18,6 +18,7 @@ test("sniper one-shots every regular enemy through wave 25 on Veteran, even elit
   }
   // Juggernauts drop to a single headshot early on.
   assert.ok(damageAt(w, 50) * w.headMultiplier >= ENEMIES.armored.health);
+  }
 });
 
 const base: MatchSummary = {

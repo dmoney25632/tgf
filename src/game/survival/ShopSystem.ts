@@ -1,4 +1,4 @@
-import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, GRENADE, type WeaponId } from "../weapons/weapons";
+import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, GRENADE, FLASHBANG, SMOKE, type WeaponId } from "../weapons/weapons";
 import { ECONOMY, PERKS, PLAYER, type PerkId } from "./config";
 import type { PlayerLoadout } from "./PlayerLoadout";
 import type { PlayerState } from "./PlayerState";
@@ -74,15 +74,17 @@ export class ShopSystem {
     const weaponItem = (id: WeaponId, category: "primary" | "secondary"): ShopItem => {
       const d = WEAPONS[id];
       const equipped = (category === "primary" ? loadout.primary : loadout.secondary) === id;
-      return { id: `weapon:${id}`, category, name: d.name, kind: d.kind, desc: `${d.rpm} RPM · ${d.magSize} rds · ${d.pellets > 1 ? `${d.pellets}×${d.damage}` : d.damage} dmg`, price: d.price, status: equipped ? "equipped" : "available", stats: weaponStats(id) };
+      return { id: `weapon:${id}`, category, name: d.name, kind: d.kind, desc: `${d.calibre} · ${d.rpm} RPM · ${d.magSize} rds · ${d.pellets > 1 ? `${d.pellets}×${d.damage}` : d.damage} dmg`, price: d.price, status: equipped ? "equipped" : "available", stats: weaponStats(id) };
     };
     PRIMARY_IDS.forEach((id) => items.push(weaponItem(id, "primary")));
     SECONDARY_IDS.forEach((id) => items.push(weaponItem(id, "secondary")));
 
-    const ammoFull = weapons.slots.every((s) => s.reserve >= Math.round(s.def.reserveAmmo * weapons.mods.reserve) && s.ammo === s.def.magSize);
+    const ammoFull = weapons.slots.every((s) => s.def.slot === "melee" || s.reserve >= Math.round(s.def.reserveAmmo * weapons.mods.reserve) && s.ammo === s.def.magSize);
     items.push({ id: "ammo", category: "equipment", name: "Ammo Resupply", desc: "Refill magazines and reserves for both weapons", price: this.ammoPrice, status: ammoFull ? "maxed" : "available" });
     items.push({ id: "armor", category: "equipment", name: "Armor Plate", desc: `+${ECONOMY.armorPlate} armor (max ${PLAYER.maxArmor}). Absorbs 70% of damage.`, price: ECONOMY.prices.armor, status: state.armor >= PLAYER.maxArmor ? "maxed" : "available" });
     items.push({ id: "grenade", category: "equipment", name: GRENADE.name, desc: `+1 frag grenade (carry ${grenades.maxCarry})`, price: ECONOMY.prices.grenade, status: grenades.count >= grenades.maxCarry ? "maxed" : "available" });
+    items.push({ id: "flashbang", category: "equipment", name: FLASHBANG.name, desc: `+1 stun grenade: blinds hostiles that see it (carry ${grenades.maxFlash})`, price: ECONOMY.prices.flashbang, status: grenades.flashCount >= grenades.maxFlash ? "maxed" : "available" });
+    items.push({ id: "smoke", category: "equipment", name: SMOKE.name, desc: `+1 smoke: ${SMOKE.duration}s screen that blocks enemy sight (carry ${grenades.maxSmoke})`, price: ECONOMY.prices.smoke, status: grenades.smokeCount >= grenades.maxSmoke ? "maxed" : "available" });
 
     for (const p of Object.values(PERKS)) {
       const owned = p.id === "secondwind" ? state.selfRevives > 0 : loadout.perks.has(p.id);
@@ -119,6 +121,8 @@ export class ShopSystem {
     } else if (id === "ammo") weapons.refillAmmo(1);
     else if (id === "armor") state.addArmor(ECONOMY.armorPlate);
     else if (id === "grenade") grenades.count = Math.min(grenades.maxCarry, grenades.count + 1);
+    else if (id === "flashbang") grenades.flashCount = Math.min(grenades.maxFlash, grenades.flashCount + 1);
+    else if (id === "smoke") grenades.smokeCount = Math.min(grenades.maxSmoke, grenades.smokeCount + 1);
     else if (id.startsWith("perk:")) {
       const pid = id.slice(5) as PerkId;
       if (pid === "secondwind") state.selfRevives++;

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { cyl, ellipsoid, GeoBuilder, paint, profile, rbox, shade, T, type Paint } from "./geo";
 import { SURF } from "./materials";
 import type { Kit } from "./kit";
+import type { ThirdPersonKind } from "../../weapons/weapons";
 
 /**
  * Third-person weapons. Frame: origin at the butt plate centre, +Z toward
@@ -141,33 +142,190 @@ function boltRifle(b: GeoBuilder, p: Pal): Omit<GunSpec, "geo" | "pivot" | "kick
   return { gripR: new THREE.Vector3(0, -0.035, 0.268), gripL: new THREE.Vector3(0, 0.012, 0.52), muzzle: new THREE.Vector3(0, 0.035, 1.3), leftUnder: true };
 }
 
-/** Build (uncached) the weapon for a kit. Cached by the caller. */
-export function buildGun(kit: Kit, accent: number, vest: number): GunSpec {
+type Part = Omit<GunSpec, "geo" | "pivot" | "kick">;
+
+function wood(): Paint {
+  return paint(0x6a3a1e, SURF.hard, 0.6);
+}
+
+/** AKM: wood stock and handguard, stamped receiver, curved steel mag, slant brake. */
+function ak(b: GeoBuilder, p: Pal): Part {
+  const w = wood();
+  b.add(profile([[0, -0.07], [0, 0.03], [0.22, 0.045], [0.22, 0.012], [0.04, -0.035], [0.015, -0.072]], 0.036), w);
+  b.add(rbox(0.04, 0.058, 0.25, 8, 5, 0.15), p.metal, T(0, 0.02, 0.34));
+  b.add(rbox(0.042, 0.02, 0.22, 8, 5, 0.3), shade(p.metal, 1.2), T(0, 0.058, 0.33)); // dust cover
+  b.add(rbox(0.01, 0.01, 0.06), p.worn, T(-0.024, 0.042, 0.36)); // charging handle
+  b.add(rbox(0.006, 0.01, 0.09), p.worn, T(-0.022, 0.012, 0.31)); // selector lever
+  b.add(rbox(0.026, 0.075, 0.034, 8, 4, 0.3), shade(w, 0.6), T(0, -0.035, 0.248, 0.32));
+  b.add(profile([[0.37, -0.01], [0.42, -0.01], [0.455, -0.18], [0.41, -0.19]], 0.026, 0.003), shade(p.metal, 1.3));
+  b.add(rbox(0.05, 0.05, 0.2, 8, 4, 0.25), w, T(0, 0.026, 0.56));
+  b.add(rbox(0.036, 0.02, 0.14, 8, 4, 0.3), w, T(0, 0.06, 0.53)); // upper handguard
+  b.add(cyl(0.009, 0.009, 0.25, 7), p.metal, AX_Z(0, 0.035, 0.75));
+  b.add(cyl(0.006, 0.006, 0.2, 5), p.metal, AX_Z(0, 0.065, 0.66)); // gas tube
+  b.add(rbox(0.012, 0.04, 0.02), p.metal, T(0, 0.06, 0.82)); // front sight block
+  b.add(rbox(0.024, 0.024, 0.04, 6, 4, 0.2), p.worn, T(0, 0.035, 0.89)); // slant brake
+  b.add(rbox(0.02, 0.016, 0.05), p.metal, T(0, 0.075, 0.45)); // rear sight
+  return { gripR: new THREE.Vector3(0, -0.03, 0.245), gripL: new THREE.Vector3(0, 0.02, 0.56), muzzle: new THREE.Vector3(0, 0.035, 0.91), leftUnder: true };
+}
+
+/** AUG-style bullpup: one-piece stock with the mag behind the grip, integral optic. */
+function bullpup(b: GeoBuilder, p: Pal): Part {
+  b.add(rbox(0.05, 0.12, 0.32, 8, 5, 0.25), p.fde, T(0, 0.02, 0.17));
+  b.add(rbox(0.04, 0.03, 0.08, 6, 4, 0.3), shade(p.fde, 0.8), T(0, 0.075, 0.08)); // cheek
+  b.add(profile([[0.12, -0.04], [0.16, -0.04], [0.17, -0.17], [0.13, -0.17]], 0.026, 0.003), p.glass); // translucent mag
+  b.add(rbox(0.028, 0.085, 0.034, 8, 4, 0.3), p.fde, T(0, -0.05, 0.36, 0.2));
+  b.add(rbox(0.04, 0.012, 0.16, 6, 4, 0.3), p.fde, T(0, -0.07, 0.34)); // full-hand trigger guard
+  b.add(rbox(0.04, 0.04, 0.18, 8, 4, 0.2), p.metal, T(0, 0.05, 0.42));
+  b.add(cyl(0.025, 0.025, 0.14, 10), p.poly, AX_Z(0, 0.115, 0.38)); // optic tube
+  b.add(cyl(0.02, 0.02, 0.003, 10), p.glass, AX_Z(0, 0.115, 0.452));
+  b.add(rbox(0.026, 0.075, 0.034, 8, 4, 0.3), p.fde, T(0, -0.03, 0.55, -0.15)); // folding foregrip
+  b.add(cyl(0.011, 0.011, 0.28, 8), p.metal, AX_Z(0, 0.045, 0.64));
+  b.add(cyl(0.015, 0.015, 0.05, 8), p.worn, AX_Z(0, 0.045, 0.8));
+  return { gripR: new THREE.Vector3(0, -0.04, 0.355), gripL: new THREE.Vector3(0, -0.05, 0.55), muzzle: new THREE.Vector3(0, 0.045, 0.83), leftUnder: false };
+}
+
+/** MP5 / Uzi class: short receiver, slim curved mag, retractable stock. */
+function smg(b: GeoBuilder, p: Pal): Part {
+  b.add(rbox(0.036, 0.09, 0.02, 6, 4, 0.3), p.poly, T(0, 0.0, 0.01));
+  b.add(cyl(0.006, 0.006, 0.16, 4), p.metal, AX_Z(0.016, 0.03, 0.09));
+  b.add(cyl(0.006, 0.006, 0.16, 4), p.metal, AX_Z(-0.016, 0.03, 0.09));
+  b.add(cyl(0.025, 0.025, 0.26, 10), p.metal, AX_Z(0, 0.045, 0.3)); // round receiver
+  b.add(rbox(0.026, 0.075, 0.034, 8, 4, 0.3), p.poly, T(0, -0.02, 0.22, 0.3));
+  b.add(profile([[0.29, 0.02], [0.315, 0.02], [0.33, -0.13], [0.3, -0.135]], 0.02, 0.003), p.metal);
+  b.add(rbox(0.044, 0.05, 0.13, 8, 4, 0.3), p.poly, T(0, 0.03, 0.44)); // tropical handguard
+  b.add(cyl(0.009, 0.009, 0.08, 7), p.metal, AX_Z(0, 0.045, 0.53));
+  b.add(cyl(0.012, 0.012, 0.025, 8), p.worn, AX_Z(0, 0.045, 0.57));
+  b.add(cyl(0.012, 0.012, 0.03, 8), p.metal, T(0, 0.08, 0.2, 0, 0, Math.PI / 2)); // diopter
+  b.add(rbox(0.012, 0.03, 0.02), p.metal, T(0, 0.075, 0.5)); // front hood
+  return { gripR: new THREE.Vector3(0, -0.02, 0.218), gripL: new THREE.Vector3(0, 0.02, 0.44), muzzle: new THREE.Vector3(0, 0.045, 0.585), leftUnder: true };
+}
+
+/** P90: smooth bullpup shell, thumbhole grip, top translucent mag. */
+function p90(b: GeoBuilder, p: Pal): Part {
+  b.add(rbox(0.055, 0.1, 0.4, 10, 6, 0.4), p.poly, T(0, 0.01, 0.2));
+  b.add(rbox(0.05, 0.03, 0.3, 8, 4, 0.4), p.glass, T(0, 0.072, 0.24)); // top mag
+  b.add(rbox(0.04, 0.03, 0.08, 6, 4, 0.3), p.poly, T(0, 0.11, 0.3)); // optic
+  b.add(rbox(0.04, 0.03, 0.004), p.glass, T(0, 0.115, 0.341));
+  b.add(rbox(0.05, 0.04, 0.06, 8, 4, 0.3), shade(p.poly, 0.8), T(0, -0.06, 0.31)); // grip loop
+  b.add(cyl(0.01, 0.01, 0.06, 7), p.metal, AX_Z(0, 0.02, 0.43));
+  return { gripR: new THREE.Vector3(0, -0.045, 0.3), gripL: new THREE.Vector3(0, -0.04, 0.38), muzzle: new THREE.Vector3(0, 0.02, 0.46), leftUnder: false };
+}
+
+/** PKM: skeleton wood stock, belt box on the right, fluted barrel, bipod. */
+function pkm(b: GeoBuilder, p: Pal): Part {
+  const w = wood();
+  b.add(profile([[0, -0.07], [0, 0.04], [0.04, 0.045], [0.2, 0.04], [0.2, 0.005], [0.04, -0.035], [0.015, -0.072]], 0.03), w);
+  b.add(rbox(0.05, 0.075, 0.3, 8, 5, 0.12), p.metal, T(0, 0.03, 0.36));
+  b.add(rbox(0.05, 0.02, 0.2, 8, 5, 0.3), p.worn, T(0, 0.075, 0.38)); // feed cover
+  b.add(rbox(0.026, 0.08, 0.034, 8, 4, 0.3), w, T(0, -0.04, 0.25, 0.3));
+  b.add(rbox(0.07, 0.11, 0.13, 8, 4, 0.15), shade(p.metal, 1.3), T(0.06, -0.05, 0.38)); // ammo box
+  b.add(cyl(0.013, 0.013, 0.5, 8), p.metal, AX_Z(0, 0.04, 0.75));
+  for (let i = 0; i < 4; i++) b.add(cyl(0.0145, 0.0145, 0.01, 8), shade(p.metal, 0.7), AX_Z(0, 0.04, 0.58 + i * 0.05));
+  b.add(cyl(0.008, 0.008, 0.25, 5), p.metal, AX_Z(0, 0.01, 0.65)); // gas tube
+  b.add(cyl(0.018, 0.018, 0.05, 8), p.worn, AX_Z(0, 0.04, 1.02));
+  b.add(rbox(0.012, 0.05, 0.02), p.metal, T(0, 0.075, 0.97)); // front post
+  b.add(rbox(0.03, 0.012, 0.07), p.metal, T(0, 0.045, 0.6)); // carry handle
+  b.add(cyl(0.006, 0.006, 0.28, 4), p.metal, T(0.016, -0.005, 0.83, Math.PI / 2 - 0.05));
+  b.add(cyl(0.006, 0.006, 0.28, 4), p.metal, T(-0.016, -0.005, 0.83, Math.PI / 2 - 0.05));
+  return { gripR: new THREE.Vector3(0, -0.04, 0.248), gripL: new THREE.Vector3(0, 0.02, 0.55), muzzle: new THREE.Vector3(0, 0.04, 1.05), leftUnder: true };
+}
+
+/** SVD: thumbhole wood stock with cheek rest, long slim barrel, PSO-1 offset left. */
+function svd(b: GeoBuilder, p: Pal): Part {
+  const w = wood();
+  b.add(profile([[0, -0.08], [0, 0.04], [0.06, 0.05], [0.22, 0.04], [0.22, -0.01], [0.17, -0.015], [0.15, -0.06], [0.1, -0.03], [0.03, -0.08]], 0.036), w);
+  b.add(rbox(0.03, 0.03, 0.09, 6, 4, 0.3), shade(w, 0.8), T(0, 0.07, 0.11)); // cheek rest
+  b.add(rbox(0.04, 0.055, 0.24, 8, 5, 0.15), p.metal, T(0, 0.02, 0.33));
+  b.add(rbox(0.026, 0.07, 0.13, 6, 4, 0.2), p.metal, T(0, -0.04, 0.38, 0.12)); // mag
+  b.add(rbox(0.05, 0.05, 0.22, 8, 4, 0.25), w, T(0, 0.028, 0.56));
+  b.add(cyl(0.009, 0.009, 0.45, 7), p.metal, AX_Z(0, 0.035, 0.89));
+  b.add(cyl(0.013, 0.013, 0.07, 8), p.worn, AX_Z(0, 0.035, 1.14)); // flash hider
+  b.add(cyl(0.015, 0.015, 0.24, 10), p.poly, AX_Z(-0.03, 0.1, 0.34)); // PSO-1
+  b.add(cyl(0.022, 0.015, 0.06, 10), p.poly, AX_Z(-0.03, 0.1, 0.48));
+  b.add(rbox(0.06, 0.06, 0.02), p.poly, T(-0.03, 0.105, 0.2)); // eyecup
+  b.add(rbox(0.02, 0.05, 0.08), p.metal, T(-0.02, 0.06, 0.34)); // side mount
+  return { gripR: new THREE.Vector3(0, -0.035, 0.24), gripL: new THREE.Vector3(0, 0.015, 0.56), muzzle: new THREE.Vector3(0, 0.035, 1.18), leftUnder: true };
+}
+
+/** M82: massive upper, cooling slots, arrowhead brake, big scope, bipod. */
+function m82(b: GeoBuilder, p: Pal): Part {
+  b.add(profile([[0, -0.08], [0, 0.04], [0.25, 0.045], [0.25, -0.01], [0.05, -0.04], [0.02, -0.08]], 0.05), p.poly);
+  b.add(rbox(0.07, 0.1, 0.5, 8, 5, 0.12), p.metal, T(0, 0.03, 0.45));
+  for (let i = 0; i < 6; i++) b.add(rbox(0.072, 0.012, 0.03), shade(p.metal, 0.5), T(0, 0.06, 0.55 + i * 0.05));
+  b.add(rbox(0.03, 0.085, 0.04, 8, 4, 0.3), p.poly, T(0, -0.05, 0.3, 0.3));
+  b.add(rbox(0.04, 0.09, 0.09, 6, 4, 0.15), p.metal, T(0, -0.06, 0.4)); // 10-rd mag
+  b.add(cyl(0.016, 0.016, 0.45, 8), p.metal, AX_Z(0, 0.045, 0.92));
+  b.add(rbox(0.07, 0.04, 0.09, 6, 4, 0.2), p.worn, T(0, 0.045, 1.18)); // brake
+  b.add(cyl(0.02, 0.02, 0.3, 10), p.poly, AX_Z(0, 0.13, 0.4));
+  b.add(cyl(0.032, 0.02, 0.1, 10), p.poly, AX_Z(0, 0.13, 0.6));
+  b.add(cyl(0.03, 0.03, 0.004, 10), p.glass, AX_Z(0, 0.13, 0.652));
+  b.add(rbox(0.035, 0.05, 0.02), p.metal, T(0, 0.095, 0.33));
+  b.add(rbox(0.035, 0.05, 0.02), p.metal, T(0, 0.095, 0.5));
+  b.add(rbox(0.015, 0.05, 0.1), p.poly, T(0, 0.11, 0.7)); // carry handle
+  b.add(cyl(0.007, 0.007, 0.3, 4), p.metal, T(0.02, -0.015, 0.75, Math.PI / 2 - 0.05));
+  b.add(cyl(0.007, 0.007, 0.3, 4), p.metal, T(-0.02, -0.015, 0.75, Math.PI / 2 - 0.05));
+  return { gripR: new THREE.Vector3(0, -0.045, 0.298), gripL: new THREE.Vector3(0, 0.02, 0.62), muzzle: new THREE.Vector3(0, 0.045, 1.23), leftUnder: true };
+}
+
+/** Third-person family for each enemy kit. */
+const KIT_GUN: Record<string, ThirdPersonKind> = { rusher: "shotgun", heavy: "lmg", warden: "lmg", sniper: "bolt" };
+
+/**
+ * Build (uncached) a weapon. `tp` picks the family (teammates show their
+ * primary); without it the enemy kit decides. Cached by the caller.
+ */
+export function buildGun(kit: Kit, accent: number, vest: number, tp?: ThirdPersonKind): GunSpec {
   const b = new GeoBuilder();
   const tint = new THREE.Color(vest).lerp(new THREE.Color(0x8a7a5a), 0.55).getHex();
   const p = palette(accent, tint);
-  let s: Omit<GunSpec, "geo" | "pivot" | "kick">;
+  let s: Part;
   let kick = 1;
   const pivot = new THREE.Vector3(-0.09, 0.385, 0.1);
-  switch (kit) {
-    case "rusher":
+  const fam = tp ?? KIT_GUN[kit] ?? "carbine";
+  switch (fam) {
+    case "shotgun":
       s = shotgun(b, p);
       kick = 2.2;
       break;
-    case "heavy":
-      s = lmg(b, p, false);
-      kick = 0.8;
+    case "lmg":
+      s = lmg(b, p, kit === "warden");
+      kick = kit === "warden" ? 0.7 : 0.8;
+      // Warden braces at the hip: butt under the right arm.
+      if (kit === "warden" && !tp) pivot.set(-0.11, 0.21, 0.1);
+      else pivot.set(-0.1, 0.37, 0.1);
+      break;
+    case "pkm":
+      s = pkm(b, p);
+      kick = 0.85;
       pivot.set(-0.1, 0.37, 0.1);
       break;
-    case "warden":
-      s = lmg(b, p, true);
-      kick = 0.7;
-      // Braced at the hip: butt under the right arm.
-      pivot.set(-0.11, 0.21, 0.1);
-      break;
-    case "sniper":
+    case "bolt":
       s = boltRifle(b, p);
       kick = 2.6;
+      break;
+    case "svd":
+      s = svd(b, p);
+      kick = 1.8;
+      break;
+    case "m82":
+      s = m82(b, p);
+      kick = 3;
+      pivot.set(-0.1, 0.375, 0.1);
+      break;
+    case "ak":
+      s = ak(b, p);
+      kick = 1.15;
+      break;
+    case "bullpup":
+      s = bullpup(b, p);
+      break;
+    case "smg":
+      s = smg(b, p);
+      kick = 0.7;
+      break;
+    case "p90":
+      s = p90(b, p);
+      kick = 0.6;
       break;
     default:
       s = carbine(b, p);

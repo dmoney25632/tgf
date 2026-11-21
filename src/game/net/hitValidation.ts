@@ -86,7 +86,7 @@ export class HitValidator {
       const base = damageAt(w, Math.max(0, d - HIT_RULES.falloffSlack));
       const part = c.part === "head" ? w.headMultiplier : c.part === "legs" ? w.limbMultiplier : 1;
       cap = base * part * mod;
-    } else cap = MELEE.damage * HIT_RULES.bodyModCap;
+    } else cap = MELEE.maxDamage * HIT_RULES.bodyModCap; // knife stab / backstab, rifle butt
     return { ok: true, damage: Math.min(c.damage, cap) };
   }
 

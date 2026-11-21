@@ -35,8 +35,8 @@ export const OPERATORS: Record<OperatorId, OperatorDef> = {
   ridge: {
     id: "ridge", name: "Ridge", role: "Assault",
     blurb: "Front-line rifleman. Fast hands, quick to the sights, always carries an extra frag.",
-    traits: ["+20% ADS speed", "+1 frag grenade", "Starts with the VK-7"],
-    primary: "vk7", secondary: "marrow9",
+    traits: ["+20% ADS speed", "+1 frag grenade", "Starts with the M4A1"],
+    primary: "m4a1", secondary: "m9",
     colors: { glove: 0x2b2a26, sleeve: 0x4d5240, vest: 0x3a3f2e, helmet: 0x4a4f3a, accent: 0xe0a040 },
     maxHealth: 100, startArmor: 0, speed: 1, grenades: 3, ammoDiscount: 1,
     mods: { adsSpeed: 1.2 },
@@ -44,8 +44,8 @@ export const OPERATORS: Record<OperatorId, OperatorDef> = {
   mason: {
     id: "mason", name: "Mason", role: "Support",
     blurb: "Keeps the team fed. Carries more ammunition and buys resupply at a discount.",
-    traits: ["+25% reserve ammo", "Ammo resupply −50%", "Starts with the Anvil LMG"],
-    primary: "anvil", secondary: "marrow9",
+    traits: ["+25% reserve ammo", "Ammo resupply −50%", "Starts with the M249 SAW"],
+    primary: "m249", secondary: "g17",
     colors: { glove: 0x34302a, sleeve: 0x6b5d45, vest: 0x5a4c36, helmet: 0x6b5d45, accent: 0x5ac8e8 },
     maxHealth: 100, startArmor: 0, speed: 0.98, grenades: 2, ammoDiscount: 0.5,
     mods: { reserve: 1.25 },
@@ -53,8 +53,8 @@ export const OPERATORS: Record<OperatorId, OperatorDef> = {
   wren: {
     id: "wren", name: "Wren", role: "Recon",
     blurb: "Long-range specialist. Hits harder on the head and moves lighter on her feet.",
-    traits: ["+25% headshot damage", "+6% move speed", "Starts with the Longreach DMR"],
-    primary: "longreach", secondary: "ruin50",
+    traits: ["+25% headshot damage", "+6% move speed", "Starts with the M24 SWS"],
+    primary: "m24", secondary: "m1911",
     colors: { glove: 0x1e2226, sleeve: 0x2f3a40, vest: 0x26302f, helmet: 0x2f3a40, accent: 0x9be070 },
     maxHealth: 100, startArmor: 0, speed: 1.06, grenades: 2, ammoDiscount: 1,
     mods: { headshotDamage: 1.25 },
@@ -62,8 +62,8 @@ export const OPERATORS: Record<OperatorId, OperatorDef> = {
   bastion: {
     id: "bastion", name: "Bastion", role: "Heavy",
     blurb: "Walking cover. Starts armored, soaks hits, and clears rooms up close.",
-    traits: ["+25 max health", "Starts with 100 armor", "−6% move speed", "Starts with the Breacher 12"],
-    primary: "breacher", secondary: "ruin50",
+    traits: ["+25 max health", "Starts with 100 armor", "−6% move speed", "Starts with the Remington 870"],
+    primary: "r870", secondary: "sw629",
     colors: { glove: 0x2a2624, sleeve: 0x3d3833, vest: 0x2a2826, helmet: 0x3d3833, accent: 0xe85a40 },
     maxHealth: 125, startArmor: 100, speed: 0.94, grenades: 2, ammoDiscount: 1,
     mods: {},
@@ -119,7 +119,7 @@ export const ECONOMY = {
   waveBonusPerWave: 50,
   /** Bots earn the team this share of a normal kill. */
   botKillShare: 0.5,
-  prices: { ammo: 250, armor: 300, grenade: 200, botRevive: 500 },
+  prices: { ammo: 250, armor: 300, grenade: 200, flashbang: 150, smoke: 120, botRevive: 500 },
   armorPlate: 50,
 };
 

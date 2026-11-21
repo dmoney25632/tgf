@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId } from "@/game/survival/config";
-import { PRIMARY_IDS, SECONDARY_IDS, WEAPONS, type WeaponId } from "@/game/weapons/weapons";
+import { PRIMARY_IDS, SECONDARY_IDS, WEAPONS, resolveWeaponId, type WeaponId } from "@/game/weapons/weapons";
 import { NET } from "@/game/net/protocol";
 import { COOP_MAPS } from "@/game/net/ids";
 import {
@@ -16,7 +16,7 @@ import { CoopGame, type CoopLaunch, type CoopLoadout } from "./coop-game";
 
 const LOADOUT_KEY = "tgf.iron-horizon.coop";
 const DEFAULT_SETTINGS: RoomSettings = { mapId: COOP_MAPS[0]?.id ?? "dustfall-outpost", difficulty: "regular", waveTarget: 10, startWave: 1 };
-const DEFAULT_LOADOUT: CoopLoadout = { operator: "ridge", primary: "vk7", secondary: "marrow9" };
+const DEFAULT_LOADOUT: CoopLoadout = { operator: "ridge", primary: "m4a1", secondary: "m9" };
 const JOIN_TIMEOUT_MS = 4500;
 
 type Stage = "menu" | "connecting" | "lobby" | "game";
@@ -101,6 +101,8 @@ export function CoopApp({
       const raw = window.localStorage.getItem(LOADOUT_KEY);
       if (initialLoadout) saved = initialLoadout;
       else if (raw) saved = { ...DEFAULT_LOADOUT, ...(JSON.parse(raw) as Partial<CoopLoadout>) };
+      // Old saves may name retired weapons (vk7, marrow9…): map them onto the current library.
+      saved = { ...saved, primary: resolveWeaponId(saved.primary, "primary", DEFAULT_LOADOUT.primary), secondary: resolveWeaponId(saved.secondary, "secondary", DEFAULT_LOADOUT.secondary) };
     } catch {
       // Storage blocked: defaults.
     }

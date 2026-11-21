@@ -1,4 +1,5 @@
 import { WEAPONS, type WeaponDef } from "../weapons/weapons";
+import type { ShellKind } from "../effects/Shells";
 import type { ReloadStage } from "../weapons/WeaponSystem";
 import type { Surface } from "../effects/EffectsPool";
 import { VoiceAllocator, arrivalDelay, dbToGain, distanceCutoff, distanceGain, softClipCurve, type VoiceRule } from "./voices";
@@ -589,15 +590,34 @@ export class Sfx {
     if (!ctx || typeof OfflineAudioContext === "undefined") return;
     try {
       this.enemyBank = await this.renderBank(ctx, 4, 0.75, (L, t) => synthEnemyShot(L, t));
-      for (const def of Object.values(WEAPONS) as WeaponDef[]) await this.ensureGunBank(def);
+      // Carried guns first (preloadGuns), then the explosion; the rest render on first shot.
+      for (const def of this.wantedBanks.splice(0)) await this.ensureGunBank(def);
       this.explosionBank = await this.renderBank(ctx, 3, 2.4, (L, t) => synthExplosion(L, t));
+      this.banksReady = true;
+      for (const def of this.wantedBanks.splice(0)) await this.ensureGunBank(def);
     } catch {
       // Offline rendering unavailable: live synthesis keeps working.
     }
   }
 
+  private wantedBanks: WeaponDef[] = [WEAPONS.m4a1, WEAPONS.mp5, WEAPONS.m9];
+  private banksReady = false;
+
+  /** Render the gunshot banks for the carried weapons (loadout change). */
+  preloadGuns(defs: WeaponDef[]) {
+    const guns = defs.filter((d) => d.slot !== "melee");
+    if (!this.banksReady || !this.ctx) {
+      this.wantedBanks = guns;
+      return;
+    }
+    void (async () => {
+      for (const d of guns) await this.ensureGunBank(d);
+    })();
+  }
+
   private async ensureGunBank(def: WeaponDef) {
     const ctx = this.ctx;
+    if (def.slot === "melee") return;
     if (!ctx || this.gunBank.has(def.id) || this.gunRendering.has(def.id)) return;
     this.gunRendering.add(def.id);
     try {
@@ -666,7 +686,81 @@ export class Sfx {
       if (L) synthGunshot(L, at, def);
     }
     this.lastGunAt = at;
-    if (def.cycleAction) this.pump(at + 0.2);
+    if (def.cycleAction) {
+      if (def.kind === "Shotgun") this.pump(at + 0.2);
+      else this.boltCycle(at + 0.24);
+    }
+  }
+
+  /** Bolt action: lift, draw back (case pings out), push forward, lock down. */
+  boltCycle(at?: number) {
+    const now = this.now();
+    if (now === null) return;
+    const t = Math.max(now, at ?? now);
+    const L = this.voice("pump", t, 0.6, FOLEY, { bus: "dry", send: 0.12 });
+    if (!L) return;
+    L.noise(t, { type: "bandpass", freq: 2600, q: 4 }, 0.4, 0.001, 0.03);
+    L.noise(t + 0.08, { type: "bandpass", freq: 1300, to: 900, over: 0.12, q: 1.5 }, 0.35, 0.01, 0.12);
+    L.tone(t + 0.2, "triangle", 3400, 2600, 0.12, 0.05, 0.001, 0.12);
+    L.noise(t + 0.3, { type: "bandpass", freq: 1500, q: 1.5 }, 0.4, 0.006, 0.08);
+    L.noise(t + 0.42, { type: "bandpass", freq: 3000, q: 4 }, 0.55, 0.0008, 0.035);
+    L.tone(t + 0.42, "triangle", 650, 380, 0.04, 0.2, 0.0015, 0.05);
+  }
+
+  /** Selector switch click. */
+  fireMode() {
+    const now = this.now();
+    if (now === null) return;
+    const L = this.voice("foley", now, 0.06, FOLEY, { bus: "dry" });
+    if (!L) return;
+    L.noise(now, { type: "bandpass", freq: 3800, q: 5 }, 0.4, 0.0006, 0.015);
+    L.tone(now, "square", 2400, 2000, 0.01, 0.04, 0.001, 0.015);
+  }
+
+  /** Grenade pin pulled and spoon held. */
+  grenadePin() {
+    const now = this.now();
+    if (now === null) return;
+    const L = this.voice("foley", now, 0.25, FOLEY, { bus: "dry" });
+    if (!L) return;
+    L.noise(now, { type: "bandpass", freq: 4200, q: 6 }, 0.35, 0.0008, 0.02);
+    L.tone(now + 0.01, "sine", 5200, 4800, 0.1, 0.05, 0.001, 0.15); // ring ping
+  }
+
+  /** M84 stun: a sharp, very loud crack; `deafen` 0..1 adds the ringing in your ears. */
+  flashbang(at: V3, distance: number, deafen: number) {
+    const now = this.now();
+    if (now === null) return;
+    const t = now + arrivalDelay(distance);
+    const route: Route = { pos: at, dist: distance, ref: 10, rolloff: 0.9, send: 0.8 };
+    const L = this.voice("explosion", t, 1.2, 1.3, route, 1.3 * distanceGain(distance, 10, 0.9));
+    if (L) {
+      L.noise(t, { type: "highpass", freq: 900 }, 1, 0.0005, 0.08);
+      L.noise(t, { type: "lowpass", freq: 500 }, 0.8, 0.001, 0.35);
+      L.tone(t, "sine", 90, 40, 0.2, 0.6, 0.001, 0.3);
+    }
+    if (deafen > 0.05) {
+      const R = this.voice("sting", now, 0.4 + deafen * 4, 0.25 * deafen, { bus: "dry" });
+      R?.tone(now + 0.05, "sine", 3600, 3500, 3, 0.25 * deafen, 0.05, 0.4 + deafen * 4);
+    }
+  }
+
+  /** M18 smoke: pop and a long hiss. */
+  smokePop(at: V3, distance: number) {
+    const now = this.now();
+    if (now === null) return;
+    const L = this.voice("bounce", now, 3, FOLEY, { pos: at, dist: distance, ref: 4, rolloff: 1.1, send: 0.4 });
+    if (!L) return;
+    L.noise(now, { type: "bandpass", freq: 1200, q: 1 }, 0.5, 0.002, 0.08);
+    L.noise(now + 0.05, { type: "highpass", freq: 2500 }, 0.25, 0.3, 2.6);
+  }
+
+  /** Rifle butt / knife whoosh at swing start. */
+  swing(heavy: boolean) {
+    const now = this.now();
+    if (now === null) return;
+    const L = this.voice("foley", now, 0.25, FOLEY, { bus: "dry" });
+    L?.noise(now, { type: "bandpass", freq: heavy ? 900 : 2200, to: heavy ? 400 : 800, over: 0.18, q: 1 }, heavy ? 0.3 : 0.25, 0.02, 0.16);
   }
 
   /** Shotgun pump / bolt: rack back + forward. */
@@ -751,16 +845,27 @@ export class Sfx {
     L.noise(now + 0.25, { type: "bandpass", freq: 900, to: 400, over: 0.2, q: 0.8 }, 0.3, 0.02, 0.2); // whoosh
   }
 
-  /** Knife swing; `hit` adds a meaty impact. */
-  knife(hit: boolean) {
+  /**
+   * Melee impact; `hit` adds the strike: flesh = wet thud, otherwise a hard
+   * clank (wall, armour). Backstabs get a heavier double hit; `butt` is wood/steel on bone.
+   */
+  knife(hit: boolean, flesh = true, backstab = false, butt = false) {
     const now = this.now();
     if (now === null) return;
-    const L = this.voice("foley", now, 0.25, FOLEY, { bus: "dry" });
+    const L = this.voice("foley", now, 0.3, FOLEY, { bus: "dry" });
     if (!L) return;
-    L.noise(now, { type: "bandpass", freq: 2500, to: 800, over: 0.15, q: 1.2 }, 0.35, 0.01, 0.15);
-    if (hit) {
-      L.noise(now + 0.02, { type: "lowpass", freq: 900 }, 0.8, 0.001, 0.09);
-      L.tone(now + 0.02, "sine", 140, 60, 0.08, 0.5, 0.002, 0.1);
+    if (!butt) L.noise(now, { type: "bandpass", freq: 2500, to: 800, over: 0.15, q: 1.2 }, 0.35, 0.01, 0.15);
+    if (!hit) return;
+    if (flesh) {
+      L.noise(now + 0.02, { type: "lowpass", freq: butt ? 600 : 900 }, butt ? 1 : 0.8, 0.001, 0.09);
+      L.tone(now + 0.02, "sine", butt ? 110 : 140, 50, 0.08, butt ? 0.7 : 0.5, 0.002, 0.1);
+      if (backstab) {
+        L.noise(now + 0.1, { type: "lowpass", freq: 700 }, 0.7, 0.001, 0.12);
+        L.tone(now + 0.1, "sine", 90, 45, 0.1, 0.5, 0.002, 0.14);
+      }
+    } else {
+      L.noise(now + 0.02, { type: "bandpass", freq: 3200, q: 3 }, 0.6, 0.0008, 0.05);
+      L.tone(now + 0.02, "triangle", 1400, 900, 0.04, 0.2, 0.001, 0.08);
     }
   }
 
@@ -941,7 +1046,7 @@ export class Sfx {
   }
 
   /** Ejected brass / hull hitting the floor: short metallic tinkle. */
-  shellDrop(at: V3, kind: "rifle" | "pistol" | "shotgun" | "magnum" | "heavy", speed: number) {
+  shellDrop(at: V3, kind: ShellKind, speed: number) {
     const now = this.now();
     if (now === null) return;
     const v = Math.min(1, speed / 4) * 0.16;
@@ -954,7 +1059,9 @@ export class Sfx {
       L.tone(now, "triangle", 420, 400, 0.05, v * 0.6, 0.0015, 0.05);
       return;
     }
-    const f = (kind === "pistol" ? 5200 : kind === "magnum" ? 3600 : 4300) * (0.92 + Math.random() * 0.16);
+    // Bigger casings ring lower; a .50 BMG case clunks.
+    const base: Record<Exclude<ShellKind, "shotgun">, number> = { pdw: 5800, pistol: 5200, acp: 4700, rifle: 4300, x39: 3900, heavy: 3500, magnum: 3600, bmg: 1900 };
+    const f = base[kind] * (0.92 + Math.random() * 0.16);
     L.tone(now, "sine", f, f * 0.995, 0.12, v, 0.0015, 0.09 + Math.random() * 0.05);
     L.tone(now, "sine", f * 1.52, f * 1.51, 0.08, v * 0.5, 0.0015, 0.06);
     L.noise(now, { type: "highpass", freq: 5000 }, v * 0.6, 0.0008, 0.012);

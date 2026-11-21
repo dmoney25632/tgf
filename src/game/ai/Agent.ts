@@ -38,6 +38,9 @@ export class Agent implements Hittable, Combatant, StaggerState {
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
   yaw = 0;
+  heading() {
+    return this.yaw;
+  }
   aimPitch = 0;
   health = 100;
   maxHealth = 100;
@@ -82,6 +85,8 @@ export class Agent implements Hittable, Combatant, StaggerState {
 
   // Heavy stagger (see heavy/Juggernaut.ts).
   staggerTimer = 0;
+  /** Flashbanged: blind and deaf for this many seconds (stumbles, holds fire). */
+  blindTimer = 0;
   staggerCooldown = 0;
   staggerAccum = 0;
   staggerAge = 0;
@@ -150,6 +155,7 @@ export class Agent implements Hittable, Combatant, StaggerState {
     this.pauseTimer = 0.4 + Math.random() * 0.8;
     this.aimCharge = -1;
     this.flinchTimer = 0;
+    this.blindTimer = 0;
     resetStagger(this);
     this.sinceHit = this.sinceDamage = 99;
     this.engageTime = 0;

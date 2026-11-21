@@ -174,7 +174,7 @@ test("clock sync renders ~delay behind the sender despite jitter", () => {
 // Hit validation
 // ---------------------------------------------------------------------------
 
-const rifle = WEAPONS.vk7;
+const rifle = WEAPONS.m4a1;
 const clearLos = () => true;
 const claim = (over: Partial<HitClaimCheck> = {}): HitClaimCheck => ({
   now: 0, shooterId: 1, shooterEye: { x: 0, y: 1.6, z: 0 }, shooterCanFire: true, targetAlive: true,
@@ -225,7 +225,7 @@ test("hit validation rate-limits claims to the weapon's fire rate", () => {
   for (let t = 0; t < 5; t += interval) if (!v2.validate(claim({ now: t })).ok) rejected++;
   assert.equal(rejected, 0);
   // Shotguns: every pellet of a blast is its own claim.
-  const sg = WEAPONS.breacher;
+  const sg = WEAPONS.r870;
   const v3 = new HitValidator();
   let pellets = 0;
   for (let i = 0; i < sg.pellets; i++) if (v3.validate(claim({ weapon: sg, damage: sg.damage, targetPoints: [{ x: 0, y: 1.2, z: -4 }] })).ok) pellets++;

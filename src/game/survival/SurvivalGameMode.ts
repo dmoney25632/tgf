@@ -7,7 +7,8 @@ import type { Agent } from "../ai/Agent";
 import type { Combatant } from "../ai/types";
 import { disposeHumanoidCache } from "../ai/Humanoid";
 import { SurvivalHUD, type TeamRow } from "../ui/SurvivalHUD";
-import { GRENADE, MELEE, type WeaponId } from "../weapons/weapons";
+import { FLASHBANG, GRENADE, MELEE, SMOKE, WEAPONS, type WeaponId } from "../weapons/weapons";
+import { isMeleeName } from "../weapons/WeaponSystem";
 import {
   DIFFICULTY, ECONOMY, ENEMIES, OPERATORS, PLAYER, WAVES,
   type DifficultyId, type EnemyType, type OperatorId, type WaveTarget,
@@ -102,6 +103,8 @@ export class SurvivalGameMode implements GameMode {
     ctx.viewmodel.setWeapon(ctx.weapons.active.def);
     ctx.grenades.count = op.grenades;
     ctx.grenades.maxCarry = GRENADE.maxCarry + (op.grenades > 2 ? 1 : 0);
+    ctx.grenades.flashCount = FLASHBANG.startCount;
+    ctx.grenades.smokeCount = SMOKE.startCount;
     this.state.reset(this.loadout.maxHealth, op.startArmor);
     ctx.hud.modeLabel = "SURVIVAL";
 
@@ -146,6 +149,8 @@ export class SurvivalGameMode implements GameMode {
         this.shud.showBanner(`${agent.name.toUpperCase()} IS DOWN`, "HOLD [F] NEXT TO THEM TO REVIVE", 2.4, "#ff8a6a");
       },
     });
+    // Smoke clouds block AI sight lines.
+    this.agents.obscured = (a, b) => ctx.grenades.blocksSight(a, b);
     if (this.net?.role !== "client") {
       this.agents.prewarm("rifleman", 12);
       this.agents.prewarm("rusher", 4);
@@ -287,8 +292,13 @@ export class SurvivalGameMode implements GameMode {
       this.wallet.add(ECONOMY.hit * this.diff.reward);
     }
     if (killed && source === MELEE.name) return "KNIFE KILL";
+    if (killed && isMeleeName(source)) return "BUTT STROKE";
     if (killed && part === "head") return "HEADSHOT";
     return null;
+  }
+
+  onFlashbang(at: THREE.Vector3) {
+    this.agents.flashbang(at, FLASHBANG.radius, FLASHBANG.blind);
   }
 
   onExplosion(at: THREE.Vector3) {
@@ -518,7 +528,7 @@ export class SurvivalGameMode implements GameMode {
     if (k.source === "ai") {
       money = base * ECONOMY.botKillShare;
       killer = this.agents.squad.find((s) => s.target === k.agent)?.name ?? "Squad";
-      weaponName = "VK-7";
+      weaponName = WEAPONS.m4a1.name;
     } else {
       this.kills[def.type] = (this.kills[def.type] ?? 0) + 1;
       if (k.source === "melee") {

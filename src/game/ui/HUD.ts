@@ -24,6 +24,17 @@ export type HudFrame = {
   armor: number;
   /** Grenades carried, or -1 to hide. */
   grenades: number;
+  /** M84 / M18 carried (optional: hidden when undefined). */
+  flashbangs?: number;
+  smokes?: number;
+  /** Frag cook 0..1 of the fuse while held, else -1. */
+  cook?: number;
+  /** Fire-mode label ("AUTO", "3-RND", "SEMI"), "" for single-mode guns. */
+  fireMode?: string;
+  /** Flashbang white-out 0..1. */
+  flash?: number;
+  /** Reticle style for the scope overlay. */
+  optic?: "mildot" | "pso" | "g36" | "aug";
   /** 0..1 scope overlay (scoped weapon ADS). */
   scope: number;
   /** Player yaw (rad): compass + damage indicators. */
@@ -81,6 +92,49 @@ function buildCompassSvg() {
   return s + "</svg>";
 }
 
+const FLASH_SVG =
+  '<svg width="9" height="15" viewBox="0 0 9 15" style="vertical-align:-2px" aria-hidden="true"><rect x=".8" y="3.4" width="7.4" height="11" rx="1.2" fill="currentColor"/><rect x="2.6" y=".8" width="3.8" height="2.6" rx=".5" fill="currentColor"/><g fill="rgba(0,0,0,.5)"><circle cx="3" cy="6.4" r=".9"/><circle cx="6" cy="6.4" r=".9"/><circle cx="3" cy="9.4" r=".9"/><circle cx="6" cy="9.4" r=".9"/><circle cx="3" cy="12.2" r=".9"/><circle cx="6" cy="12.2" r=".9"/></g></svg>';
+const SMOKE_SVG =
+  '<svg width="11" height="15" viewBox="0 0 11 15" style="vertical-align:-2px" aria-hidden="true"><rect x=".8" y="3.6" width="9.4" height="10.8" rx="1.4" fill="currentColor"/><rect x="3.6" y=".8" width="3.8" height="2.8" rx=".5" fill="currentColor"/><rect x=".8" y="3.6" width="9.4" height="2" fill="#d0503a"/></svg>';
+
+/** Scope reticles (black surround + per-optic marks), drawn in vmin around the centre. */
+function scopeHtml(optic: string) {
+  const glass = '<div style="position:absolute;inset:0;background:radial-gradient(circle at center,rgba(20,40,60,.07) 0,rgba(20,40,60,.1) 31vmin,rgba(0,0,0,.6) 32.6vmin,#000 33.4vmin)"></div>';
+  const at = (x: string, y: string, w: string, h: string, extra = "") => `<div style="position:absolute;left:calc(50% + ${x});top:calc(50% + ${y});width:${w};height:${h};${extra}"></div>`;
+  const ink = "background:rgba(0,0,0,.88)";
+  if (optic === "pso") {
+    // PSO-1: illuminated chevrons, horizontal windage scale, stadia rangefinder curve.
+    const glow = "border-color:#ff5a2a;filter:drop-shadow(0 0 2px #ff5a2a)";
+    let h = glass;
+    for (const [y, sz] of [[0, 2.2], [4.5, 1.6], [7.5, 1.6], [10.5, 1.6]] as const)
+      h += `<div style="position:absolute;left:50%;top:calc(50% + ${y}vmin);width:${sz}vmin;height:${sz}vmin;transform:translate(-50%,0) rotate(45deg);border-left:2px solid;border-top:2px solid;${glow}"></div>`;
+    h += at("-14vmin", "0px", "11vmin", "1px", ink) + at("3vmin", "0px", "11vmin", "1px", ink);
+    for (let i = 1; i <= 10; i++) for (const sx of [-1, 1]) h += at(`${sx * (i * 1.4) - 0.1}vmin`, `${i % 5 === 0 ? -1.4 : -0.8}vmin`, "1px", `${i % 5 === 0 ? 1.4 : 0.8}vmin`, ink);
+    h += `<svg style="position:absolute;left:calc(50% - 22vmin);top:calc(50% + 4vmin);width:14vmin;height:10vmin" viewBox="0 0 140 100"><path d="M2 8 L138 8 M10 90 C40 70 90 30 138 18" stroke="rgba(0,0,0,.85)" stroke-width="1.4" fill="none"/><text x="2" y="98" font-size="11" fill="rgba(0,0,0,.85)">2</text><text x="128" y="34" font-size="11" fill="rgba(0,0,0,.85)">10</text></svg>`;
+    return h;
+  }
+  if (optic === "g36") {
+    // G36 3.5× carry-handle optic: red ring + range ticks below.
+    let h = glass + '<div style="position:absolute;left:50%;top:50%;width:5vmin;height:5vmin;margin:-2.5vmin;border:2px solid #e83a2a;border-radius:50%;box-shadow:0 0 5px #e83a2a"></div>';
+    h += at("-0.5px", "2.6vmin", "1px", "14vmin", ink);
+    for (let i = 1; i <= 4; i++) h += at(`${-(4 - i * 0.6)}vmin`, `${2.6 + i * 3}vmin`, `${(4 - i * 0.6) * 2}vmin`, "1px", ink);
+    return h;
+  }
+  if (optic === "aug") {
+    // AUG 1.5× Swarovski: a black ring with a centre dot.
+    return glass + '<div style="position:absolute;left:50%;top:50%;width:9vmin;height:9vmin;margin:-4.5vmin;border:2.5px solid rgba(0,0,0,.88);border-radius:50%"></div>' +
+      '<div style="position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:rgba(0,0,0,.88)"></div>';
+  }
+  // Mil-dot: thin crosshair, heavy outer posts, dots every mil.
+  let h = glass + at("-0.5px", "-33vmin", "1px", "66vmin", ink) + at("-33vmin", "-0.5px", "66vmin", "1px", ink);
+  for (const [x, y, w, hh] of [["-33vmin", "-2px", "17vmin", "4px"], ["16vmin", "-2px", "17vmin", "4px"], ["-2px", "16vmin", "4px", "17vmin"], ["-2px", "-33vmin", "4px", "17vmin"]]) h += at(x, y, w, hh, ink);
+  for (let i = 1; i <= 4; i++) for (const sx of [-1, 1]) {
+    h += at(`calc(${sx * i * 3.4}vmin - 2.5px)`, "-2.5px", "5px", "5px", ink + ";border-radius:50%");
+    h += at("-2.5px", `calc(${sx * i * 3.4}vmin - 2.5px)`, "5px", "5px", ink + ";border-radius:50%");
+  }
+  return h;
+}
+
 const GRENADE_SVG =
   '<svg width="12" height="15" viewBox="0 0 12 15" style="vertical-align:-2px" aria-hidden="true"><ellipse cx="6" cy="9" rx="5" ry="5.6" fill="currentColor"/><rect x="4" y="1.6" width="4" height="2.6" rx=".6" fill="currentColor"/><path d="M8 2.4q3 .2 3 3.6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M2.6 9h6.8" stroke="rgba(0,0,0,.45)" stroke-width="1"/></svg>';
 
@@ -116,6 +170,12 @@ export class HUD {
   private readonly fps: HTMLDivElement;
   private readonly grenadeEl: HTMLDivElement;
   private readonly scopeEl: HTMLDivElement;
+  private readonly flashEl: HTMLDivElement;
+  private readonly cookEl: HTMLDivElement;
+  private readonly cookFill: HTMLDivElement;
+  private lOptic = "mildot";
+  private lWhite = -1;
+  private lCook = -2;
   private readonly hurtEl: HTMLDivElement;
   private readonly lowHpEl: HTMLDivElement;
   private readonly vignetteEl: HTMLDivElement;
@@ -175,13 +235,9 @@ export class HUD {
 
     // Scope: black surround, thin reticle, slight lens tint.
     this.scopeEl = div("position:absolute;inset:0;opacity:0;display:none;", this.root);
-    this.scopeEl.innerHTML =
-      '<div style="position:absolute;inset:0;background:radial-gradient(circle at center,rgba(20,40,60,.08) 0,rgba(20,40,60,.08) 33vmin,#000 33.4vmin)"></div>' +
-      '<div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(0,0,0,.85)"></div>' +
-      '<div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(0,0,0,.85)"></div>' +
-      '<div style="position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#e83a2a;box-shadow:0 0 4px #e83a2a"></div>' +
-      '<div style="position:absolute;left:calc(50% - 3px);top:calc(50% + 6vmin);width:7px;height:1px;background:#000"></div>' +
-      '<div style="position:absolute;left:calc(50% - 3px);top:calc(50% + 12vmin);width:7px;height:1px;background:#000"></div>';
+    this.scopeEl.innerHTML = scopeHtml("mildot");
+    // Flashbang white-out (over everything but the menus).
+    this.flashEl = div("position:absolute;inset:0;opacity:0;background:#fffdf4;pointer-events:none;", this.root);
 
     // ---- Crosshair ----------------------------------------------------------
     this.crosshair = div(`position:absolute;left:50%;top:50%;width:0;height:0;color:${HUD_FG};transition:opacity 90ms linear;`, this.root);
@@ -240,6 +296,9 @@ export class HUD {
     const mag = div("width:132px;height:3px;margin-top:4px;background:rgba(255,255,255,.14);overflow:hidden;", wb);
     this.magFill = div(`height:100%;width:100%;background:${HUD_FG};transform-origin:right;transition:transform 70ms linear;`, mag);
     this.grenadeEl = div("display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:700;opacity:.92;", wb);
+    // Frag cook timer (fills toward the fuse).
+    this.cookEl = div("width:132px;height:3px;margin-top:5px;background:rgba(255,255,255,.14);overflow:hidden;opacity:0;transition:opacity 120ms;", wb);
+    this.cookFill = div(`height:100%;width:100%;background:${HUD_ACCENT};transform-origin:left;transform:scaleX(0);`, this.cookEl);
 
     // ---- Top-right: killfeed -------------------------------------------------
     this.feed = div("position:absolute;right:22px;top:58px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;", this.root, "ih-feed");
@@ -276,6 +335,16 @@ export class HUD {
     this.crossFlash = Math.max(0, this.crossFlash - dt);
     const flash = this.crossFlash > 0;
     const scoped = f.scope > 0.9;
+    const optic = f.optic ?? "mildot";
+    if (this.lOptic !== optic) {
+      this.lOptic = optic;
+      this.scopeEl.innerHTML = scopeHtml(optic);
+    }
+    const white = Math.round(Math.min(1, f.flash ?? 0) * 40) / 40;
+    if (this.lWhite !== white) {
+      this.lWhite = white;
+      this.flashEl.style.opacity = String(white);
+    }
     if (this.lScoped !== scoped) {
       this.lScoped = scoped;
       this.scopeEl.style.display = scoped ? "block" : "none";
@@ -326,21 +395,23 @@ export class HUD {
     if (this.lAmmo !== f.ammo || this.lMag !== f.magSize) {
       this.lAmmo = f.ammo;
       this.lMag = f.magSize;
-      this.ammo.textContent = String(f.ammo);
-      this.ammo.style.color = f.ammo === 0 ? HUD_RED : f.ammo <= Math.ceil(f.magSize * 0.25) ? "#ff8a5a" : "";
-      this.magFill.style.transform = `scaleX(${Math.max(0, Math.min(1, f.ammo / f.magSize)).toFixed(3)})`;
+      const melee = f.magSize <= 0;
+      this.ammo.textContent = melee ? "—" : String(f.ammo);
+      this.ammo.style.color = melee ? "" : f.ammo === 0 ? HUD_RED : f.ammo <= Math.ceil(f.magSize * 0.25) ? "#ff8a5a" : "";
+      this.magFill.style.transform = `scaleX(${melee ? 1 : Math.max(0, Math.min(1, f.ammo / f.magSize)).toFixed(3)})`;
     }
     if (this.lReserve !== f.reserve) {
       this.lReserve = f.reserve;
-      this.reserve.textContent = f.reserve < 0 ? "∞" : String(f.reserve);
+      this.reserve.textContent = f.magSize <= 0 ? "" : f.reserve < 0 ? "∞" : String(f.reserve);
     }
-    if (this.lWeapon !== f.weaponName) {
-      this.lWeapon = f.weaponName;
-      this.weaponName.textContent = `${f.weaponName}  ·  ${f.weaponKind}`;
+    const wKey = `${f.weaponName}|${f.fireMode ?? ""}`;
+    if (this.lWeapon !== wKey) {
+      this.lWeapon = wKey;
+      this.weaponName.textContent = `${f.weaponName}  ·  ${f.weaponKind}${f.fireMode ? `  ·  ${f.fireMode}` : ""}`;
     }
     this.updateSlots(f);
 
-    const status = f.reload >= 0 ? "reloading" : f.ammo === 0 ? (f.reserve ? "reload" : "empty") : f.ammo <= Math.ceil(f.magSize * 0.2) ? "low" : "";
+    const status = f.magSize <= 0 ? "" : f.reload >= 0 ? "reloading" : f.ammo === 0 ? (f.reserve ? "reload" : "empty") : f.ammo <= Math.ceil(f.magSize * 0.2) ? "low" : "";
     if (this.lStatus !== status || (glyphsChanged && status === "reload")) {
       this.lStatus = status;
       this.status.innerHTML =
@@ -375,9 +446,23 @@ export class HUD {
         this.lowHpEl.style.opacity = String(low);
       }
     }
-    if (this.lGrenades !== f.grenades || glyphsChanged) {
-      this.lGrenades = f.grenades;
-      this.grenadeEl.innerHTML = f.grenades >= 0 ? `${actionGlyph("grenade", glyphContext, 16)}<span style="display:inline-flex;align-items:center;gap:4px;${f.grenades === 0 ? "opacity:.4" : ""}">${GRENADE_SVG}<span class="ih-num">×${f.grenades}</span></span>` : "";
+    const gKey = f.grenades * 10000 + (f.flashbangs ?? -1) * 100 + (f.smokes ?? -1);
+    if (this.lGrenades !== gKey || glyphsChanged) {
+      this.lGrenades = gKey;
+      const item = (action: "grenade" | "flashbang" | "smoke", svg: string, n: number) =>
+        `<span style="display:inline-flex;align-items:center;gap:4px">${actionGlyph(action, glyphContext, 16)}<span style="display:inline-flex;align-items:center;gap:4px;${n === 0 ? "opacity:.4" : ""}">${svg}<span class="ih-num">×${n}</span></span></span>`;
+      this.grenadeEl.innerHTML = f.grenades >= 0
+        ? item("grenade", GRENADE_SVG, f.grenades) + (f.flashbangs !== undefined ? item("flashbang", FLASH_SVG, f.flashbangs) : "") + (f.smokes !== undefined ? item("smoke", SMOKE_SVG, f.smokes) : "")
+        : "";
+    }
+    const cook = f.cook !== undefined && f.cook >= 0 ? Math.round(f.cook * 60) / 60 : -1;
+    if (this.lCook !== cook) {
+      if ((this.lCook < 0) !== (cook < 0)) this.cookEl.style.opacity = cook >= 0 ? "1" : "0";
+      this.lCook = cook;
+      if (cook >= 0) {
+        this.cookFill.style.transform = `scaleX(${cook.toFixed(3)})`;
+        this.cookFill.style.backgroundColor = cook > 0.7 ? HUD_RED : HUD_ACCENT;
+      }
     }
 
     // ---- Hurt flash + damage direction arcs --------------------------------------

@@ -313,7 +313,10 @@ export class Input {
     this.setPad("Space", down(PAD.A));
     this.setPad("KeyC", down(PAD.B));
     this.setPad("KeyQ", down(PAD.Y));
-    this.setPad("KeyG", down(PAD.RB) || down(PAD.LB));
+    this.setPad("KeyG", down(PAD.RB));
+    this.setPad("KeyT", down(PAD.LB));
+    this.setPad("KeyH", down(PAD.LEFT));
+    this.setPad("KeyB", down(PAD.RIGHT));
     this.setPad("KeyV", down(PAD.R3));
     this.setPad("Tab", down(PAD.UP) || down(PAD.VIEW));
     this.setPad("KeyN", down(PAD.DOWN));

@@ -54,6 +54,9 @@ export class PlayerController {
   crouching = false;
   sliding = false;
   sprinting = false;
+  /** Knife lunge: horizontal velocity overridden toward a target for a moment. */
+  private lungeTime = 0;
+  private readonly lungeVel = new THREE.Vector3();
   /** Horizontal speed, for spread / bob / HUD. */
   speed = 0;
   /** 0..1 smoothed sprint amount (viewmodel pose, FOV). */
@@ -105,6 +108,12 @@ export class PlayerController {
 
   get maxPitch() {
     return Math.PI / 2 - LOOK.poleMargin;
+  }
+
+  /** Knife lunge: dash along `dir` (horizontal) at `speed` for `time` seconds. */
+  lunge(dir: THREE.Vector3, speed: number, time: number) {
+    this.lungeVel.set(dir.x, 0, dir.z).normalize().multiplyScalar(speed);
+    this.lungeTime = time;
   }
 
   /** Extra FOV from sprint/slide, smoothed. */
@@ -217,7 +226,11 @@ export class PlayerController {
     }
 
     // ---- Horizontal velocity ---------------------------------------------
-    if (this.sliding) {
+    if (this.lungeTime > 0) {
+      this.lungeTime -= h;
+      this.velocity.x = this.lungeVel.x;
+      this.velocity.z = this.lungeVel.z;
+    } else if (this.sliding) {
       // Low friction along the slide, slight steering.
       const sp = Math.hypot(this.velocity.x, this.velocity.z);
       const newSp = Math.max(0, sp - SLIDE.friction * h);

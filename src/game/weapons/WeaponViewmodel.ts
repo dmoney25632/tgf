@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import { CAMERA } from "../config";
 import { Spring, damp } from "../core/Spring";
-import type { WeaponDef } from "./weapons";
+import type { GrenadeType, WeaponDef } from "./weapons";
 import type { ShellKind } from "../effects/Shells";
 import { GeoBuilder } from "./viewmodel/geo";
 import { createViewmodelMaterials, type ViewmodelMaterials } from "./viewmodel/materials";
-import { GUN_BUILDERS, buildGrenade, buildKnife, type GunSpec } from "./viewmodel/guns";
+import { GUN_BUILDERS, buildGrenade, buildKnife, type GrenadeModel, type GunSpec } from "./viewmodel/guns";
 import { buildFlash, createFlashKit, type FlashKit } from "./viewmodel/flash";
 
 type ModelKind = WeaponDef["model"];
@@ -22,7 +22,13 @@ type Model = {
   tracks: Tracks;
   tris: number;
   meshes: number;
+  /** Geometries owned by this model (freed when it is evicted). */
+  owned: { dispose(): void }[];
+  lastUsed: number;
 };
+
+/** Built models kept in memory (the carried loadout is always kept). */
+const MAX_MODELS = 5;
 
 type Tracks = {
   hand: Track;
@@ -50,10 +56,14 @@ export type ViewmodelState = {
   /** 0..1 lowered amount during a weapon swap. */
   lowered: number;
   grounded: boolean;
-  /** Knife swing progress 0..1, or -1. */
+  /** Melee swing progress 0..1, or -1. */
   melee: number;
-  /** Grenade throw progress 0..1, or -1. */
+  /** Which swing `melee` belongs to (quick knife, rifle butt, equipped slash / stab). */
+  meleeKind?: "quick" | "butt" | "slash" | "stab";
+  /** Grenade sequence 0..1 (pin pull → cocked hold at 0.3 → throw), or -1. */
   throwing: number;
+  /** Which throwable is in hand. */
+  grenade?: GrenadeType;
   /** Seconds since the last shot (pump / bolt cycle). */
   sinceShot: number;
   /** Shell-by-shell reload active (shotgun). */
@@ -94,7 +104,6 @@ const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
-const LOCKS_BACK: ModelKind[] = ["rifle", "dmr", "pistol"];
 
 /**
  * First-person weapon + arms, rendered in its own scene/camera so it never
@@ -109,10 +118,16 @@ export class WeaponViewmodel {
   readonly pivot = new THREE.Group();
 
   private readonly models = new Map<ModelKind, Model>();
+  private pinned = new Set<ModelKind>();
   private active!: Model;
   private def: WeaponDef | null = null;
   private readonly knife = new THREE.Group();
-  private readonly grenade = new THREE.Group();
+  private readonly grenades = new Map<GrenadeType, GrenadeModel>();
+  private grenade!: GrenadeModel;
+  private useClock = 0;
+  private modeFlick = 9;
+  private boltCloseT = 9;
+  private boltEjected = true;
   private cylinderSpin = 0;
   private readonly disposables: { dispose(): void }[] = [];
   private readonly mats: ViewmodelMaterials;
@@ -177,37 +192,23 @@ export class WeaponViewmodel {
     this.mats = createViewmodelMaterials();
     this.flashKit = createFlashKit();
 
-    // Every gun is built up front (one shared material set, so no shader
-    // compiles on swap) but only the equipped one is in the scene graph.
-    for (const kind of ["rifle", "smg", "shotgun", "dmr", "lmg", "pistol", "revolver"] as ModelKind[]) {
-      const b = new GeoBuilder(this.mats.render);
-      const spec = GUN_BUILDERS[kind]({ b, m: this.mats });
-      b.finish(this.disposables);
-      const flash = buildFlash(this.flashKit, spec.flash, spec.flashScale, this.disposables);
-      spec.muzzle.add(flash.group);
-      this.models.set(kind, {
-        spec,
-        flash,
-        magRest: spec.mag.position.clone(),
-        magRot: spec.mag.rotation.clone(),
-        boltRest: spec.bolt.position.clone(),
-        chargeRest: spec.charge ? spec.charge.position.clone() : new THREE.Vector3(),
-        pumpRest: spec.pump ? spec.pump.position.z : 0,
-        tracks: makeTracks(spec),
-        tris: b.triangles,
-        meshes: b.meshes + 2,
-      });
-    }
-    this.active = this.models.get("rifle")!;
+    // Guns are built on demand (one shared material set, so no shader
+    // compiles on swap) and cached; only the equipped one is in the graph.
+    this.active = this.getModel("m4a1");
     this.pivot.add(this.active.spec.root);
 
     const kb = new GeoBuilder(this.mats.render);
     buildKnife({ b: kb, m: this.mats }, this.knife);
-    buildGrenade({ b: kb, m: this.mats }, this.grenade);
+    for (const t of ["frag", "flash", "smoke"] as GrenadeType[]) {
+      const grp = new THREE.Group();
+      grp.visible = false;
+      this.grenades.set(t, buildGrenade({ b: kb, m: this.mats }, grp, t));
+      this.pivot.add(grp);
+    }
     kb.finish(this.disposables);
+    this.grenade = this.grenades.get("frag")!;
     this.knife.visible = false;
-    this.grenade.visible = false;
-    this.pivot.add(this.knife, this.grenade);
+    this.pivot.add(this.knife);
 
     for (let i = 0; i < MAX_EJECT; i++) {
       this.ejections.push({ pos: new THREE.Vector3(), dir: new THREE.Vector3(), kind: "rifle", pending: false, ready: false, quat: new THREE.Quaternion() });
@@ -271,9 +272,69 @@ export class WeaponViewmodel {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Build (or fetch) a model; evicts the least recently used extras. */
+  private getModel(kind: ModelKind): Model {
+    let m = this.models.get(kind);
+    if (!m) {
+      const b = new GeoBuilder(this.mats.render);
+      const owned: { dispose(): void }[] = [];
+      const spec = (GUN_BUILDERS[kind] ?? GUN_BUILDERS.m4a1)({ b, m: this.mats });
+      b.finish(owned);
+      const flash = buildFlash(this.flashKit, spec.flash, spec.flashScale, owned);
+      spec.muzzle.add(flash.group);
+      m = {
+        spec,
+        flash,
+        magRest: spec.mag.position.clone(),
+        magRot: spec.mag.rotation.clone(),
+        boltRest: spec.bolt.position.clone(),
+        chargeRest: spec.charge ? spec.charge.position.clone() : new THREE.Vector3(),
+        pumpRest: spec.pump ? spec.pump.position.z : 0,
+        tracks: makeTracks(spec),
+        tris: b.triangles,
+        meshes: b.meshes + 2,
+        owned,
+        lastUsed: 0,
+      };
+      this.models.set(kind, m);
+      this.evict();
+    }
+    m.lastUsed = ++this.useClock;
+    return m;
+  }
+
+  private evict() {
+    while (this.models.size > Math.max(MAX_MODELS, this.pinned.size + 1)) {
+      let oldest: ModelKind | null = null;
+      let t = Infinity;
+      for (const [k, m] of this.models) {
+        if (m === this.active || this.pinned.has(k) || m.lastUsed >= t) continue;
+        oldest = k;
+        t = m.lastUsed;
+      }
+      if (!oldest) return;
+      const m = this.models.get(oldest)!;
+      m.spec.root.removeFromParent();
+      for (const d of m.owned) d.dispose();
+      this.models.delete(oldest);
+    }
+  }
+
+  /** Build the carried weapons ahead of time so swapping never hitches. */
+  preload(defs: WeaponDef[]) {
+    this.pinned = new Set(defs.map((d) => d.model));
+    for (const d of defs) this.getModel(d.model);
+    this.evict();
+  }
+
+  /** Thumb on the selector: a little roll of the gun. */
+  fireModeFlick() {
+    this.modeFlick = 0;
+  }
+
   setWeapon(def: WeaponDef) {
     this.def = def;
-    const next = this.models.get(def.model) ?? this.models.get("rifle")!;
+    const next = this.getModel(def.model);
     if (next === this.active) return;
     this.pivot.remove(this.active.spec.root);
     this.active = next;
@@ -311,8 +372,9 @@ export class WeaponViewmodel {
     const v = Math.floor(Math.random() * 4);
     map.offset.set((v % 2) * 0.5, Math.floor(v / 2) * 0.5);
 
-    if (m.spec.shell && m.spec.reload !== "shell") this.queueEjection(m.spec.shell);
+    if (m.spec.shell && !m.spec.pump && !m.spec.boltLift) this.queueEjection(m.spec.shell);
     this.pumpEjected = false;
+    this.boltEjected = false;
   }
 
   landImpact(fallSpeed: number) {
@@ -359,7 +421,7 @@ export class WeaponViewmodel {
       if (!e.ready) continue;
       e.ready = false;
       this.viewToWorld(worldCamera, tmpV.copy(e.pos));
-      const speed = e.kind === "shotgun" ? 2.1 : e.kind === "pistol" ? 2.6 : e.kind === "magnum" ? 0.9 : 3.1;
+      const speed = e.kind === "shotgun" ? 2.1 : e.kind === "pistol" || e.kind === "acp" ? 2.6 : e.kind === "magnum" ? 0.9 : e.kind === "bmg" ? 2.4 : e.kind === "pdw" ? 1.6 : 3.1;
       tmpV2.copy(e.dir).multiplyScalar(speed * (0.85 + Math.random() * 0.3));
       tmpV2.x += (Math.random() - 0.5) * 0.4;
       tmpV2.y += (Math.random() - 0.5) * 0.4;
@@ -456,13 +518,17 @@ export class WeaponViewmodel {
     const rpm = this.def?.rpm ?? 600;
     const cycDur = Math.min(0.075, (60 / rpm) * 0.8);
     const ct = s.sinceShot / cycDur;
-    let boltOff = ct < 1 ? (ct < 0.3 ? smooth(ct, 0, 0.3) : 1 - smooth(ct, 0.3, 1)) : 0;
+    const boltGun = !!sp.boltLift;
+    let boltOff = boltGun || sp.pump ? 0 : ct < 1 ? (ct < 0.3 ? smooth(ct, 0, 0.3) : 1 - smooth(ct, 0.3, 1)) : 0;
     const reloading = s.reload >= 0;
-    const lockable = LOCKS_BACK.includes(sp.kind);
+    const lockable = !!sp.locksBack;
     if (s.empty && lockable && s.sinceShot > cycDur * 0.3) boltOff = 1;
+    if (sp.boltLift) sp.boltLift.rotation.z = 0;
+    if (sp.rightArm) sp.rightArm.position.set(0, 0, 0);
+    if (sp.hammer) sp.hammer.rotation.x = 0;
 
     // ---- Reload choreography -------------------------------------------------
-    if (reloading && !s.shellReload) {
+    if (reloading && !s.shellReload && sp.reload !== "none") {
       const r = s.reload;
       boltOff = this.reloadPose(m, r, s.reloadEmpty, lockable, boltOff);
     } else {
@@ -471,7 +537,12 @@ export class WeaponViewmodel {
     this.lastReload = s.reload;
     this.shellPose(m, dt, s);
 
+    // Bolt action: strong hand leaves the grip, lifts, draws, pushes, locks.
+    if (boltGun) boltOff = this.boltCycle(m, dt, s);
+
     sp.bolt.position.z = m.boltRest.z + boltOff * sp.boltTravel;
+    if (sp.charge && sp.chargeRides) sp.charge.position.z = m.chargeRest.z + boltOff * Math.min(sp.boltTravel, sp.chargeTravel ?? sp.boltTravel);
+    if (sp.hammer && sp.handgun) sp.hammer.rotation.x = -0.7 * Math.min(1, boltOff * 1.5);
 
     // Pump cycle after a shot (and the rack after an empty shell reload).
     if (sp.pump) {
@@ -493,6 +564,14 @@ export class WeaponViewmodel {
       sp.cylinder.rotation.z += (this.cylinderSpin - sp.cylinder.rotation.z) * damp(30, dt);
     }
 
+    // Fire-mode switch: thumb flick on the selector.
+    this.modeFlick += dt;
+    if (this.modeFlick < 0.3) {
+      const k = Math.sin((this.modeFlick / 0.3) * Math.PI);
+      g.rotation.z += 0.12 * k;
+      g.rotation.y -= 0.05 * k;
+    }
+
     // Swap: drop out of view.
     if (s.lowered > 0) {
       const l = s.lowered * s.lowered;
@@ -500,32 +579,9 @@ export class WeaponViewmodel {
       g.rotation.x -= 0.9 * l;
     }
 
-    // Knife: gun dips away, knife slashes across.
-    this.knife.visible = s.melee >= 0;
-    if (s.melee >= 0) {
-      const t = s.melee;
-      const away = Math.sin(Math.min(t * 1.3, 1) * Math.PI);
-      g.position.y -= 0.12 * away;
-      g.position.x += 0.06 * away;
-      g.rotation.z -= 0.6 * away;
-      const swing = smooth(t, 0.05, 0.3);
-      const ret = smooth(t, 0.45, 1);
-      this.knife.position.set(0.22 - swing * 0.36 + ret * 0.14, -0.06 - swing * 0.08, -0.36 + swing * 0.06);
-      this.knife.rotation.set(-0.3 + swing * 0.2, 0.9 - swing * 1.6, 0.9 - swing * 1.3);
-      this.knife.position.y -= ret * 0.25;
-    }
-    // Grenade: gun lowers, hand cocks back then throws forward.
-    this.grenade.visible = s.throwing >= 0 && s.throwing < 0.55;
-    if (s.throwing >= 0) {
-      const t = s.throwing;
-      const away = Math.sin(Math.min(t * 1.2, 1) * Math.PI);
-      g.position.y -= 0.2 * away;
-      g.rotation.x -= 0.6 * away;
-      const cock = smooth(t, 0, 0.35);
-      const fling = smooth(t, 0.35, 0.55);
-      this.grenade.position.set(-0.16 + fling * 0.12, -0.12 + cock * 0.14 - fling * 0.02, -0.3 + cock * 0.12 - fling * 0.5);
-      this.grenade.rotation.set(cock * -0.8 + fling * 2, 0.3 - cock * 0.2, 0);
-    }
+    this.meleePose(sp, s);
+    this.grenadePose(g, s);
+
     // Optic: hide the gun once the scope fills the view.
     g.visible = !(sp.scope && s.ads > 0.92);
 
@@ -556,6 +612,142 @@ export class WeaponViewmodel {
       g.getWorldQuaternion(e.quat);
       e.dir.copy(sp.ejectDir).applyQuaternion(e.quat);
     }
+  }
+
+  /** Melee swings: quick knife (gun dips), rifle butt, equipped slash / stab. */
+  private meleePose(sp: GunSpec, s: ViewmodelState) {
+    const g = sp.root;
+    const kind = s.meleeKind ?? "quick";
+    const t = s.melee;
+    const equipped = sp.kind === "knife";
+    this.knife.visible = t >= 0 && !equipped && kind === "quick";
+    if (t < 0) return;
+    if (equipped) {
+      if (kind === "stab") {
+        // Draw back, drive forward and up, twist out.
+        const wind = smooth(t, 0, 0.3) * (1 - smooth(t, 0.3, 0.42));
+        const drive = smooth(t, 0.3, 0.45) * (1 - smooth(t, 0.65, 1));
+        g.position.z += 0.06 * wind - 0.2 * drive;
+        g.position.x -= 0.05 * drive;
+        g.position.y += 0.04 * drive - 0.02 * wind;
+        g.rotation.x += 0.35 * drive - 0.2 * wind;
+        g.rotation.z -= 0.25 * drive;
+      } else {
+        // Wide forehand slash right → left with a wrist roll.
+        const wind = smooth(t, 0, 0.18) * (1 - smooth(t, 0.18, 0.3));
+        const sw = smooth(t, 0.18, 0.5);
+        const ret = smooth(t, 0.6, 1);
+        const across = sw * (1 - ret);
+        g.position.x += 0.07 * wind - 0.3 * across;
+        g.position.y += 0.05 * wind - 0.02 * across;
+        g.position.z -= 0.08 * across;
+        g.rotation.y += 0.5 * wind + 1.3 * across;
+        g.rotation.z += 0.6 * wind - 0.9 * across;
+        g.rotation.x -= 0.25 * across;
+      }
+      return;
+    }
+    if (kind === "butt") {
+      // Rifle butt stroke: pull in, swing the stock forward and across.
+      const wind = smooth(t, 0, 0.25) * (1 - smooth(t, 0.25, 0.4));
+      const strike = smooth(t, 0.25, 0.42) * (1 - smooth(t, 0.55, 1));
+      g.position.x -= 0.04 * wind + 0.08 * strike;
+      g.position.y += 0.03 * wind + 0.05 * strike;
+      g.position.z += 0.03 * wind - 0.12 * strike;
+      g.rotation.y += 0.45 * wind + 1.25 * strike;
+      g.rotation.x -= 0.25 * strike;
+      g.rotation.z += 0.3 * strike;
+      return;
+    }
+    // Quick knife: gun dips away, knife slashes across.
+    const away = Math.sin(Math.min(t * 1.3, 1) * Math.PI);
+    g.position.y -= 0.12 * away;
+    g.position.x += 0.06 * away;
+    g.rotation.z -= 0.6 * away;
+    const swing = smooth(t, 0.05, 0.3);
+    const ret = smooth(t, 0.45, 1);
+    this.knife.position.set(0.22 - swing * 0.36 + ret * 0.14, -0.06 - swing * 0.08, -0.36 + swing * 0.06);
+    this.knife.rotation.set(-0.3 + swing * 0.2, 0.9 - swing * 1.6, 0.9 - swing * 1.3);
+    this.knife.position.y -= ret * 0.25;
+  }
+
+  /** Grenade: pull the pin, hold it cocked (cooking), then throw; spoon flies at release. */
+  private grenadePose(g: THREE.Group, s: ViewmodelState) {
+    const next = this.grenades.get(s.grenade ?? "frag")!;
+    if (next !== this.grenade) {
+      this.grenade.group.visible = false;
+      this.grenade = next;
+    }
+    const gr = this.grenade;
+    const t = s.throwing;
+    gr.group.visible = t >= 0 && t < 0.62;
+    if (t < 0) return;
+    const away = Math.sin(Math.min(t * 1.2, 1) * Math.PI);
+    g.position.y -= 0.2 * away;
+    g.rotation.x -= 0.6 * away;
+    const raise = smooth(t, 0, 0.12);
+    const cock = smooth(t, 0.16, 0.3);
+    const fling = smooth(t, 0.36, 0.58);
+    // Pin: the strong hand's fingers tug it out (ring pulls away, then gone).
+    gr.pin.visible = t < 0.17;
+    const tug = smooth(t, 0.08, 0.16);
+    gr.pin.position.set(0.04 * tug, 0.03 * tug, 0);
+    gr.spoon.visible = t < 0.4;
+    gr.spoon.rotation.x = -1.2 * smooth(t, 0.36, 0.4);
+    gr.group.position.set(-0.13 + fling * 0.1 + raise * 0.02, -0.2 + raise * 0.1 + cock * 0.05 - fling * 0.02, -0.3 + cock * 0.14 - fling * 0.5);
+    gr.group.rotation.set(cock * -0.8 + fling * 2, 0.3 - cock * 0.2 - raise * 0.2, 0);
+  }
+
+  /** Bolt-action cycle after a shot (and the bolt held open while loading). Returns the bolt offset. */
+  private boltCycle(m: Model, dt: number, s: ViewmodelState) {
+    const sp = m.spec;
+    const lift = sp.boltLift!;
+    const g = sp.root;
+    const maxLift = sp.boltLiftAngle ?? 1;
+    let open = 0;
+    let up = 0;
+    let hand = 0;
+    if (s.shellReload) {
+      this.boltCloseT = 0;
+      up = 1;
+      open = 1;
+      hand = 1;
+    } else if (this.boltCloseT < 0.55) {
+      this.boltCloseT += dt;
+      const c = this.boltCloseT / 0.55;
+      open = 1 - smooth(c, 0.1, 0.45);
+      up = 1 - smooth(c, 0.45, 0.62);
+      hand = 1 - smooth(c, 0.62, 1);
+    } else if (s.sinceShot < sp.cycle && !s.empty) {
+      const c = s.sinceShot / sp.cycle;
+      // 0.1 recoil settles · 0.25 hand on knob · 0.35 lift · 0.52 back · 0.7 forward · 0.8 down · 1 grip.
+      hand = smooth(c, 0.1, 0.25) * (1 - smooth(c, 0.82, 1));
+      up = smooth(c, 0.25, 0.35) * (1 - smooth(c, 0.72, 0.8));
+      open = smooth(c, 0.35, 0.52) * (1 - smooth(c, 0.56, 0.72));
+      if (!this.boltEjected && c > 0.5) {
+        this.boltEjected = true;
+        if (sp.shell) this.queueEjection(sp.shell);
+      }
+      g.rotation.z += 0.08 * hand;
+      g.rotation.x += 0.03 * open;
+    } else if (s.empty && s.reload < 0) {
+      // Empty: bolt left open, waiting for rounds.
+      up = 1;
+      open = 1;
+      if (!this.boltEjected) {
+        this.boltEjected = true;
+        if (sp.shell) this.queueEjection(sp.shell);
+      }
+    }
+    lift.rotation.z = maxLift * up;
+    if (sp.rightArm && sp.rightToBolt) {
+      sp.rightArm.position.copy(sp.rightToBolt).multiplyScalar(hand);
+      // Hand follows the knob as it lifts and draws back.
+      sp.rightArm.position.y += 0.03 * up * hand;
+      sp.rightArm.position.x -= 0.015 * up * hand;
+      sp.rightArm.position.z += sp.boltTravel * open * hand;
+    }
+    return open;
   }
 
   /** Mag / box / pistol / revolver reloads. Returns the bolt offset (0..1). */
@@ -596,7 +788,7 @@ export class WeaponViewmodel {
       g.position.y -= 0.01 * tilt;
       g.position.z -= 0.01 * tilt;
       g.position.x -= 0.03 * tilt;
-      if (sp.cover) sp.cover.rotation.x = 1.05 * smooth(r, 0.13, 0.24) * (1 - smooth(r, 0.72, 0.8));
+      if (sp.cover) sp.cover.rotation.x = (sp.coverSign ?? 1) * 1.05 * smooth(r, 0.13, 0.24) * (1 - smooth(r, 0.72, 0.8));
     } else {
       // Cant left and lift the mag well into view; nose dips a touch so the
       // muzzle stays in frame instead of swinging up past the crosshair.
@@ -613,6 +805,7 @@ export class WeaponViewmodel {
     sp.mag.position.add(tmpV);
     tr.magRot.sample(r, tmpV);
     sp.mag.rotation.x += tmpV.x;
+    sp.mag.rotation.y += tmpV.y;
     sp.mag.rotation.z += tmpV.z;
     sp.mag.visible = !(r > tr.hide[0] && r < tr.hide[1]);
     if (sp.magHidden) sp.mag.visible = r > tr.grab[0] && r < tr.grab[1];
@@ -703,6 +896,7 @@ export class WeaponViewmodel {
    * `calls` = draw calls at rest (visible meshes, flash excluded).
    */
   stats() {
+    for (const kind of Object.keys(GUN_BUILDERS) as ModelKind[]) this.getModel(kind);
     const out: Record<string, { tris: number; meshes: number; calls: number; muzzle: THREE.Vector3; ads: THREE.Vector3 }> = {};
     for (const [k, m] of this.models) {
       let calls = 0;
@@ -716,6 +910,8 @@ export class WeaponViewmodel {
 
   dispose() {
     for (const d of this.disposables) d.dispose();
+    for (const m of this.models.values()) for (const d of m.owned) d.dispose();
+    this.models.clear();
     this.mats.dispose();
     this.flashKit.dispose();
   }
@@ -757,8 +953,9 @@ function makeTracks(sp: GunSpec): Tracks {
       };
     }
     case "box": {
-      const latch = [-0.004, -0.028 - sp.leftRest.y, -0.118 - sp.leftRest.z];
-      const latchUp = [-0.004, 0.13 - sp.leftRest.y, -0.01 - sp.leftRest.z];
+      const L = sp.coverLatch ?? new THREE.Vector3(-0.004, -0.028, -0.118);
+      const latch = [L.x, L.y - sp.leftRest.y, L.z - sp.leftRest.z];
+      const latchUp = [L.x, L.y + 0.158 - sp.leftRest.y, L.z + (sp.coverSign === -1 ? -0.1 : 0.108) - sp.leftRest.z];
       const tray = [-0.035, -0.05 - sp.leftRest.y, -0.05 - sp.leftRest.z];
       const B2 = [B.x, B.y, B.z];
       return {
@@ -782,17 +979,30 @@ function makeTracks(sp: GunSpec): Tracks {
         hide: [-1, -1],
       };
     }
+    case "none":
+      return {
+        hand: new Track([k(0, z)]),
+        handEmpty: new Track([k(0, z)]),
+        mag: new Track([k(0, z)]),
+        magRot: new Track([k(0, z)]),
+        grab: [-1, -1],
+        hide: [-1, -1],
+      };
     default: {
-      const pull = [0, -0.075, 0.012];
-      const away = [-0.07, -0.34, 0.06];
-      const charge = sp.charge !== undefined && sp.kind === "smg";
+      const p = sp.magPath;
+      const pull = p?.pull ?? [0, -0.075, 0.012];
+      const away = p?.away ?? [-0.07, -0.34, 0.06];
+      const rot = p?.rot ?? [-0.5, 0, 0.4];
+      const rock = p?.rockIn ?? 0;
+      // Hand works the charging handle on empty unless the bolt locks back (then it slaps the release).
+      const charge = sp.charge !== undefined && !sp.locksBack;
       return {
         hand: new Track([k(0, z), k(0.06, z), k(0.2, R), k(0.64, R), k(0.8, z)]),
         handEmpty: charge
           ? new Track([k(0, z), k(0.06, z), k(0.2, R), k(0.64, R), k(0.75, B), k(0.86, B), k(0.97, z)])
           : new Track([k(0, z), k(0.06, z), k(0.2, R), k(0.64, R), k(0.76, B), k(0.79, B), k(0.81, [B.x + 0.006, B.y, B.z]), k(0.84, B), k(0.97, z)]),
         mag: new Track([k(0.2, z), k(0.3, pull), k(0.42, away), k(0.5, away), k(0.56, pull), k(0.62, z)]),
-        magRot: new Track([k(0.2, z), k(0.42, [-0.5, 0, 0.4]), k(0.5, [-0.5, 0, 0.4]), k(0.58, z)]),
+        magRot: new Track([k(0.2, z), k(0.28, [rock, 0, 0]), k(0.42, rot), k(0.5, rot), k(0.56, [rock, 0, 0]), k(0.62, z)]),
         grab: [0.2, 0.64],
         hide: [0.43, 0.49],
       };
