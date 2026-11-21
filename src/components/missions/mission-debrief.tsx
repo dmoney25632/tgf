@@ -63,7 +63,7 @@ export function MissionDebrief({
   }, [r, mode, squad, s.shotsFired]);
 
   if (!r || !def) return null;
-  const rating = rateMission(def, { victory: r.victory, seconds: r.seconds, difficulty: r.difficulty, retries: r.retries, downs: r.downs });
+  const rating = rateMission(def, { victory: r.victory, seconds: r.seconds, difficulty: r.difficulty, retries: r.retries, downs: r.downs, stealth: r.stealth });
   const t = rating.targets;
   const stat = (label: string, value: string | number) => (
     <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
@@ -108,7 +108,10 @@ export function MissionDebrief({
               {stat("Downs", r.downs)}
               {stat("Kills", r.kills)}
               {stat("Headshots", r.headshots)}
-              {stat("Gunships", r.gunships)}
+              {r.stealth ? stat("Silent takedowns", r.stealth.takedowns) : stat("Gunships", r.gunships)}
+              {r.stealth && stat("Alarms", r.stealth.alarms)}
+              {r.stealth && stat("Times spotted", r.stealth.spotted)}
+              {r.stealth && stat("Bodies found", r.stealth.bodies)}
             </div>
             <div className="mt-4 text-sm">
               {r.breakdown.filter((b) => b.value !== 0).map((b) => (

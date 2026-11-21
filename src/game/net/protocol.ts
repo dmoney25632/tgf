@@ -111,7 +111,8 @@ export type PhaseName = (typeof PHASES)[number];
 export const phaseCode = (p: string) => Math.max(0, PHASES.indexOf(p as PhaseName));
 
 /** Agent states, in wire order (see ai/Agent.ts AgentState). */
-export const AGENT_STATES = ["inactive", "advance", "engage", "toCover", "inCover", "perch", "follow", "revive", "downed", "dead"] as const;
+/** Wire table (index = byte on the wire): append only. */
+export const AGENT_STATES = ["inactive", "advance", "engage", "toCover", "inCover", "perch", "follow", "revive", "downed", "dead", "patrol"] as const;
 export const STATE_DEAD = AGENT_STATES.indexOf("dead");
 
 export const NO_TARGET = 255;

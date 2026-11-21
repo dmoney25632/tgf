@@ -54,6 +54,8 @@ type Peer = {
   connected: boolean;
   heard: boolean;
   pendingShots: number;
+  /** Host: running total of the peer's reported shots (stealth noise). */
+  shotsTotal: number;
   shotTimer: number;
   /** Latest vitals (host: computed from `state`; clients: from snapshots). */
   vitals: PlayerVitals;
@@ -174,7 +176,7 @@ export class CoopSurvivalNet implements MissionNet {
       if (entry.slot === this.slot) continue;
       this.peers.set(entry.slot, {
         entry, slot: entry.slot, name: entry.name, avatar: null, clock: new ClockSync(), last: null,
-        lastHeard: performance.now(), connected: true, heard: false, pendingShots: 0, shotTimer: 0,
+        lastHeard: performance.now(), connected: true, heard: false, pendingShots: 0, shotsTotal: 0, shotTimer: 0,
         vitals: blankVitals(entry.slot), wasDowned: false,
         state: new PlayerState(), wallet: new Wallet(), combatant: null, pos: new THREE.Vector3(), speed: 0,
         claims: [], explosions: [], buys: [], interact: false, heliHits: [], lastRewardShot: -1, lastExplosion: -1e9,
@@ -342,6 +344,7 @@ export class CoopSurvivalNet implements MissionNet {
     p.clock.observe(msg.time, now);
     p.avatar?.buffer.push(msg.time, [msg.x, msg.y, msg.z, msg.yaw, msg.pitch]);
     p.pendingShots = Math.min(30, p.pendingShots + msg.shots);
+    p.shotsTotal += Math.min(60, msg.shots);
     if (this.role === "host") {
       if (Array.isArray(payload.c)) for (const c of payload.c.slice(0, MAX_CLAIMS_PER_MSG)) if (Array.isArray(c) && c.length === 6) p.claims.push(c);
       if (Array.isArray(payload.x)) for (const x of payload.x.slice(0, 4)) if (Array.isArray(x) && x.length === 3) p.explosions.push(x);
@@ -725,9 +728,20 @@ export class CoopSurvivalNet implements MissionNet {
     out.length = 0;
     for (const p of this.peers.values()) {
       if (!p.connected || !p.heard) continue;
-      out.push({ x: p.pos.x, z: p.pos.z, up: p.state.alive && !p.state.downed, interact: p.interact, combatant: p.combatant });
+      out.push({
+        x: p.pos.x, z: p.pos.z, up: p.state.alive && !p.state.downed, interact: p.interact, combatant: p.combatant,
+        slot: p.slot, shots: p.shotsTotal, weapon: WEAPON_IDS[p.last?.weapon ?? 0], sprint: !!p.last?.sprint,
+      });
     }
     return out;
+  }
+
+  /** Client: render position of a replicated enemy. */
+  enemyPosition(id: number, out: THREE.Vector3) {
+    const px = this.proxies.get(id);
+    if (!px || !px.model.root.visible) return false;
+    out.copy(px.position);
+    return true;
   }
 
   private pushAir() {

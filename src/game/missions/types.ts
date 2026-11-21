@@ -53,7 +53,14 @@ type ObjectiveBase = {
   clearFirst?: boolean;
   /** Where the team respawns when the mission rolls back to this objective (default: the previous objective's point). */
   checkpoint?: Point & { yaw: number };
+  /** reach: also completes when a team member is anywhere inside this rectangle (e.g. "inside the wire"). */
+  zone?: Rect;
+  /** Waypoint label (default per kind). assassinate: shown until the target is identified. */
+  marker?: string;
 };
+
+/** Axis-aligned rectangle on the ground. */
+export type Rect = { x0: number; x1: number; z0: number; z1: number };
 
 export type ObjectiveDef =
   | (ObjectiveBase & { kind: "reach"; at: Point; radius: number })
@@ -61,6 +68,8 @@ export type ObjectiveDef =
   | (ObjectiveBase & { kind: "destroy"; at: Point; label: string; plantTime: number; fuse: number; safeRadius: number })
   | (ObjectiveBase & { kind: "escort"; vip: Point & { name: string }; to: Point; radius: number })
   | (ObjectiveBase & { kind: "eliminate" })
+  /** Kill one named target (the mission spawns and moves it). Completes when the target dies. */
+  | (ObjectiveBase & { kind: "assassinate"; target: Point & { name: string; short: string } })
   | (ObjectiveBase & { kind: "extract"; at: Point; radius: number; heliFrom: Point });
 
 export type ObjectiveKind = ObjectiveDef["kind"];
@@ -92,6 +101,61 @@ export type MissionDef = {
   intro?: RadioLine[];
   /** Radio at the end. */
   outro?: RadioLine[];
+  /** Stealth rules (detection layer, star modifiers). See missions/stealth. */
+  stealth?: StealthRules;
+  /** Briefing intel map (drawn on the mission screen). */
+  intel?: IntelMap;
+};
+
+export type StealthRules = {
+  /** Difficulties on which full detection compromises the run (checkpoint restart) instead of raising a hard alarm. */
+  failOnDetect: string[];
+  /** Non-target kills allowed before the rating drops a star. */
+  killAllowance: number;
+  /** No AI squadmates: stealth is a players-only job. */
+  noSquad: true;
+};
+
+/** A top-down sketch for the briefing: rectangles, lines and labelled points in map metres. */
+export type IntelMap = {
+  bounds: Rect;
+  areas: (Rect & { label?: string; kind: "fence" | "building" | "water" | "road" | "cover" | "danger" })[];
+  lines: { pts: Point[]; kind: "route" | "patrol" | "exfil" }[];
+  marks: (Point & { label: string; kind: "start" | "target" | "exfil" | "tower" | "entry" | "vehicle" })[];
+};
+
+/** Stealth tallies (feed the star rating and the debrief). */
+export type StealthTally = {
+  /** Hard alarms raised. */
+  alarms: number;
+  /** Times any guard fully identified a player. */
+  spotted: number;
+  /** Non-target kills. */
+  kills: number;
+  /** Silent takedowns (knife / melee from behind). */
+  takedowns: number;
+  /** Bodies found by guards. */
+  bodies: number;
+};
+
+export type StealthStatus = "hidden" | "suspicious" | "alert";
+
+/** Replicated stealth snapshot (host → clients, ~5 Hz). */
+export type StealthSnapshot = StealthTally & {
+  status: StealthStatus;
+  /** Seconds left on the alarm / search (−1 if none). */
+  timer: number;
+  /** Flat [agentId, awareness% (0–100), mode, …] for every guard with a non-zero gauge. Mode: 0 calm, 1 suspicious, 2 searching, 3 alerted, 4 calling it in. */
+  sus: number[];
+  /** Target's agent id (−1 if none) and whether the team has eyes on it (marker shown). */
+  target: number;
+  identified: boolean;
+  /** Short line under the status badge ("BODY FOUND", "RADIO CALL"…). */
+  cue: string;
+  /** Host stealth clock (s): drives the searchlight sweeps on clients. */
+  clock: number;
+  /** Patrol truck: [distance along its loop (m), moving 0/1, headlights 0/1]. */
+  truck: number[];
 };
 
 /** Lobby choices for a mission run. */
@@ -148,6 +212,8 @@ export type MissionState = {
   /** Scripted hostiles still to spawn for this objective. */
   pending: number;
   failReason: string;
+  /** Stealth missions only. */
+  stealth?: StealthSnapshot;
 };
 
 export type MissionEvent =
@@ -187,4 +253,6 @@ export type MissionResult = {
   difficulty: string;
   breakdown: { label: string; value: number }[];
   failReason: string;
+  /** Stealth missions only. */
+  stealth?: StealthTally;
 };

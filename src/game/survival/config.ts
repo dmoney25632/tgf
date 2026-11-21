@@ -138,7 +138,8 @@ export const DIFFICULTY: Record<DifficultyId, { name: string; enemyHealth: numbe
 // Enemies
 // ---------------------------------------------------------------------------
 
-export type EnemyType = "rifleman" | "rusher" | "armored" | "sniper" | "warden";
+/** Wire order follows the ENEMIES key order (net/ids ENEMY_TYPES): append new types at the end. */
+export type EnemyType = "rifleman" | "rusher" | "armored" | "sniper" | "warden" | "officer";
 export type AgentWeapon = {
   /** Damage per hit (before difficulty/wave scaling). Shotguns: whole blast at point blank. */
   damage: number;
@@ -226,6 +227,13 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
     coverBias: 0, flinch: 0, reward: 1200, scale: 1.28,
     colors: { uniform: 0x2a2a2c, vest: 0x1a1a1c, helmet: 0x141416, skin: 0x8a6a50, accent: 0xff3a1a }, kit: "warden",
   },
+  officer: {
+    // Mission high-value target (stealth operations only; never spawned by Survival). Sidearm, no plates.
+    type: "officer", name: "Officer", health: 120, bodyArmor: 1, speed: 1.7, runSpeed: 4.0, range: [6, 18],
+    weapon: { damage: 12, rpm: 200, burst: [1, 3], burstPause: [0.6, 1.1], accuracy: 0.4, range: 35, falloff: 0.5, heavy: 0.8 },
+    coverBias: 0.8, flinch: 0.4, reward: 500, scale: 1.02,
+    colors: { uniform: 0x3b4152, vest: 0x2a2e38, helmet: 0x7a1f24, skin: 0xb08a6a, accent: 0xd8b050 }, kit: "standard",
+  },
 };
 
 /** Friendly squad bots. */
@@ -276,7 +284,7 @@ export type WaveTarget = 10 | 20 | 0; // 0 = endless
 export function composeWave(wave: number, countMul: number, squadSize: number): Record<EnemyType, number> {
   const team = 1 + squadSize * 0.35;
   const total = Math.round((5 + wave * 2.4) * countMul * team);
-  const out: Record<EnemyType, number> = { rifleman: 0, rusher: 0, armored: 0, sniper: 0, warden: 0 };
+  const out: Record<EnemyType, number> = { rifleman: 0, rusher: 0, armored: 0, sniper: 0, warden: 0, officer: 0 };
   let rest = total;
   const take = (type: EnemyType, n: number) => {
     const k = Math.max(0, Math.min(rest, Math.round(n)));

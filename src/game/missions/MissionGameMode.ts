@@ -7,7 +7,7 @@ import type { Agent } from "../ai/Agent";
 import type { Combatant } from "../ai/types";
 import { disposeHumanoidCache } from "../ai/Humanoid";
 import { SurvivalHUD, type TeamRow } from "../ui/SurvivalHUD";
-import { GRENADE, MELEE } from "../weapons/weapons";
+import { GRENADE, MELEE, WEAPONS, type WeaponId } from "../weapons/weapons";
 import { DIFFICULTY, ENEMIES, OPERATORS, PLAYER, WAVES, type EnemyType } from "../survival/config";
 import { PlayerLoadout } from "../survival/PlayerLoadout";
 import { PlayerState } from "../survival/PlayerState";
@@ -22,7 +22,11 @@ import { MissionDirector, scoreMission, type DirectorHost, type MissionFacts } f
 import { MissionHUD } from "./MissionHUD";
 import { MISSION_AMMO } from "./operations";
 import { clock, starTargets, type StarTargets } from "./rating";
-import type { AirScript, MissionConfig, MissionDef, MissionEvent, MissionResult, MissionState, ObjectiveDef, Point, RadioLine } from "./types";
+import type { AirScript, MissionConfig, MissionDef, MissionEvent, MissionResult, MissionState, ObjectiveDef, Point, RadioLine, StealthSnapshot } from "./types";
+import { StealthDirector, truckPose, type StealthSubject } from "./stealth/StealthDirector";
+import { StealthHUD, type StealthMarker } from "./stealth/StealthHUD";
+import { DETECT, lightAt as stealthLight, profile as stealthProfile } from "./stealth/detection";
+import { GREYWATER_LIVE, HQ_ZONE, SEARCHLIGHTS, concealmentAt, searchlightSpot, staticLight } from "../world/maps/greywater";
 
 const INTERACT_RANGE = 2.3;
 const BOT_REVIVE_RANGE = 2.2;
@@ -109,6 +113,21 @@ export class MissionGameMode implements GameMode, CoopMode {
   private readonly tmp2 = new THREE.Vector3();
   private readonly wp = new THREE.Vector3();
 
+  // ---- Stealth (missions with `def.stealth`) -------------------------------------------------
+  /** Host: the stealth layer (guards' calm behaviour, detection, alarm). */
+  readonly stealth: StealthDirector | null = null;
+  private readonly sthud: StealthHUD | null = null;
+  private readonly stealthTeam: StealthSubject[] = [];
+  private readonly localSubject: StealthSubject;
+  private readonly mateSubjects: StealthSubject[] = [];
+  private readonly markers: StealthMarker[] = [];
+  private readonly indicatorBuf: { agent: Agent; pct: number; mode: number }[] = [];
+  private stealthSnap: StealthSnapshot | undefined;
+  private stealthPush = 0;
+  /** Client: local copy of the host's stealth clock and truck distance (advanced between snapshots). */
+  private clientClock = 0;
+  private clientTruck = 0;
+
   constructor(private readonly ctx: EngineContext, readonly config: MissionConfig) {
     const def = getMission(config.missionId);
     if (!def) throw new Error(`Unknown mission ${config.missionId}`);
@@ -170,6 +189,7 @@ export class MissionGameMode implements GameMode, CoopMode {
       onEnemyKilled: (k) => this.onEnemyKilled(k),
       onAgentDamaged: (agent, amount, _part, killed, source) => {
         if (source === "grenade" && agent.team === "enemy") this.shud.damageNumber(agent.aimPoint(this.tmp), amount, killed ? "kill" : "body");
+        if (agent.team === "enemy") this.stealth?.onDamaged(agent, killed, source);
       },
       onSquadDowned: (agent) => {
         ctx.hud.killfeed("Hostiles", "", agent.name, false);
@@ -183,7 +203,8 @@ export class MissionGameMode implements GameMode, CoopMode {
     const others = Object.values(OPERATORS).filter((o) => o.id !== op.id);
     const callsigns = ["Kestrel", "Halden"];
     // Co-op: remote players take the squad slots.
-    for (let i = 0; i < (this.coop ? 0 : Math.min(2, config.squad)); i++) {
+    const squadSize = this.coop || def.stealth?.noSquad ? 0 : Math.min(2, config.squad);
+    for (let i = 0; i < squadSize; i++) {
       const c = others[i].colors;
       this.agents.addSquadmate(i, { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent }, { name: callsigns[i] });
     }
@@ -203,6 +224,23 @@ export class MissionGameMode implements GameMode, CoopMode {
     const roots = ctx.container.querySelectorAll(".ih-hud");
     this.mhud = new MissionHUD(ctx.container);
     this.mhud.attach(roots[roots.length - 1] ?? null);
+
+    // ---- Stealth ----------------------------------------------------------------------
+    const local: StealthSubject = { combatant: this.combatant, sprinting: false, shots: 0, suppressed: false };
+    this.localSubject = local;
+    if (def.stealth) {
+      this.sthud = new StealthHUD(ctx.container);
+      if (!this.isClient) {
+        this.agents.prewarm("officer", 1);
+        this.stealth = new StealthDirector(this.agents, ctx.map.collision, config.difficulty, def.stealth.failOnDetect.includes(config.difficulty), ctx.quality === "low", {
+          spawn: (type, x, z, yaw, y) => this.spawnGuard(type, x, z, yaw, y),
+          radio: (line) => this.onRadio(line),
+          banner: (title, sub, color) => this.shud.showBanner(title, sub, 2.6, color),
+          alarmSound: () => this.ctx.sfx.waveStart(),
+        });
+        this.stealth.reset(false);
+      }
+    }
 
     // ---- Script -----------------------------------------------------------------------
     this.director = new MissionDirector(def, this.host);
@@ -322,6 +360,7 @@ export class MissionGameMode implements GameMode, CoopMode {
     }
 
     // ---- World --------------------------------------------------------------------------
+    this.updateStealth(dt);
     this.agents.update(dt);
     this.coop?.update(dt);
     if (this.vip && this.vipActive && this.director.state.stage === "captive" && this.vip.state === "downed") this.vip.bleed = 99;
@@ -360,6 +399,7 @@ export class MissionGameMode implements GameMode, CoopMode {
   }
 
   onExplosion(at: THREE.Vector3) {
+    this.stealth?.noise("explosion", at.x, at.y, at.z);
     if (this.coop?.onExplosion(at)) return; // co-op clients: the host resolves grenade damage
     this.agents.explode(at, GRENADE.radius, GRENADE.maxDamage);
     this.helis.explode(at, GRENADE.radius, GRENADE.maxDamage);
@@ -381,13 +421,19 @@ export class MissionGameMode implements GameMode, CoopMode {
 
   /** Serializable copy of the mission state (host → clients). */
   snapshot(): MissionState {
-    return { ...this.director.state };
+    if (this.stealth) this.director.state.stealth = this.stealthSnap = this.stealth.snapshot(this.stealthSnap);
+    return { ...this.director.state, stealth: this.director.state.stealth ? { ...this.director.state.stealth, sus: [...this.director.state.stealth.sus], truck: [...this.director.state.stealth.truck] } : undefined };
   }
 
   /** Client: adopt the host's mission state. */
   applySnapshot(s: MissionState) {
     const prev = this.director.state.objective;
     Object.assign(this.director.state, s);
+    const st = s.stealth;
+    if (st) {
+      if (Math.abs(this.clientClock - st.clock) > 0.6) this.clientClock = st.clock;
+      if (Math.abs(this.clientTruck - (st.truck[0] ?? 0)) > 3 || !st.truck[1]) this.clientTruck = st.truck[0] ?? 0;
+    }
     const obj = this.director.objective;
     if (obj && s.objective !== prev) this.mhud.objective(`OBJECTIVE ${s.objective + 1} / ${this.def.objectives.length}`, obj.title, obj.detail ?? "");
   }
@@ -533,6 +579,13 @@ export class MissionGameMode implements GameMode, CoopMode {
         break;
       case "eliminate":
         return -1;
+      case "assassinate": {
+        // Marked once a team member has eyes on the target; until then, point at where intel says he is.
+        if (this.targetPosition(out)) return INTERACT_RANGE;
+        p = obj.target;
+        r = INTERACT_RANGE;
+        break;
+      }
     }
     out.set(p.x, this.floorAt(p.x, p.z), p.z);
     return r;
@@ -554,6 +607,12 @@ export class MissionGameMode implements GameMode, CoopMode {
     if (r > 0) {
       f.inZone = playerUp && near(p.x, p.z, r);
       for (const m of mates) if (m.up && near(m.x, m.z, r)) f.inZone = true;
+      const zone = obj?.zone;
+      if (zone) {
+        const inside = (x: number, z: number) => x >= zone.x0 && x <= zone.x1 && z >= zone.z0 && z <= zone.z1;
+        if (playerUp && inside(p.x, p.z)) f.inZone = true;
+        for (const m of mates) if (m.up && inside(m.x, m.z)) f.inZone = true;
+      }
       if (!f.inZone && obj?.kind === "defend") for (const s of this.agents.squad) if (s !== this.vip && s.alive && near(s.position.x, s.position.z, r)) f.inZone = true;
       if (obj?.kind === "defend") {
         // Contested: more hostiles inside than defenders (and at least three).
@@ -587,6 +646,8 @@ export class MissionGameMode implements GameMode, CoopMode {
       }
       f.allAboard = anyUp && aboard && (!escorting || (vip!.alive && near(vip!.position.x, vip!.position.z, obj.radius + 2)));
     }
+    f.targetDead = this.stealth?.targetDead ?? false;
+    f.compromised = this.stealth?.takeCompromise() || undefined;
     f.teamWiped = this.coop
       ? this.coop.teamWiped()
       : this.wiped || (this.state.downed && this.state.selfRevives === 0 && !this.agents.squad.some((s) => s !== this.vip && s.alive));
@@ -676,6 +737,20 @@ export class MissionGameMode implements GameMode, CoopMode {
       const d = Math.hypot(obj.at.x - p.x, obj.at.z - p.z);
       if (d < obj.safeRadius) this.prompt = "CHARGE ARMED — GET CLEAR";
     }
+    // Stealth: an unaware guard within reach.
+    if (!this.prompt && this.stealth) {
+      for (const a of this.agents.active) {
+        if (!a.alive || !this.stealth.unaware(a)) continue;
+        const dx = p.x - a.position.x, dz = p.z - a.position.z;
+        if (dx * dx + dz * dz > 2.2 * 2.2 || Math.abs(p.y - a.position.y) > 1.2) continue;
+        // You're behind him, and he's in front of you.
+        const behind = dx * Math.sin(a.yaw) + dz * Math.cos(a.yaw) < 0;
+        const facing = -dx * -Math.sin(ctx.player.yaw) + -dz * -Math.cos(ctx.player.yaw) > 0;
+        if (!facing) continue;
+        this.prompt = behind ? "[V] SILENT TAKEDOWN" : "[V] TAKEDOWN — HE'S FACING YOU";
+        break;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -704,6 +779,84 @@ export class MissionGameMode implements GameMode, CoopMode {
     const E = WAVES.elite;
     if (elite) this.agents.spawnEnemy(type, at, yaw, this.diff.enemyHealth * m * E.health, this.diff.enemyDamage * m * E.damage, this.diff.accuracy * E.accuracy, true);
     else this.agents.spawnEnemy(type, at, yaw, this.diff.enemyHealth * m, this.diff.enemyDamage * m, this.diff.accuracy);
+  }
+
+  /** Stealth garrison / reinforcements: placed on the nav floor (or at `y` on a perch), facing `yaw`. */
+  private spawnGuard(type: EnemyType, x: number, z: number, yaw: number, y?: number) {
+    if (this.ended) return null;
+    const at = y === undefined ? this.snap(x, z, this.tmp) : this.tmp.set(x, y, z);
+    const m = this.scale;
+    return this.agents.spawnEnemy(type, at, yaw, this.diff.enemyHealth * m, this.diff.enemyDamage * m, this.diff.accuracy);
+  }
+
+  /** Where the assassination target is right now, if the team has identified him. */
+  private targetPosition(out: THREE.Vector3) {
+    if (this.stealth) {
+      const t = this.stealth.target;
+      if (!this.stealth.targetIdentified || !t?.alive) return false;
+      out.copy(t.position);
+      return true;
+    }
+    const st = this.director.state.stealth;
+    if (!st?.identified || st.target < 0 || !this.coop) return false;
+    return this.coop.enemyPosition(st.target, out);
+  }
+
+  /** Per frame: feed the stealth layer (host) or advance the replicated clock / truck (clients). */
+  private updateStealth(dt: number) {
+    if (!this.def.stealth) return;
+    const ctx = this.ctx;
+    if (this.stealth) {
+      const team = this.stealthTeam;
+      team.length = 0;
+      const me = this.localSubject;
+      me.sprinting = ctx.player.sprinting;
+      me.shots = ctx.weapons.stats.shotsFired;
+      me.suppressed = !!ctx.weapons.active.def.suppressed;
+      team.push(me);
+      if (this.coop) {
+        let i = 0;
+        for (const m of this.coop.teammates(this.mates)) {
+          if (!m.combatant) continue;
+          const sub = (this.mateSubjects[i++] ??= { combatant: m.combatant, sprinting: false, shots: 0, suppressed: false });
+          sub.combatant = m.combatant;
+          sub.sprinting = !!m.sprint;
+          sub.shots = m.shots ?? 0;
+          sub.suppressed = !!(m.weapon && WEAPONS[m.weapon as WeaponId]?.suppressed);
+          team.push(sub);
+        }
+      }
+      this.stealth.update(dt, team);
+      // Co-op: the guards' awareness markers and the status ride the mission snapshot at ~5 Hz.
+      if (this.coop && (this.stealthPush -= dt) <= 0) {
+        this.stealthPush = 0.2;
+        this.coop.missionState(this.snapshot());
+      }
+      return;
+    }
+    // Client: searchlights and the truck run off the host's clock.
+    this.clientClock += dt;
+    GREYWATER_LIVE.t = this.clientClock;
+    const st = this.director.state.stealth;
+    if (st) {
+      if (st.truck[1]) this.clientTruck += 5.2 * dt;
+      const pose = truckPose(this.clientTruck, { x: 0, z: 0, hx: 1, hz: 0 });
+      GREYWATER_LIVE.truck.x = pose.x;
+      GREYWATER_LIVE.truck.z = pose.z;
+      GREYWATER_LIVE.truck.yaw = Math.atan2(-pose.hz, pose.hx);
+      GREYWATER_LIVE.truck.lights = st.truck[2] !== 0;
+    }
+  }
+
+  /** Client: approximate own visibility (static lamps and searchlights; torches are host-only). */
+  private clientVisibility() {
+    const p = this.ctx.player.position;
+    const base = staticLight(p.x, p.y, p.z);
+    const indoors = p.x > HQ_ZONE.x0 && p.x < HQ_ZONE.x1 && p.z > HQ_ZONE.z0 && p.z < HQ_ZONE.z1;
+    const spots = indoors || p.y > 1.5 ? [] : SEARCHLIGHTS.map((s) => ({ ...searchlightSpot(s, GREYWATER_LIVE.t, { x: 0, z: 0 }), radius: s.radius }));
+    const light = stealthLight(base, p.x, p.z, spots, []);
+    const prof = stealthProfile({ crouching: this.ctx.player.crouching, speed: this.ctx.player.speed, concealment: concealmentAt(p.x, p.z) });
+    return Math.min(1, (light * 1.25 * prof) / DETECT.run);
   }
 
   private launchAir(a: AirScript) {
@@ -857,6 +1010,7 @@ export class MissionGameMode implements GameMode, CoopMode {
 
   private onEnemyKilled(k: KillInfo) {
     const ctx = this.ctx;
+    this.stealth?.onKill(k.agent, k.source, k.source !== "ai");
     if (this.coop?.killCredit(k)) {
       // A teammate's kill (already in the killfeed): it still counts for the squad's mission tally.
       this.director.credit("kill");
@@ -954,6 +1108,11 @@ export class MissionGameMode implements GameMode, CoopMode {
     const ctx = this.ctx;
     this.agents.clear();
     this.helis.clear();
+    // Stealth: the garrison comes back calm (Kerr stays dead once that objective is behind you).
+    if (this.stealth) {
+      const kill = this.def.objectives.findIndex((o) => o.kind === "assassinate");
+      this.stealth.reset(kill >= 0 && index > kill);
+    }
     this.wiped = false;
     this.state.reset(this.loadout.maxHealth, this.loadout.operator.startArmor);
     ctx.player.downed = false;
@@ -1004,6 +1163,7 @@ export class MissionGameMode implements GameMode, CoopMode {
     this.endTimer = victory ? 6 : 3;
     this.helis.recallAll();
     if (this.isClient) this.helis.recallAll();
+    if (this.stealth) this.director.state.stealth = this.stealthSnap = this.stealth.snapshot(this.stealthSnap);
     this.result = scoreMission(this.def, this.director.state, this.diff.reward, this.config.difficulty);
     if (victory) this.shud.showBanner("MISSION COMPLETE", `${this.def.codename}  ·  ${"★".repeat(this.result.stars)}${"☆".repeat(3 - this.result.stars)}  ·  ${clock(this.result.seconds)}`, 5, "#9be070");
     else this.shud.showBanner("MISSION FAILED", this.director.state.failReason, 4, "#ff5a4a");
@@ -1077,7 +1237,22 @@ export class MissionGameMode implements GameMode, CoopMode {
     this.drawClock();
     const r = this.objectivePoint(this.director.objective, this.wp);
     const obj = this.director.objective;
-    const label = !obj ? "" : obj.kind === "destroy" ? obj.label : obj.kind === "escort" ? (this.director.state.stage === "captive" ? obj.vip.name.toUpperCase() : "LZ") : obj.kind === "extract" ? "EXTRACT" : obj.kind === "defend" ? "DEFEND" : "OBJECTIVE";
+    const label = !obj
+      ? ""
+      : obj.marker && obj.kind !== "assassinate"
+        ? obj.marker
+        : obj.kind === "destroy"
+          ? obj.label
+          : obj.kind === "escort"
+            ? this.director.state.stage === "captive" ? obj.vip.name.toUpperCase() : "LZ"
+            : obj.kind === "extract"
+              ? "EXTRACT"
+              : obj.kind === "defend"
+                ? "DEFEND"
+                : obj.kind === "assassinate"
+                  ? this.targetPosition(this.tmp) ? obj.target.short : obj.marker ?? "TARGET"
+                  : "OBJECTIVE";
+    this.drawStealth(ctx.container.clientWidth, ctx.container.clientHeight);
     if (r > 0) this.wp.y += 1.6;
     const w = ctx.view.w, h = ctx.view.h;
     this.mhud.frame(dt, ctx.camera, w, h, r > 0 && !this.ended ? this.wp : null, label, ctx.player.position);
@@ -1111,6 +1286,38 @@ export class MissionGameMode implements GameMode, CoopMode {
     );
   }
 
+  private drawStealth(w: number, h: number) {
+    const hud = this.sthud;
+    if (!hud) return;
+    const st = this.stealth ? (this.director.state.stealth = this.stealthSnap = this.stealth.snapshot(this.stealthSnap)) : this.director.state.stealth;
+    const marks = this.markers;
+    marks.length = 0;
+    if (this.stealth) {
+      for (const i of this.stealth.indicators(this.indicatorBuf)) {
+        if (marks.length >= 14) break;
+        const a = i.agent.position;
+        marks.push({ x: a.x, y: a.y + 2.15, z: a.z, pct: i.pct, mode: i.mode });
+      }
+    } else if (st && this.coop) {
+      for (let k = 0; k + 2 < st.sus.length && marks.length < 14; k += 3) {
+        if (!this.coop.enemyPosition(st.sus[k], this.tmp2)) continue;
+        marks.push({ x: this.tmp2.x, y: this.tmp2.y + 2.15, z: this.tmp2.z, pct: st.sus[k + 1] / 100, mode: st.sus[k + 2] });
+      }
+    }
+    hud.frame(
+      {
+        status: st?.status ?? "hidden",
+        timer: st?.timer ?? -1,
+        cue: st?.cue ?? "",
+        visibility: this.stealth ? this.stealth.visibility(0) : this.clientVisibility(),
+        markers: this.ended ? [] : marks,
+      },
+      this.ctx.camera,
+      w,
+      h,
+    );
+  }
+
   /** Rebuilds the status line only when what it shows changes. */
   private drawObjectiveStatus() {
     const s = this.director.state;
@@ -1119,7 +1326,7 @@ export class MissionGameMode implements GameMode, CoopMode {
     const tsec = Math.max(0, Math.ceil(s.timer));
     const stageCode = s.stage === "armed" ? 1 : s.stage === "planting" ? 2 : s.stage === "following" ? 3 : s.stage === "landed" ? 4 : s.stage === "captive" ? 5 : 0;
     const vipHp = this.vip && this.vipActive ? Math.ceil((this.vip.health / this.vip.maxHealth) * 10) : 0;
-    const key = (s.phase === "active" ? 1 : 2) + s.objective * 4 + stageCode * 64 + tsec * 512 + Math.min(hostiles, 99) * 512 * 1024 + (this.facts.contested ? 1 << 27 : 0) + vipHp * (1 << 28);
+    const key = (s.phase === "active" ? 1 : 2) + s.objective * 4 + stageCode * 64 + tsec * 512 + Math.min(hostiles, 99) * 512 * 1024 + (this.facts.contested ? 1 << 27 : 0) + vipHp * (1 << 28) + (s.stealth?.identified ? 2 ** 33 : 0);
     const frac = obj?.kind === "defend" || (obj?.kind === "destroy" && s.stage === "armed") ? s.progress : -1;
     if (key === this.statusKey) {
       this.mhud.progress(this.lastStatus, frac);
@@ -1136,6 +1343,8 @@ export class MissionGameMode implements GameMode, CoopMode {
     else if (obj.kind === "destroy") txt = s.stage === "armed" ? `<span style="color:#ff7a5a">DETONATION ${mmss}</span> · GET CLEAR` : s.stage === "done" ? left : `PLANT THE CHARGE · ${left}`;
     else if (obj.kind === "escort") txt = s.stage === "captive" ? `FREE ${obj.vip.name.toUpperCase()} · ${left}` : `${obj.vip.name.toUpperCase()} ${vipHp * 10}% · ${left}`;
     else if (obj.kind === "eliminate") txt = hostiles + s.pending > 0 ? `${hostiles + s.pending} HOSTILES LEFT` : "AREA CLEAR";
+    else if (obj.kind === "assassinate") txt = s.stealth?.identified ? `${obj.target.short} MARKED` : `FIND ${obj.target.short}`;
+    else if (this.def.stealth) txt = "STAY OUT OF SIGHT";
     else if (obj.kind === "extract") txt = s.stage === "landed" ? "BIRD ON THE GROUND · GET ABOARD" : `BIRD INBOUND · ${left}`;
     else txt = left;
     this.lastStatus = txt;
@@ -1158,6 +1367,8 @@ export class MissionGameMode implements GameMode, CoopMode {
   private clockPhase = "";
 
   dispose() {
+    this.stealth?.dispose();
+    this.sthud?.dispose();
     this.coop?.dispose();
     this.mhud.dispose();
     this.shud.dispose();

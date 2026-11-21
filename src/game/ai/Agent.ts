@@ -7,7 +7,8 @@ import type { Combatant, Team } from "./types";
 import type { CoverPoint } from "./NavGrid";
 
 export type AgentRole = EnemyDef["type"] | "squad";
-export type AgentState = "inactive" | "advance" | "engage" | "toCover" | "inCover" | "perch" | "follow" | "revive" | "downed" | "dead";
+/** "patrol": driven by an external brain (AgentManager.brain), e.g. a stealth mission's unaware guards. */
+export type AgentState = "inactive" | "advance" | "engage" | "toCover" | "inCover" | "perch" | "follow" | "revive" | "downed" | "dead" | "patrol";
 
 export type AgentSpec = {
   role: AgentRole;
@@ -51,6 +52,12 @@ export class Agent implements Hittable, Combatant, StaggerState {
   pathRetryAt = 0;
   /** Scaled stats for this spawn. */
   damageMul = 1;
+  // External control (state "patrol"): walk speed along the current path and,
+  // when standing, the yaw to look toward (NaN = keep facing the way it walked).
+  patrolSpeed = 0;
+  lookYaw = NaN;
+  /** Never moves off its spot (tower guards on a perch): turns and shoots only. */
+  anchored = false;
   accuracyMul = 1;
 
   // Perception / decisions.
@@ -161,6 +168,9 @@ export class Agent implements Hittable, Combatant, StaggerState {
     this.engageTime = 0;
     this.stateTime = 0;
     this.killedBy = null;
+    this.patrolSpeed = 0;
+    this.lookYaw = NaN;
+    this.anchored = false;
     this.model.revive();
     this.model.root.visible = true;
     this.model.root.position.copy(at);

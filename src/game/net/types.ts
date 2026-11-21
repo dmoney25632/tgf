@@ -105,6 +105,16 @@ export interface MissionNet extends SurvivalNet {
   creditName(slot: number): string;
   /** Client: replicated hostiles still alive. */
   readonly enemiesAlive: number;
+  /** Client: where a replicated enemy (host agent id) is drawn right now; false if unknown. */
+  enemyPosition(id: number, out: THREE.Vector3): boolean;
 }
 
-export type TeammateView = { x: number; z: number; up: boolean; interact: boolean; combatant: Combatant | null };
+/**
+ * A remote player as the host sees them. `shots` is a running total of shots
+ * fired (stealth missions turn the deltas into gunfire noise) with `weapon`
+ * the id they were holding; `sprint` from their last state message.
+ */
+export type TeammateView = {
+  x: number; z: number; up: boolean; interact: boolean; combatant: Combatant | null;
+  slot?: number; shots?: number; weapon?: string; sprint?: boolean;
+};

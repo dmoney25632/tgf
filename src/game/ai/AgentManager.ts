@@ -50,6 +50,19 @@ export class AgentManager {
   net: { targets: Combatant[]; onShot(ag: Agent): void } | null = null;
   /** Extra hostiles the squad can shoot at (e.g. attack helicopters). */
   extraHostiles: Combatant[] = [];
+  /**
+   * Optional per-enemy brain run before combat thinking (5 Hz). Return true
+   * when it handled the agent this tick (stealth missions: unaware guards on
+   * patrol). Return false to let the normal combat AI think.
+   */
+  brain: ((ag: Agent) => boolean) | null = null;
+  /** Seconds a corpse stays before it's pooled (Infinity: bodies stay until clear()). */
+  corpseTime = 4.6;
+  /**
+   * Enemies that lost sight keep homing on the team's real position (Survival
+   * pressure). False: they go to where they last saw / heard you and search.
+   */
+  trackUnseen = true;
 
   private readonly laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
   private readonly laserMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 0.3, 0.2), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
@@ -234,7 +247,7 @@ export class AgentManager {
         ag.model.root.position.z = ag.position.z;
         const laser = this.lasers.get(ag);
         if (laser) laser.visible = false;
-        if (ag.deathTimer > 4.6) {
+        if (ag.deathTimer > this.corpseTime) {
           ag.deactivate();
           this.active.splice(i, 1);
           this.pool(ag.spec.role).push(ag);
@@ -371,7 +384,7 @@ export class AgentManager {
       ag.hasLos = false;
       // Enemies are "directed" toward the team even without sight.
       ag.target = ag.team === "enemy" ? nearest : ag.target && ag.target.targetable ? ag.target : null;
-      if (ag.target && ag.team === "enemy" && ag.seenTimer > 2) ag.lastSeen.copy(ag.target.position);
+      if (ag.target && ag.team === "enemy" && ag.seenTimer > 2 && this.trackUnseen) ag.lastSeen.copy(ag.target.position);
     }
   }
 
@@ -380,6 +393,7 @@ export class AgentManager {
   // ---------------------------------------------------------------------------
 
   private thinkEnemy(ag: Agent) {
+    if (this.brain?.(ag)) return;
     this.acquire(ag);
     const t = ag.target;
     const role = ag.spec.role;
@@ -392,6 +406,11 @@ export class AgentManager {
 
     if (role === "sniper") {
       ag.state = "perch";
+      return;
+    }
+    if (ag.anchored) {
+      // Rooted on a perch: shoot when there's a line, otherwise wait.
+      this.setState(ag, ag.hasLos ? "engage" : "advance");
       return;
     }
 
@@ -590,6 +609,10 @@ export class AgentManager {
         speed = this.followSpeed(ag, dt);
         break;
       }
+      case "patrol": {
+        speed = ag.pathIdx < ag.pathLen ? ag.patrolSpeed : 0;
+        break;
+      }
       case "revive": {
         const p = this.player.position;
         const d = Math.hypot(p.x - ag.position.x, p.z - ag.position.z);
@@ -640,11 +663,13 @@ export class AgentManager {
       ag.aimPitch += (Math.atan2(this.b.y - this.a.y, h) - ag.aimPitch) * Math.min(1, dt * 8);
     } else {
       ag.aimPitch *= 1 - Math.min(1, dt * 4);
-      if (ag.moveSpeed > 0.5) desiredYaw = Math.atan2(ag.velocity.x, ag.velocity.z);
+      if (ag.state === "patrol" && !Number.isNaN(ag.lookYaw) && (speed === 0 || ag.moveSpeed < 0.4)) desiredYaw = ag.lookYaw;
+      else if (ag.moveSpeed > 0.5) desiredYaw = Math.atan2(ag.velocity.x, ag.velocity.z);
     }
     let dy = desiredYaw - ag.yaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    const turn = (ag.spec.role === "warden" || ag.spec.role === "armored" ? 3.5 : 7) * dt;
+    // Calm guards turn their heads at a walking pace; combat snaps.
+    const turn = (ag.state === "patrol" ? 2.6 : ag.spec.role === "warden" || ag.spec.role === "armored" ? 3.5 : 7) * dt;
     ag.yaw += THREE.MathUtils.clamp(dy, -turn, turn);
 
     // ---- Move -----------------------------------------------------------------
@@ -684,7 +709,17 @@ export class AgentManager {
     return d > 9 ? ag.spec.runSpeed : ag.spec.speed;
   }
 
+  /**
+   * External brains (state "patrol"): path an agent to (x, z). False when the
+   * search was deferred (per-frame budget / retry back-off) or found nothing.
+   */
+  navigate(ag: Agent, x: number, z: number) {
+    this.goTo(ag, x, z, 99);
+    return ag.pathLen > 0 && ag.goal.x === x && ag.goal.z === z;
+  }
+
   private goTo(ag: Agent, x: number, z: number, repath = 1.5) {
+    if (ag.anchored) return;
     // After a failed search, wait before retrying: callers re-request whenever
     // pathLen is 0, which would otherwise search every frame.
     const now = performance.now();
@@ -704,7 +739,7 @@ export class AgentManager {
   }
 
   private move(ag: Agent, speed: number, dt: number) {
-    if (ag.spec.role === "sniper") {
+    if (ag.spec.role === "sniper" || ag.anchored) {
       ag.velocity.set(0, 0, 0);
       return;
     }

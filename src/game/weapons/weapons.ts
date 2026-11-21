@@ -23,7 +23,8 @@ export type ViewModelKind =
   | "r870" | "m1014"
   | "svd" | "m24" | "m82"
   | "m9" | "g17" | "m1911" | "sw629"
-  | "knife";
+  | "knife"
+  | "mp5sd" | "mk23";
 
 /** Third-person silhouette family (soldiers / teammates). */
 export type ThirdPersonKind = "carbine" | "ak" | "bullpup" | "smg" | "p90" | "lmg" | "pkm" | "shotgun" | "bolt" | "svd" | "m82" | "pistol";
@@ -104,6 +105,8 @@ export type WeaponDef = {
   shell: ShellKind | null;
   model: ViewModelKind;
   tp: ThirdPersonKind;
+  /** Suppressed: guards only hear it up close (see missions/stealth/detection.ts NOISE). */
+  suppressed?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -392,6 +395,27 @@ export const WEAPONS = {
     spread: {}, recoil: { pattern: single(0, 0) },
     viewKick: { back: 0, up: 0, side: 0, roll: 0 }, shake: 0,
     sound: {}, shell: null, model: "knife", tp: "pistol",
+  }),
+  // ---- Suppressed (appended after the knife: wire order) ------------------------------------
+  mp5sd: gun("mp5sd", {
+    // Integrally suppressed MP5: ported barrel inside the can bleeds the 9 mm down to subsonic.
+    name: "MP5SD3", kind: "SMG", slot: "primary", maker: "Heckler & Koch · Germany", calibre: "9×19mm (subsonic)", muzzleVelocity: 285, price: 1300,
+    modes: ["auto", "burst", "semi"], burst: 3, rpm: 700, damage: 23, falloffStart: 12, falloffEnd: 26, minDamage: 14, range: 110,
+    magSize: 30, reserveAmmo: 180, reloadTime: 2.0, reloadEmptyTime: 2.7, adsTime: 0.19, adsFov: 64, mobility: 1.04,
+    spread: { hip: 1.6, ads: 0.3 }, recoil: { pattern: climb(12, 0.42, 0.32, 0.02, 0.16, 1.6), kickScale: 0.7 },
+    viewKick: { back: 0.022, up: 0.022, side: 0.014, roll: 0.018 }, shake: 0.06,
+    sound: { crack: 0.12, body: 0.42, thump: 0.3, tail: 0.12, volume: 0.42, pitch: 1.35 }, shell: "pistol", model: "mp5sd", tp: "smg",
+    suppressed: true,
+  }),
+  mk23: gun("mk23", {
+    // Mk 23 Mod 0 with its threaded barrel and a screw-on can; subsonic .45.
+    name: "Mk 23 Mod 0 (SD)", kind: "Sidearm", slot: "secondary", maker: "Heckler & Koch · Germany", calibre: ".45 ACP", muzzleVelocity: 260, price: 700,
+    modes: ["semi"], rpm: 340, damage: 44, falloffStart: 12, falloffEnd: 26, minDamage: 25, range: 110,
+    magSize: 12, reserveAmmo: 72, reloadTime: 1.45, reloadEmptyTime: 1.85, adsTime: 0.16, adsFov: 68, mobility: 1.06,
+    spread: { perShot: 0.6 }, recoil: { pattern: single(2.1, 0.2) },
+    viewKick: { back: 0.05, up: 0.12, side: 0.018, roll: 0.035 }, shake: 0.1,
+    sound: { crack: 0.15, body: 0.45, thump: 0.35, tail: 0.12, volume: 0.45, pitch: 1.25 }, shell: "acp", model: "mk23", tp: "pistol",
+    suppressed: true,
   }),
 } satisfies Record<string, WeaponDef>;
 

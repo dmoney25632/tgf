@@ -1,5 +1,5 @@
 import type { ViewModelKind } from "../weapons";
-import type { Kit } from "./parts";
+import { type Kit, suppressor } from "./parts";
 import type { GunSpec } from "./common";
 import { buildAR } from "./ar15";
 import { buildAkm, buildAug, buildG36, buildScar } from "./rifles";
@@ -12,6 +12,25 @@ import { buildKnifeSpec } from "./melee";
 
 export type { GunSpec, FlashStyle, ReloadStyle, ShellKind } from "./common";
 export { buildGrenade, buildKnife, type GrenadeModel } from "./melee";
+
+/**
+ * Wraps a builder with a screw-on suppressor at its muzzle: the can is drawn
+ * on the gun root, the muzzle (flash, tracers) moves to its front cap and the
+ * flash shrinks to a faint pistol-style puff.
+ */
+function suppressed(kind: ViewModelKind, build: (k: Kit) => GunSpec, r: number, len: number): (k: Kit) => GunSpec {
+  return (k) => {
+    const g = build(k);
+    k.b.into(g.root);
+    const mz = g.muzzle.position;
+    suppressor(k, mz.z + 0.004, mz.y, r, len);
+    mz.z -= len - 0.004;
+    g.flash = "pistol";
+    g.flashScale *= 0.35;
+    (g as { kind: ViewModelKind }).kind = kind;
+    return g;
+  };
+}
 
 /** First-person model builders, one per WeaponDef.model. Built lazily by the viewmodel. */
 export const GUN_BUILDERS: Record<ViewModelKind, (k: Kit) => GunSpec> = {
@@ -37,4 +56,6 @@ export const GUN_BUILDERS: Record<ViewModelKind, (k: Kit) => GunSpec> = {
   m1911: (k) => buildPistol(k, "m1911"),
   sw629: buildSw629,
   knife: buildKnifeSpec,
+  mp5sd: suppressed("mp5sd", buildMp5, 0.021, 0.2),
+  mk23: suppressed("mk23", (k) => buildPistol(k, "m1911"), 0.016, 0.15),
 };
