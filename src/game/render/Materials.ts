@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { QualityPreset } from "../config";
 import { MATERIAL_TEXTURES, TEXTURE_SETS, type MaterialName } from "../assets/manifest";
-import { isPreFlipped, loadTextureSet, type TextureSetImages } from "../assets/AssetLoader";
+import { isPreFlipped, loadCompressedTextureSet, loadTextureSet, type TextureSetImages } from "../assets/AssetLoader";
 import { textureUploads } from "./GpuWarmup";
 import { grimePixels, makeDataTexture, proceduralPixels, type ProceduralKind } from "./ProceduralTextures";
 
@@ -48,6 +48,9 @@ export type TextureSlot = {
 };
 
 const WHITE = new Uint8Array([255, 255, 255, 255]);
+
+/** A loaded map: an image source, or a KTX2 template texture to clone. */
+type SetSource = THREE.TextureSource<unknown> | THREE.CompressedTexture;
 
 /** 1×1 sRGB texture of a hex colour (hex values are already sRGB-encoded). */
 function solidTexture(hex: number) {
@@ -185,7 +188,7 @@ export class MaterialLibrary {
   private readonly slots = new Map<MaterialName, TextureSlot>();
   private readonly materials = new Map<MaterialName, THREE.MeshStandardMaterial>();
   private readonly listeners = new Set<() => void>();
-  private readonly sources = new Map<string, Promise<Partial<Record<string, THREE.TextureSource<unknown>>> | null>>();
+  private readonly sources = new Map<string, Promise<Partial<Record<string, SetSource>> | null>>();
   private readonly owned: { dispose(): void }[] = [];
   readonly grimeTexture: THREE.DataTexture;
   private disposed = false;
@@ -248,7 +251,11 @@ export class MaterialLibrary {
   private loadSources(setId: string) {
     let p = this.sources.get(setId);
     if (!p) {
-      p = loadTextureSet(setId, this.quality.maxTextureSize).then((imgs: TextureSetImages | null) => {
+      const max = this.quality.maxTextureSize;
+      // GPU-compressed copies when supported, else the JPEGs.
+      p = loadCompressedTextureSet(setId, max).then(async (ktx) => {
+        if (ktx) return ktx;
+        const imgs: TextureSetImages | null = await loadTextureSet(setId, max);
         if (!imgs) return null;
         const out: Partial<Record<string, THREE.TextureSource<unknown>>> = {};
         for (const [k, img] of Object.entries(imgs)) if (img) out[k] = new THREE.TextureSource(img);
@@ -264,12 +271,17 @@ export class MaterialLibrary {
       if (this.disposed) return;
       const slot = this.slots.get(name);
       if (!slot) return;
-      const mk = (s: THREE.TextureSource<unknown> | undefined, srgb: boolean) => {
+      const mk = (s: SetSource | undefined, srgb: boolean) => {
         if (!s) return null;
-        const t = new THREE.Texture();
-        t.source = s;
-        // ImageBitmaps arrive pre-flipped; WebGL ignores UNPACK_FLIP_Y for them.
-        t.flipY = !isPreFlipped(s.data);
+        // KTX2: clone the cached template (shared source = one upload; encoded
+        // pre-flipped). Images: wrap the shared source.
+        const ktx = s instanceof THREE.CompressedTexture;
+        const t = ktx ? s.clone() : new THREE.Texture();
+        if (!ktx) {
+          t.source = s;
+          // ImageBitmaps arrive pre-flipped; WebGL ignores UNPACK_FLIP_Y for them.
+          t.flipY = !isPreFlipped(s.data);
+        }
         t.wrapS = t.wrapT = THREE.RepeatWrapping;
         t.anisotropy = this.quality.anisotropy;
         t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;

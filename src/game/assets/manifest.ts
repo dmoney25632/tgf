@@ -9,6 +9,8 @@
  *   /assets/textures/<id>/normal.jpg   tangent-space normal, OpenGL (+Y) convention
  *   /assets/textures/<id>/roughness.jpg
  *   /assets/textures/<id>/ao.jpg       optional
+ *   /assets/textures/<id>/<kind>.ktx2  GPU-compressed copies (+ <kind>_512.ktx2),
+ *                                      when the entry sets `ktx2` (scripts/encode-ktx2.mjs)
  *   /assets/hdri/<file>.hdr            equirectangular sky (Radiance HDR)
  *   /assets/models/<id>/<id>_1k.gltf   glTF + .bin + textures/ alongside
  *
@@ -24,26 +26,33 @@ export type TextureMapKind = "albedo" | "normal" | "roughness" | "ao";
 export type TextureSetEntry = {
   /** Which maps exist on disk. */
   maps: readonly TextureMapKind[];
+  /**
+   * `<kind>.ktx2` and `<kind>_512.ktx2` (Basis Universal) exist next to the
+   * JPEGs for every map. AssetLoader prefers them when the GPU supports a
+   * compressed format and falls back to the JPEGs otherwise.
+   */
+  ktx2?: boolean;
 };
 
 const FULL: readonly TextureMapKind[] = ["albedo", "normal", "roughness", "ao"];
+const full: TextureSetEntry = { maps: FULL, ktx2: true };
 
 export const TEXTURE_SETS: Record<string, TextureSetEntry> = {
-  concrete_wall_008: { maps: FULL },
-  dirty_concrete: { maps: FULL },
-  brick_wall_006: { maps: FULL },
-  corrugated_iron_02: { maps: FULL },
-  rusty_metal_02: { maps: FULL },
-  gravel_ground_01: { maps: FULL },
-  brown_mud_leaves_01: { maps: FULL },
-  weathered_planks: { maps: FULL },
-  fabric044: { maps: ["albedo", "normal", "roughness"] },
-  worn_plaster_wall: { maps: FULL },
-  rough_plaster_brick_02: { maps: FULL },
-  worn_asphalt: { maps: FULL },
-  rubble: { maps: FULL },
-  damaged_concrete_floor: { maps: FULL },
-  rusty_corrugated_iron: { maps: FULL },
+  concrete_wall_008: full,
+  dirty_concrete: full,
+  brick_wall_006: full,
+  corrugated_iron_02: full,
+  rusty_metal_02: full,
+  gravel_ground_01: full,
+  brown_mud_leaves_01: full,
+  weathered_planks: full,
+  fabric044: { maps: ["albedo", "normal", "roughness"], ktx2: true },
+  worn_plaster_wall: full,
+  rough_plaster_brick_02: full,
+  worn_asphalt: full,
+  rubble: full,
+  damaged_concrete_floor: full,
+  rusty_corrugated_iron: full,
 };
 
 /**
@@ -167,4 +176,7 @@ export const MODELS: Record<ModelId, ModelEntry> = {
 };
 
 export const textureUrl = (set: string, kind: TextureMapKind) => `${ASSET_BASE}/textures/${set}/${kind}.jpg`;
+/** KTX2 copy of a texture-set map; `small` = the 512 px variant. */
+export const textureKtx2Url = (set: string, kind: TextureMapKind, small = false) =>
+  `${ASSET_BASE}/textures/${set}/${kind}${small ? "_512" : ""}.ktx2`;
 export const assetUrl = (path: string) => `${ASSET_BASE}/${path}`;
