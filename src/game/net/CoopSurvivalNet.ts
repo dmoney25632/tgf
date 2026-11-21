@@ -200,7 +200,7 @@ export class CoopSurvivalNet implements SurvivalNet {
     this.spawnLocal(this.tmp2.x + ox, this.tmp2.z + oz, yaw);
 
     for (const p of this.peers.values()) {
-      p.avatar = new RemoteAvatar(ctx.scene, p.name, p.entry.operator);
+      p.avatar = new RemoteAvatar(ctx.scene, p.name, p.entry.operator, p.entry.look);
       if (this.role === "host") {
         const op = OPERATORS[p.entry.operator] ?? OPERATORS.ridge;
         p.state.reset(op.maxHealth, op.startArmor);

@@ -9,6 +9,7 @@ import type { SurvivalGameMode } from "@/game/survival/SurvivalGameMode";
 import type { CoopSurvivalNet } from "@/game/net/CoopSurvivalNet";
 import type { NetTransport, RoomSettings, RosterEntry } from "@/game/net/transport";
 import type { OperatorId } from "@/game/survival/config";
+import type { CharacterLook } from "@/game/character";
 import type { WeaponId } from "@/game/weapons/weapons";
 import { detectQuality } from "@/game/config";
 import { mobileDefaultQuality } from "@/game/mobile/device";
@@ -20,7 +21,7 @@ import { ShopOverlay } from "@/components/game/shop-overlay";
 import { MatchSummaryView } from "@/components/game/match-summary";
 
 export type CoopLaunch = { matchId: string; roster: RosterEntry[]; settings: RoomSettings; hostId: string };
-export type CoopLoadout = { operator: OperatorId; primary: WeaponId; secondary: WeaponId };
+export type CoopLoadout = { operator: OperatorId; primary: WeaponId; secondary: WeaponId; look?: CharacterLook };
 
 /** One online co-op survival match. The engine + net layer load lazily. */
 export function CoopGame({
@@ -78,6 +79,7 @@ export function CoopGame({
             operator: loadout.operator,
             primary: loadout.primary,
             secondary: loadout.secondary,
+            look: loadout.look,
             difficulty: s.difficulty,
             waveTarget: s.waveTarget,
             squad: launch.roster.length - 1,

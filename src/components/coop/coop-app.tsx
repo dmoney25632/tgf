@@ -13,6 +13,7 @@ import {
   type NetTransport, type PeerMeta, type RoomSettings, type RosterEntry,
 } from "@/game/net/transport";
 import { CoopGame, type CoopLaunch, type CoopLoadout } from "./coop-game";
+import { WORLD_CHANNEL, WORLD_COUNTDOWN_MS, WORLD_SCAN_MS, listingMeta, pickWorldRoom, readListings } from "@/game/net/world";
 
 const LOADOUT_KEY = "tgf.iron-horizon.coop";
 const DEFAULT_SETTINGS: RoomSettings = { mapId: COOP_MAPS[0]?.id ?? "dustfall-outpost", difficulty: "regular", waveTarget: 10, startWave: 1 };
@@ -66,8 +67,8 @@ export function CoopApp({
   allowLocal?: boolean;
   /** DEV harness: query-string overrides (autohost/autojoin/autolaunch/lag/jitter/loss) instead of the URL. */
   devParams?: string;
-  /** Embedded in the main lobby: create (host) or join this party right away, no menu. */
-  start?: { code: string; host: boolean };
+  /** Embedded in the main lobby: create (host) or join this party right away, no menu. `world` matchmakes into a public Main World squad instead. */
+  start?: { code: string; host: boolean; world?: boolean };
   /** Seed the loadout / host room settings from the main lobby picks. */
   initialLoadout?: CoopLoadout;
   initialRoom?: Partial<RoomSettings>;
@@ -93,6 +94,11 @@ export function CoopApp({
   const [useLocal, setUseLocal] = useState(kind === "local");
   /** DEV harness (/coop/dev): auto host / join / ready / launch over the loopback. */
   const [auto, setAuto] = useState<{ code: string; host: boolean; launchAt: number } | null>(null);
+  /** Main World: this room is public (listed in the directory, launches on a countdown). */
+  const [isPublic, setIsPublic] = useState(false);
+  const [openedAt, setOpenedAt] = useState(0);
+  const [now, setNow] = useState(0);
+  const directoryRef = useRef<NetTransport | null>(null);
 
   useEffect(() => {
     // Restore loadout + dev transport flag after mount (no window during SSR).
@@ -135,10 +141,12 @@ export function CoopApp({
       operator: loadout.operator,
       primary: loadout.primary,
       secondary: loadout.secondary,
+      look: loadout.look,
+      public: isPublic || undefined,
       joinedAt,
       room: isHost ? { ...settings, ...matchStatus } : undefined,
     };
-  }, [identity, isHost, ready, loadout, settings, matchStatus, joinedAt]);
+  }, [identity, isHost, ready, loadout, settings, matchStatus, joinedAt, isPublic]);
 
   useEffect(() => {
     if (meta && (stage === "lobby" || stage === "game")) transportRef.current?.track(meta);
@@ -157,6 +165,9 @@ export function CoopApp({
   const leaveRoom = useCallback((reason: string | null = null) => {
     transportRef.current?.close();
     transportRef.current = null;
+    directoryRef.current?.close();
+    directoryRef.current = null;
+    setIsPublic(false);
     setTransport(null);
     setPeers([]);
     setStage("menu");
@@ -168,29 +179,40 @@ export function CoopApp({
     onLeave?.(reason);
   }, [onLeave]);
 
-  useEffect(() => () => transportRef.current?.close(), []);
+  useEffect(
+    () => () => {
+      transportRef.current?.close();
+      directoryRef.current?.close();
+    },
+    [],
+  );
+
+  const openTransport = async (roomCode: string, id: string): Promise<NetTransport> => {
+    if (useLocal) {
+      const { LocalTransport } = await import("@/game/net/localTransport");
+      const q = new URLSearchParams(devParams ?? window.location.search);
+      return new LocalTransport(id, roomCode, { latencyMs: Number(q.get("lag")) || 0, jitterMs: Number(q.get("jitter")) || 0, loss: Number(q.get("loss")) || 0 });
+    }
+    // Loaded on demand: keeps supabase-js out of the lobby bundle.
+    const { getBrowserClient } = await import("@/lib/supabase/client");
+    const client = getBrowserClient();
+    if (!client) throw new Error("Online play isn't configured on this deployment.");
+    const { SupabaseTransport } = await import("@/game/net/supabaseTransport");
+    return new SupabaseTransport(client, id, roomCode);
+  };
+
+  const playerId = useRef<string | null>(null);
+  const selfId = () => (playerId.current ??= userId ?? `dev-${rid(10)}`);
 
   // ---- Connect --------------------------------------------------------------------
-  const connect = async (roomCode: string, host: boolean) => {
+  const connect = async (roomCode: string, host: boolean, publicRoom = false) => {
     setError(null);
     setStage("connecting");
-    const id = userId ?? `dev-${rid(10)}`;
+    const id = selfId();
     // Two tabs on one machine share the offline guest name: tag them apart.
     const name = userId ? callsign : `${callsign}-${rid(3).toUpperCase()}`;
     try {
-      let t: NetTransport;
-      if (useLocal) {
-        const { LocalTransport } = await import("@/game/net/localTransport");
-        const q = new URLSearchParams(devParams ?? window.location.search);
-        t = new LocalTransport(id, roomCode, { latencyMs: Number(q.get("lag")) || 0, jitterMs: Number(q.get("jitter")) || 0, loss: Number(q.get("loss")) || 0 });
-      } else {
-        // Loaded on demand: keeps supabase-js out of the lobby bundle.
-        const { getBrowserClient } = await import("@/lib/supabase/client");
-        const client = getBrowserClient();
-        if (!client) throw new Error("Online play isn't configured on this deployment.");
-        const { SupabaseTransport } = await import("@/game/net/supabaseTransport");
-        t = new SupabaseTransport(client, id, roomCode);
-      }
+      const t = await openTransport(roomCode, id);
       transportRef.current = t;
       t.onPresence((list) => setPeers([...list]));
       t.on("launch", (p) => {
@@ -206,6 +228,8 @@ export function CoopApp({
       setTransport(t);
       setIdentity({ id, name });
       setIsHost(host);
+      setIsPublic(publicRoom);
+      setOpenedAt(joined);
       setCode(roomCode);
       // Joiners are ready as soon as they arrive: the host just hits Launch.
       setReady(!host);
@@ -218,7 +242,7 @@ export function CoopApp({
           if (tr !== t || launchSeenRef.current) return;
           const list = tr.peers();
           const h = list.find((p) => p.host);
-          if (!h) leaveRoom(`Room ${roomCode} not found. Check the code with your host.`);
+          if (!h) leaveRoom(publicRoom ? "That squad just closed. Try Main World again." : `Room ${roomCode} not found. Check the code with your host.`);
           else if (list.filter((p) => p.id !== id && p.joinedAt < joined).length >= NET.MAX_PLAYERS && h.room?.status !== "playing")
             leaveRoom(`Room ${roomCode} is full (${NET.MAX_PLAYERS} players).`);
         }, JOIN_TIMEOUT_MS);
@@ -233,12 +257,51 @@ export function CoopApp({
     }
   };
 
+  // ---- Main World: find an open public squad, or open one -------------------------------
+  const joinWorld = async () => {
+    setError(null);
+    setStage("connecting");
+    const id = selfId();
+    try {
+      const dir = await openTransport(WORLD_CHANNEL, id);
+      directoryRef.current = dir;
+      await dir.connect();
+      await new Promise((r) => window.setTimeout(r, WORLD_SCAN_MS));
+      if (directoryRef.current !== dir) return; // left while scanning
+      const pick = pickWorldRoom(readListings(dir, id), NET.MAX_PLAYERS);
+      if (pick) {
+        // Joiners don't advertise anything: drop the directory.
+        dir.close();
+        directoryRef.current = null;
+        await connect(pick.code, false, true);
+      } else {
+        // Main World squads: endless waves on a random map keeps the world varied.
+        setSettings((s) => ({ ...s, difficulty: "regular", waveTarget: 0, startWave: 1, mapId: COOP_MAPS[Math.floor(Math.random() * COOP_MAPS.length)]?.id ?? s.mapId }));
+        await connect(makeRoomCode(), true, true);
+      }
+    } catch (e) {
+      directoryRef.current?.close();
+      directoryRef.current = null;
+      setStage("menu");
+      const msg = e instanceof Error ? e.message : "Couldn't reach the Main World.";
+      setError(msg);
+      onLeave?.(msg);
+    }
+  };
+
+  // Public host: keep our squad listed in the directory.
+  useEffect(() => {
+    const dir = directoryRef.current;
+    if (!dir || !isHost || !isPublic || !identity) return;
+    dir.track(listingMeta({ id: identity.id, code, players: peers.length || 1, status: matchStatus.status, openedAt }));
+  }, [isHost, isPublic, identity, code, peers.length, matchStatus.status, openedAt]);
+
   // ---- Embedded: create / join straight away -----------------------------------------
   const startedRef = useRef(false);
   useEffect(() => {
     if (!start || startedRef.current) return;
     startedRef.current = true;
-    queueMicrotask(() => void connect(start.code, start.host));
+    queueMicrotask(() => void (start.world ? joinWorld() : connect(start.code, start.host)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
   }, [start]);
 
@@ -292,8 +355,8 @@ export function CoopApp({
     if (!t || !identity) return;
     const sorted = [...others].sort((a, b) => a.joinedAt - b.joinedAt).slice(0, NET.MAX_PLAYERS - 1);
     const roster: RosterEntry[] = [
-      { id: identity.id, name: identity.name, slot: 0, operator: loadout.operator },
-      ...sorted.map((p, i) => ({ id: p.id, name: p.name, slot: i + 1, operator: p.operator })),
+      { id: identity.id, name: identity.name, slot: 0, operator: loadout.operator, look: loadout.look },
+      ...sorted.map((p, i) => ({ id: p.id, name: p.name, slot: i + 1, operator: p.operator, look: p.look })),
     ];
     const l: CoopLaunch = { matchId: rid(8), roster, settings, hostId: identity.id };
     setMatchStatus({ status: "playing", roster, matchId: l.matchId });
@@ -311,10 +374,29 @@ export function CoopApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once when the room is ready
   }, [autoLaunch]);
 
+  // ---- Public host: launch on a countdown (or as soon as the squad is full) --------------
+  const worldCountdown = isHost && isPublic && stage === "lobby" && matchStatus.status === "lobby";
+  useEffect(() => {
+    if (!worldCountdown) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const t = window.setInterval(tick, 250);
+    return () => window.clearInterval(t);
+  }, [worldCountdown]);
+  const launchIn = Math.max(0, openedAt + WORLD_COUNTDOWN_MS - now);
+  const worldGo = worldCountdown && now > 0 && (launchIn === 0 || peers.length >= NET.MAX_PLAYERS);
+  useEffect(() => {
+    if (!worldGo) return;
+    queueMicrotask(startMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per countdown
+  }, [worldGo]);
+
   const backToLobby = () => {
     setLaunch(null);
     setReady(!isHost);
     if (isHost) setMatchStatus({ status: "lobby" });
+    // A public squad reopens for new players with a fresh countdown.
+    setOpenedAt(Date.now());
     setStage("lobby");
   };
 
@@ -331,34 +413,26 @@ export function CoopApp({
   }
 
   const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/play/iron-horizon?room=${code}${useLocal ? "&transport=local" : ""}` : "";
+  const mapName = COOP_MAPS.find((m) => m.id === roomSettings.mapId)?.name ?? roomSettings.mapId;
+  const title = isPublic ? "Main World" : "Private lobby";
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,.07)_0%,transparent_60%)] px-4 py-8 text-neutral-100">
-      <div className="mx-auto max-w-4xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Survival party</p>
-            <h1 className="mt-1 text-3xl font-bold">{stage === "lobby" ? (isHost ? "Your party" : "Party lobby") : "Survival Squad"}</h1>
-            <p className="mt-1 text-sm text-neutral-400">
-              {stage === "lobby"
-                ? isHost
-                  ? "Share the code below. Friends who join show up here, then hit Launch to start together."
-                  : "You're in. Pick your loadout — the host starts the match."
-                : `2–4 players hold the outpost together. Signed in as ${identity?.name ?? callsign}.`}
-            </p>
-          </div>
+    <div className="min-h-dvh bg-black px-4 py-6 text-neutral-100 md:px-8">
+      <div className="mx-auto max-w-3xl">
+        <header className="flex items-center justify-between gap-3">
+          <button type="button" onClick={() => leaveRoom()} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "text-neutral-400", !start && "hidden")}>
+            ← Leave
+          </button>
           <div className={cn("flex gap-2", start && "hidden")}>
-            <Link href="/play/iron-horizon" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Solo
-            </Link>
             <Link href="/play/iron-horizon" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-              Lobby
+              ← Lobby
             </Link>
           </div>
-        </div>
+          <p className="font-mono text-[10px] tracking-[0.3em] text-neutral-500 uppercase">{stage === "lobby" ? title : "Survival squad"}</p>
+        </header>
 
         {useLocal && (
-          <p className="mt-4 rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs text-white">
+          <p className="mt-4 rounded-md border border-white/20 bg-white/5 px-3 py-2 text-xs text-neutral-300">
             Dev loopback transport: rooms connect browser tabs on this machine (BroadcastChannel), no Supabase needed. Add
             <span className="font-mono"> &amp;lag=80&amp;jitter=20</span> to the URL to simulate latency.
           </p>
@@ -366,27 +440,22 @@ export function CoopApp({
         {error && <p className="mt-4 rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
 
         {start && stage !== "lobby" && (
-          <p className="mt-10 text-center font-mono text-sm tracking-[0.3em] text-neutral-400 uppercase">
-            {start.host ? "Creating party…" : `Joining party ${start.code}…`}
+          <p className="mt-24 animate-pulse text-center font-mono text-sm tracking-[0.3em] text-neutral-400 uppercase">
+            {start.world ? "Finding a squad…" : start.host ? "Creating lobby…" : `Joining ${start.code}…`}
           </p>
         )}
 
         {!start && (stage === "menu" || stage === "connecting") && (
           <div className="mt-8 grid gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-white/10 bg-neutral-950/80 p-6">
+            <div className="rounded-2xl border border-white/10 p-6">
               <h2 className="text-lg font-semibold">Host a room</h2>
               <p className="mt-1 text-sm text-neutral-400">Get a short code to share. You run the match, so keep this tab in front.</p>
-              <button
-                type="button"
-                disabled={stage === "connecting"}
-                onClick={() => connect(makeRoomCode(), true)}
-                className={cn(buttonVariants({ size: "lg" }), "mt-5 h-11 w-full")}
-              >
+              <button type="button" disabled={stage === "connecting"} onClick={() => connect(makeRoomCode(), true)} className={cn(buttonVariants({ size: "lg" }), "mt-5 h-11 w-full")}>
                 {stage === "connecting" ? "Connecting…" : "Create room"}
               </button>
             </div>
             <form
-              className="rounded-xl border border-white/10 bg-neutral-950/80 p-6"
+              className="rounded-2xl border border-white/10 p-6"
               onSubmit={(e) => {
                 e.preventDefault();
                 const c = normalizeRoomCode(joinInput);
@@ -414,49 +483,64 @@ export function CoopApp({
         )}
 
         {stage === "lobby" && (
-          <div className="mt-8 grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-            <div className="rounded-xl border border-white/10 bg-neutral-950/80 p-6">
-              <div className="flex items-start justify-between gap-3">
+          <div className="mt-8 grid gap-8">
+            {/* Room header: code to share (private) or the launch countdown (Main World). */}
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              {isPublic ? (
                 <div>
-                  <Label>Room code</Label>
-                  <p className="font-mono text-4xl font-bold tracking-[0.35em] text-white/90" data-testid="room-code">
-                    {code}
+                  <h1 className="text-3xl font-black tracking-tight">{mapName}</h1>
+                  <p className="mt-1 text-sm text-neutral-400">
+                    {matchStatus.status === "playing" || hostRoom?.status === "playing"
+                      ? "Match in progress."
+                      : isHost
+                        ? `Deploying in ${Math.ceil(launchIn / 1000)}s — players from the world can drop in until then.`
+                        : "You're in. Deploying as soon as the squad fills or the timer runs out."}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void navigator.clipboard?.writeText(shareUrl).catch(() => {})}
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
-                  title={shareUrl}
-                >
-                  Copy link
+              ) : (
+                <div>
+                  <p className="font-mono text-4xl font-bold tracking-[0.35em]" data-testid="room-code">
+                    {code}
+                  </p>
+                  <p className="mt-1 text-sm text-neutral-400">{isHost ? "Share this code. Friends who join show up below." : "The host starts the match."}</p>
+                </div>
+              )}
+              {!isPublic && (
+                <button type="button" onClick={() => void navigator.clipboard?.writeText(shareUrl).catch(() => {})} className={buttonVariants({ variant: "outline", size: "sm" })} title={shareUrl}>
+                  Copy invite link
                 </button>
-              </div>
+              )}
+            </div>
 
-              <div className="mt-6">
-                <Label>
-                  Squad {peers.length}/{NET.MAX_PLAYERS}
-                </Label>
-                <ul className="grid gap-1.5">
-                  {[...peers]
-                    .sort((a, b) => Number(b.host) - Number(a.host) || a.joinedAt - b.joinedAt)
-                    .map((p) => (
-                      <li key={p.id} className="flex items-center justify-between rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm">
-                        <span className="flex items-center gap-2">
-                          <span className="font-medium">{p.name}</span>
-                          {p.id === identity?.id && <span className="text-xs text-neutral-500">(you)</span>}
-                          {p.host && <span className="rounded bg-white/15 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-white/90 uppercase">Host</span>}
-                        </span>
-                        <span className="flex items-center gap-3 text-xs">
-                          <span className="text-neutral-500">{OPERATORS[p.operator]?.name ?? p.operator}</span>
-                          <span className={p.ready ? "text-white/90" : "text-neutral-500"}>{p.host ? "HOST" : p.ready ? "READY" : "NOT READY"}</span>
-                        </span>
-                      </li>
-                    ))}
-                </ul>
-              </div>
+            <div>
+              <Label>
+                Squad {peers.length}/{NET.MAX_PLAYERS}
+              </Label>
+              <ul className="grid gap-1.5 sm:grid-cols-2">
+                {[...peers]
+                  .sort((a, b) => Number(b.host) - Number(a.host) || a.joinedAt - b.joinedAt)
+                  .map((p) => (
+                    <li key={p.id} className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2.5 text-sm">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-medium">{p.name}</span>
+                        {p.id === identity?.id && <span className="text-xs text-neutral-500">you</span>}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 text-xs text-neutral-500">
+                        {OPERATORS[p.operator]?.role ?? p.operator}
+                        <span className={cn("h-2 w-2 rounded-full", p.host || p.ready ? "bg-white" : "bg-white/20")} title={p.host ? "Host" : p.ready ? "Ready" : "Not ready"} />
+                      </span>
+                    </li>
+                  ))}
+                {Array.from({ length: Math.max(0, NET.MAX_PLAYERS - peers.length) }, (_, i) => (
+                  <li key={`open-${i}`} className="rounded-lg border border-dashed border-white/10 px-3 py-2.5 text-sm text-neutral-600">
+                    Open slot
+                  </li>
+                ))}
+              </ul>
+            </div>
 
-              <div className="mt-6 grid gap-4">
+            {!isPublic && (
+              <div className="grid gap-4 sm:grid-cols-3">
                 <div>
                   <Label>Map</Label>
                   <div className="flex flex-wrap gap-1.5">
@@ -482,26 +566,16 @@ export function CoopApp({
                   <div className="flex flex-wrap gap-1.5">
                     {([10, 20, 0] as const).map((w) => (
                       <Pill key={w} active={roomSettings.waveTarget === w} disabled={!isHost} onClick={() => setSettings((s) => ({ ...s, waveTarget: w }))}>
-                        {w === 0 ? "Endless" : `${w} waves`}
+                        {w === 0 ? "Endless" : w}
                       </Pill>
                     ))}
                   </div>
                 </div>
-                {!isHost && <p className="text-xs text-neutral-500">The host picks the map and difficulty.</p>}
               </div>
-            </div>
+            )}
 
-            <div className="rounded-xl border border-white/10 bg-neutral-950/80 p-6">
-              <Label>Operator</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {OPERATOR_IDS.map((id: OperatorId) => (
-                  <Pill key={id} active={loadout.operator === id} onClick={() => setLoadout((l) => ({ ...l, operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary }))}>
-                    {OPERATORS[id].name} · {OPERATORS[id].role}
-                  </Pill>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-neutral-500">{OPERATORS[loadout.operator].blurb}</p>
-              <div className="mt-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
                 <Label>Primary</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {PRIMARY_IDS.map((id: WeaponId) => (
@@ -511,7 +585,7 @@ export function CoopApp({
                   ))}
                 </div>
               </div>
-              <div className="mt-5">
+              <div>
                 <Label>Sidearm</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {SECONDARY_IDS.map((id: WeaponId) => (
@@ -521,39 +595,47 @@ export function CoopApp({
                   ))}
                 </div>
               </div>
-
-              <div className="mt-8 flex flex-wrap gap-2">
-                {isHost ? (
-                  <button
-                    type="button"
-                    disabled={!everyoneReady}
-                    onClick={startMatch}
-                    className={cn(buttonVariants({ size: "lg" }), "h-11 flex-1 text-base")}
-                    title={everyoneReady ? "" : "Waiting for everyone to ready up"}
-                  >
-                    {everyoneReady ? `Launch (${peers.length} player${peers.length === 1 ? "" : "s"})` : `Waiting for ${others.filter((p) => !p.ready).length} to ready up`}
-                  </button>
-                ) : rejoinable ? (
-                  <button type="button" onClick={rejoin} className={cn(buttonVariants({ size: "lg" }), "h-11 flex-1 text-base")}>
-                    Rejoin match in progress
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setReady((r) => !r)}
-                    className={cn(buttonVariants({ variant: ready ? "outline" : "default", size: "lg" }), "h-11 flex-1 text-base")}
-                  >
-                    {ready ? "Not ready" : "Ready up"}
-                  </button>
-                )}
-                <button type="button" onClick={() => leaveRoom()} className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11")}>
-                  Leave party
-                </button>
+            </div>
+            {!start && (
+              <div>
+                <Label>Class</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {OPERATOR_IDS.map((id: OperatorId) => (
+                    <Pill key={id} active={loadout.operator === id} onClick={() => setLoadout((l) => ({ ...l, operator: id, primary: OPERATORS[id].primary, secondary: OPERATORS[id].secondary }))}>
+                      {OPERATORS[id].role}
+                    </Pill>
+                  ))}
+                </div>
               </div>
-              {!isHost && hostRoom?.status === "playing" && !rejoinable && (
-                <p className="mt-3 text-xs text-neutral-500">A match is in progress. You can join the next one.</p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {isHost ? (
+                <button
+                  type="button"
+                  disabled={!everyoneReady}
+                  onClick={startMatch}
+                  className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 text-base font-bold")}
+                  title={everyoneReady ? "" : "Waiting for everyone to ready up"}
+                >
+                  {everyoneReady ? (isPublic ? "Deploy now" : `Launch (${peers.length} player${peers.length === 1 ? "" : "s"})`) : `Waiting for ${others.filter((p) => !p.ready).length} to ready up`}
+                </button>
+              ) : rejoinable ? (
+                <button type="button" onClick={rejoin} className={cn(buttonVariants({ size: "lg" }), "h-12 flex-1 text-base font-bold")}>
+                  Rejoin match in progress
+                </button>
+              ) : (
+                <button type="button" onClick={() => setReady((r) => !r)} className={cn(buttonVariants({ variant: ready ? "outline" : "default", size: "lg" }), "h-12 flex-1 text-base font-bold")}>
+                  {ready ? "Not ready" : "Ready up"}
+                </button>
+              )}
+              {!start && (
+                <button type="button" onClick={() => leaveRoom()} className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12")}>
+                  Leave
+                </button>
               )}
             </div>
+            {!isHost && hostRoom?.status === "playing" && !rejoinable && <p className="-mt-4 text-xs text-neutral-500">A match is in progress. You can join the next one.</p>}
           </div>
         )}
       </div>

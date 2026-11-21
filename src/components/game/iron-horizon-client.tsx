@@ -13,6 +13,8 @@ import { matchReport } from "@/game/core/matchReport";
 import { DEFAULT_CHOICE, Lobby, type LobbyChoice, type PartyActions } from "./lobby";
 import { CoopApp } from "@/components/coop/coop-app";
 import { makeRoomCode, normalizeRoomCode } from "@/game/net/transport";
+import { loadCharacter, type Character } from "@/game/character";
+import { OPERATORS } from "@/game/survival/config";
 import { ShopOverlay } from "./shop-overlay";
 import { MatchSummaryView } from "./match-summary";
 import { LoadingScreen } from "./loading-screen";
@@ -54,27 +56,34 @@ export function IronHorizonClient({
   partyTransport?: "supabase" | "local" | null;
 }) {
   const [choice, setChoice] = useState<LobbyChoice | null>(null);
+  const [character, setCharacter] = useState<Character | null>(null);
   const [inGame, setInGame] = useState(false);
   const [run, setRun] = useState(0);
-  const [party, setParty] = useState<{ code: string; host: boolean; key: number } | null>(null);
+  const [party, setParty] = useState<{ code: string; host: boolean; world?: boolean; key: number } | null>(null);
   const [partyNotice, setPartyNotice] = useState<string | null>(null);
 
   useEffect(() => {
     // Restore the last lobby picks after mount (localStorage isn't available during SSR).
-    const restored = loadLobby();
+    const saved = loadLobby();
+    // The saved character decides class + look; a class change resets the loadout to that class's kit.
+    const ch = loadCharacter();
+    const op = OPERATORS[ch.operator];
+    const restored: LobbyChoice =
+      saved.operator === ch.operator ? { ...saved, look: ch.look } : { ...saved, operator: ch.operator, primary: op.primary, secondary: op.secondary, look: ch.look };
     // Invite links (?room=CODE) drop you straight into that party.
     const room = normalizeRoomCode(new URLSearchParams(window.location.search).get("room") ?? "");
     queueMicrotask(() => {
+      setCharacter(ch);
       setChoice(room ? { ...restored, mode: "survival" } : restored);
       if (room && partyTransport) setParty({ code: room, host: false, key: Date.now() });
     });
   }, [partyTransport]);
 
-  const enterParty = useCallback((code: string, host: boolean, c: LobbyChoice) => {
+  const enterParty = useCallback((code: string, host: boolean, c: LobbyChoice, world = false) => {
     saveLobby(c);
     setChoice(c);
     setPartyNotice(null);
-    setParty({ code, host, key: Date.now() });
+    setParty({ code, host, world, key: Date.now() });
   }, []);
 
   const leaveParty = useCallback((reason: string | null) => {
@@ -84,7 +93,7 @@ export function IronHorizonClient({
     if (window.location.search.includes("room=")) window.history.replaceState(null, "", window.location.pathname);
   }, []);
 
-  if (!choice) return <div className="fixed inset-0 bg-black" aria-busy="true" />;
+  if (!choice || !character) return <div className="fixed inset-0 bg-black" aria-busy="true" />;
 
   if (party && partyTransport) {
     return (
@@ -93,8 +102,8 @@ export function IronHorizonClient({
         userId={partyTransport === "local" ? null : userId}
         callsign={callsign}
         transport={partyTransport}
-        start={{ code: party.code, host: party.host }}
-        initialLoadout={{ operator: choice.operator, primary: choice.primary, secondary: choice.secondary }}
+        start={{ code: party.code, host: party.host, world: party.world }}
+        initialLoadout={{ operator: choice.operator, primary: choice.primary, secondary: choice.secondary, look: choice.look }}
         initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave }}
         onLeave={leaveParty}
       />
@@ -102,7 +111,8 @@ export function IronHorizonClient({
   }
 
   const partyActions: PartyActions = {
-    unavailable: partyTransport ? null : "Sign in with an account to play online with friends.",
+    unavailable: partyTransport ? null : "Sign in with an account to play online.",
+    onWorld: (c) => enterParty("", false, c, true),
     onCreate: (c) => enterParty(makeRoomCode(), true, c),
     onJoin: (code, c) => enterParty(code, false, c),
   };
@@ -111,6 +121,7 @@ export function IronHorizonClient({
     return (
       <Lobby
         callsign={callsign}
+        character={character}
         initial={choice}
         party={partyActions}
         notice={partyNotice}
@@ -240,6 +251,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
             operator: choice.operator,
             primary: choice.primary,
             secondary: choice.secondary,
+            look: choice.look,
             difficulty: choice.difficulty,
             waveTarget: choice.waveTarget,
             squad: choice.squad,

@@ -1,75 +1,108 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { OperatorDef } from "@/game/survival/config";
+import { humanoidLook, type CharacterLook } from "@/game/character";
 
-/** Small turntable render of an operator (lazy-loads Three.js). */
-export function OperatorPreview({ operator }: { operator: OperatorDef }) {
+type Stage = { setLook: (look: CharacterLook) => void; dispose: () => void };
+
+/**
+ * Turntable render of the player's character (lazy-loads Three.js). One
+ * renderer lives for the component's lifetime; changing the look swaps the
+ * model in place so clicking through colours never churns GPU contexts.
+ */
+export function OperatorPreview({ look, className }: { look: CharacterLook; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<Stage | null>(null);
+  const lookRef = useRef(look);
 
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     let disposed = false;
-    let cleanup = () => {};
 
-    Promise.all([import("three"), import("@/game/ai/Humanoid")]).then(([THREE, { Humanoid }]) => {
-      if (disposed) return;
-      const w = host.clientWidth || 240;
-      const h = host.clientHeight || 280;
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      renderer.setSize(w, h);
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      host.appendChild(renderer.domElement);
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(30, w / h, 0.1, 20);
-      camera.position.set(0, 1.25, 4.3);
-      camera.lookAt(0, 0.95, 0);
-      scene.add(new THREE.HemisphereLight(0xe8eef8, 0x5a4a38, 1.4));
-      const key = new THREE.DirectionalLight(0xffe2c0, 2.6);
-      key.position.set(2, 3, 2);
-      const rim = new THREE.DirectionalLight(0x8ab0ff, 1.4);
-      rim.position.set(-2, 2, -2);
-      scene.add(key, rim);
+    Promise.all([import("three"), import("@/game/ai/Humanoid")])
+      .then(([THREE, { Humanoid }]) => {
+        if (disposed) return;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        host.appendChild(renderer.domElement);
+        renderer.domElement.style.width = "100%";
+        renderer.domElement.style.height = "100%";
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
+        camera.position.set(0, 1.2, 4.6);
+        camera.lookAt(0, 0.95, 0);
+        scene.add(new THREE.HemisphereLight(0xe8eef8, 0x5a4a38, 1.4));
+        const key = new THREE.DirectionalLight(0xffe2c0, 2.6);
+        key.position.set(2, 3, 2);
+        const rim = new THREE.DirectionalLight(0x8ab0ff, 1.4);
+        rim.position.set(-2, 2, -2);
+        scene.add(key, rim);
 
-      const c = operator.colors;
-      const heavy = operator.role === "Heavy";
-      const dummy = { name: operator.name, applyDamage: () => ({ damage: 0, killed: false, counts: false }) };
-      const model = new Humanoid(dummy, {
-        uniform: c.sleeve, vest: c.vest, helmet: c.helmet, skin: 0xb08a6a, accent: c.accent,
-        kit: heavy ? "heavy" : operator.role === "Recon" ? "sniper" : "standard", scale: 1,
-      });
-      scene.add(model.root);
+        const resize = () => {
+          const w = host.clientWidth || 240;
+          const h = host.clientHeight || 280;
+          renderer.setSize(w, h, false);
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+        };
+        resize();
+        const ro = new ResizeObserver(resize);
+        ro.observe(host);
 
-      let raf = 0;
-      let last = performance.now();
-      const loop = (now: number) => {
+        const dummy = { name: "preview", applyDamage: () => ({ damage: 0, killed: false, counts: false }) };
+        let model: InstanceType<typeof Humanoid> | null = null;
+        let yaw = 0.5;
+        const setLook = (l: CharacterLook) => {
+          if (model) scene.remove(model.root);
+          model = new Humanoid(dummy, humanoidLook(l));
+          model.root.rotation.y = yaw;
+          scene.add(model.root);
+        };
+        setLook(lookRef.current);
+
+        let raf = 0;
+        let last = performance.now();
+        const loop = (now: number) => {
+          raf = requestAnimationFrame(loop);
+          const dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          yaw += dt * 0.5;
+          if (model) {
+            model.root.rotation.y = yaw;
+            model.update(dt, 0, false, 0.05, true);
+          }
+          renderer.render(scene, camera);
+        };
         raf = requestAnimationFrame(loop);
-        const dt = Math.min(0.05, (now - last) / 1000);
-        last = now;
-        model.root.rotation.y += dt * 0.6;
-        model.update(dt, 0, false, 0.05, true);
-        renderer.render(scene, camera);
-      };
-      raf = requestAnimationFrame(loop);
-      cleanup = () => {
-        cancelAnimationFrame(raf);
-        renderer.dispose();
-        renderer.forceContextLoss();
-        renderer.domElement.remove();
-      };
-    }).catch(() => {
-      // No WebGL (or the chunk failed to load): the preview is decorative, leave it empty.
-    });
+        stageRef.current = {
+          setLook,
+          dispose: () => {
+            cancelAnimationFrame(raf);
+            ro.disconnect();
+            renderer.dispose();
+            renderer.forceContextLoss();
+            renderer.domElement.remove();
+          },
+        };
+      })
+      .catch(() => {
+        // No WebGL (or the chunk failed to load): the preview is decorative, leave it empty.
+      });
 
     return () => {
       disposed = true;
-      cleanup();
+      stageRef.current?.dispose();
+      stageRef.current = null;
     };
-  }, [operator]);
+  }, []);
 
-  // Rendered in colour, shown in black and white to match the menu style.
+  useEffect(() => {
+    lookRef.current = look;
+    stageRef.current?.setLook(look);
+  }, [look]);
+
   // Decorative: losing its GPU context must not trigger the game's recover prompt.
-  return <div ref={ref} data-webgl-optional className="h-full w-full contrast-125 grayscale" />;
+  return <div ref={ref} data-webgl-optional className={className ?? "h-full w-full"} />;
 }

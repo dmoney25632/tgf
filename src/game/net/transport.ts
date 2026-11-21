@@ -1,5 +1,6 @@
 import type { DifficultyId, OperatorId, WaveTarget } from "../survival/config";
 import type { WeaponId } from "../weapons/weapons";
+import type { CharacterLook } from "../character";
 
 /** Host-picked match settings, published in the host's presence payload. */
 export type RoomSettings = {
@@ -9,7 +10,7 @@ export type RoomSettings = {
   startWave: number;
 };
 
-export type RosterEntry = { id: string; name: string; slot: number; operator: OperatorId };
+export type RosterEntry = { id: string; name: string; slot: number; operator: OperatorId; look?: CharacterLook };
 
 /** One player's presence payload (lobby roster + in-match liveness). */
 export type PeerMeta = {
@@ -22,6 +23,10 @@ export type PeerMeta = {
   operator: OperatorId;
   primary: WeaponId;
   secondary: WeaponId;
+  /** Custom appearance from the character page (validated on receipt). */
+  look?: CharacterLook;
+  /** Public Main World room (matchmaking lists it). */
+  public?: boolean;
   joinedAt: number;
   /** Host only. */
   room?: RoomSettings & { status: "lobby" | "playing"; roster?: RosterEntry[]; matchId?: string };

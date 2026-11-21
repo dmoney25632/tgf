@@ -18,6 +18,7 @@ import { ShopSystem, Wallet, type ShopView } from "./ShopSystem";
 import { WaveManager } from "./WaveManager";
 import { EnemySpawner } from "./EnemySpawner";
 import type { SurvivalNet } from "../net/types";
+import { viewmodelColors, type CharacterLook } from "../character";
 import { HelicopterManager } from "../vehicles/HelicopterManager";
 import type { AttackHelicopter } from "../vehicles/AttackHelicopter";
 import { AIR, composeAir, sortiePlan, type AirSortie } from "./airSupport";
@@ -30,6 +31,8 @@ export type SurvivalConfig = {
   waveTarget: WaveTarget;
   squad: number;
   startWave?: number;
+  /** Custom appearance (first-person arms); operator colours when absent. */
+  look?: CharacterLook;
   /** [coop] Online co-op session; absent for solo play. */
   net?: SurvivalNet;
 };
@@ -98,7 +101,8 @@ export class SurvivalGameMode implements GameMode {
     this.loadout.apply(ctx.weapons);
     ctx.weapons.infiniteSecondary = true;
     ctx.weapons.resetAmmo();
-    ctx.viewmodel.setOperatorColors(op.colors.glove, op.colors.sleeve);
+    if (config.look) ctx.viewmodel.setOperatorColors(...viewmodelColors(config.look));
+    else ctx.viewmodel.setOperatorColors(op.colors.glove, op.colors.sleeve);
     ctx.viewmodel.setWeapon(ctx.weapons.active.def);
     ctx.grenades.count = op.grenades;
     ctx.grenades.maxCarry = GRENADE.maxCarry + (op.grenades > 2 ? 1 : 0);

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { HitPart, HitResult, Hittable } from "../core/types";
 import { Humanoid } from "../ai/Humanoid";
 import { ENEMIES, OPERATORS, type EnemyDef, type EnemyType, type OperatorId } from "../survival/config";
+import { humanoidLook, sanitizeLook } from "../character";
 import { InterpBuffer } from "./interpolation";
 import { NET, STATE_DEAD } from "./protocol";
 
@@ -75,9 +76,13 @@ export class RemoteAvatar {
     private readonly scene: THREE.Scene,
     readonly name: string,
     operator: OperatorId,
+    look?: unknown,
   ) {
     const c = OPERATORS[operator]?.colors ?? OPERATORS.ridge.colors;
-    this.model = new Humanoid(NO_HIT, { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent, skin: 0xb08a6a, kit: "standard", scale: 1 });
+    this.model = new Humanoid(
+      NO_HIT,
+      look ? humanoidLook(sanitizeLook(look)) : { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent, skin: 0xb08a6a, kit: "standard", scale: 1 },
+    );
     this.model.root.visible = false;
     this.tag.sprite.position.set(0, 2.15, 0);
     this.model.root.add(this.tag.sprite);
