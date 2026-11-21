@@ -5,6 +5,10 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { ALL_MISSIONS, getMission } from "@/game/missions/campaign";
+import { OPERATIONS } from "@/game/missions/operations";
+import { MissionBoardTable } from "@/components/missions/mission-board";
+import type { MissionBoardRow } from "@/app/play/[gameId]/mission-actions";
 
 export const metadata = { title: "Leaderboard · TGF" };
 
@@ -25,7 +29,10 @@ type Row = {
 const TABS = {
   waves: { label: "Furthest wave", blurb: "Highest Survival wave each player has cleared (solo or party). Ties go to whoever got there first." },
   lifetime: { label: "Lifetime stats", blurb: "Career totals across every Iron Horizon match." },
+  missions: { label: "Mission times", blurb: "Fastest clear of each mission per player. Solo and co-op runs are ranked separately." },
 } as const;
+/** Missions on the times board: standalone operations first. */
+const BOARD_MISSIONS = [...OPERATIONS, ...ALL_MISSIONS.filter((m) => !OPERATIONS.includes(m))];
 type Tab = keyof typeof TABS;
 
 const SORTS = {
@@ -51,12 +58,20 @@ const fmt = (n: number) => Number(n ?? 0).toLocaleString("en-US");
 async function LeaderboardContent({ searchParams }: Pick<PageProps<"/leaderboard">, "searchParams">) {
   const user = await requireUser("/leaderboard");
   const q = await searchParams;
-  const tab: Tab = q.tab === "lifetime" ? "lifetime" : "waves";
+  const tab: Tab = q.tab === "lifetime" ? "lifetime" : q.tab === "missions" ? "missions" : "waves";
+  const mission = getMission(typeof q.mission === "string" ? q.mission : "") ?? BOARD_MISSIONS[0];
+  const mmode: "solo" | "coop" = q.mode === "coop" ? "coop" : "solo";
   const sort: Sort = typeof q.sort === "string" && q.sort in SORTS ? (q.sort as Sort) : "kills";
 
   let rows: Row[] = [];
+  let missionRows: MissionBoardRow[] = [];
   let failed = false;
-  if (!user.offline) {
+  if (!user.offline && tab === "missions") {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("mission_board", { p_mission_id: mission.id, p_mode: mmode, p_limit: 50 });
+    if (error) failed = true;
+    missionRows = (data as MissionBoardRow[] | null) ?? [];
+  } else if (!user.offline) {
     const supabase = await createClient();
     let query = supabase
       .from("leaderboard")
@@ -91,7 +106,7 @@ async function LeaderboardContent({ searchParams }: Pick<PageProps<"/leaderboard
           {(Object.keys(TABS) as Tab[]).map((t) => (
             <Link
               key={t}
-              href={t === "waves" ? "/leaderboard" : "/leaderboard?tab=lifetime"}
+              href={t === "waves" ? "/leaderboard" : `/leaderboard?tab=${t}`}
               className={cn(
                 "rounded-md border px-4 py-2 text-sm transition-colors",
                 tab === t ? "border-white/70 bg-white/15 text-white" : "border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/25",
@@ -117,7 +132,44 @@ async function LeaderboardContent({ searchParams }: Pick<PageProps<"/leaderboard
           </div>
         )}
 
-        {user.offline ? (
+        {tab === "missions" && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+            {BOARD_MISSIONS.map((m) => (
+              <Link
+                key={m.id}
+                href={`/leaderboard?tab=missions&mission=${m.id}&mode=${mmode}`}
+                className={cn("rounded border px-2.5 py-1", mission.id === m.id ? "border-white/60 bg-white/10 text-white" : "border-white/10 text-neutral-400 hover:border-white/25")}
+              >
+                {m.title}
+              </Link>
+            ))}
+            <span className="mx-2 h-4 w-px bg-white/15" />
+            {(["solo", "coop"] as const).map((m) => (
+              <Link
+                key={m}
+                href={`/leaderboard?tab=missions&mission=${mission.id}&mode=${m}`}
+                className={cn("rounded border px-2.5 py-1", mmode === m ? "border-white/60 bg-white/10 text-white" : "border-white/10 text-neutral-400 hover:border-white/25")}
+              >
+                {m === "solo" ? "Solo" : "Co-op"}
+              </Link>
+            ))}
+            <Link href={`/play/iron-horizon?mission=${mission.id}`} className="ml-auto rounded border border-white/20 px-2.5 py-1 text-neutral-200 hover:border-white/40">
+              Play {mission.title} →
+            </Link>
+          </div>
+        )}
+
+        {tab === "missions" ? (
+          user.offline ? (
+            <p className="mt-8 rounded-md border border-white/20 bg-white/5 px-4 py-3 text-sm">Offline dev mode: mission times need Supabase.</p>
+          ) : failed ? (
+            <p className="mt-8 rounded-md border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">Couldn&apos;t load mission times. Try again in a moment.</p>
+          ) : (
+            <div className="mt-6">
+              <MissionBoardTable rows={missionRows} me={user.callsign} empty={`No ${mmode === "solo" ? "solo" : "co-op"} clears of ${mission.title} yet. Finish it to set the first time.`} />
+            </div>
+          )
+        ) : user.offline ? (
           <p className="mt-8 rounded-md border border-white/20 bg-white/5 px-4 py-3 text-sm">Offline dev mode: the leaderboard needs Supabase.</p>
         ) : failed ? (
           <p className="mt-8 rounded-md border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">Couldn&apos;t load the leaderboard. Try again in a moment.</p>
@@ -188,7 +240,7 @@ async function LeaderboardContent({ searchParams }: Pick<PageProps<"/leaderboard
             </table>
           </div>
         )}
-        {!user.offline && rows.length > 0 && me < 0 && (
+        {tab !== "missions" && !user.offline && rows.length > 0 && me < 0 && (
           <p className="mt-3 text-xs text-muted-foreground">You&apos;re not in the top 100 here yet. Your own totals are on your account page.</p>
         )}
       </main>

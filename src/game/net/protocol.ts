@@ -1,4 +1,5 @@
 import { ByteReader, ByteWriter } from "./codec";
+import type { MissionEvent, MissionState } from "../missions/types";
 
 /**
  * Co-op wire protocol (host-authoritative survival).
@@ -545,6 +546,13 @@ export type StateExtras = {
    * a full keyframe interval with frozen enemies.
    */
   k?: 1;
+  /**
+   * Missions (added later; hosts that predate them ignore these):
+   * `i` — holding interact at the current objective (plant / rescue);
+   * `hh` — hits on host gunships: [heliIndex, damage×10, part, source].
+   */
+  i?: 1;
+  hh?: [number, number, number, number][];
 };
 
 /** Host → peers events on a snapshot. */
@@ -558,7 +566,14 @@ export type HostEvent =
   /** Player respawned at the start of a wave. */
   | { k: "respawn"; to: number; x: number; z: number }
   /** Match over. `earned` per slot for the summary; `reason` for host-left etc. */
-  | { k: "end"; victory: boolean; earned: number[]; reason?: string };
+  | { k: "end"; victory: boolean; earned: number[]; reason?: string }
+  // ---- Missions (added later; clients that predate them skip unknown kinds) ----
+  /** Full mission state (on change and once a second): objectives, checkpoint, timers. */
+  | { k: "ms"; s: MissionState }
+  /** Discrete mission event (objective, radio line, checkpoint, retry, detonation, extraction). */
+  | { k: "mev"; e: MissionEvent }
+  /** Host gunships, ~4 Hz: [x×10, y×10, z×10, yaw×100, health, maxHealth, state 0 idle · 1 flying · 2 dying] per slot. */
+  | { k: "air"; h: [number, number, number, number, number, number, number][] };
 
 /** `h`: the host's own player state (same encoding as StatePayload.b). */
 export type SnapshotPayload = { b: string; e?: HostEvent[]; h?: string };

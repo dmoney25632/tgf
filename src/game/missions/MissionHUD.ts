@@ -29,6 +29,8 @@ export class MissionHUD {
   private readonly detail: HTMLDivElement;
   private readonly status: HTMLDivElement;
   private readonly bar: HTMLDivElement;
+  private readonly clockEl: HTMLDivElement;
+  private lClock = "";
   private readonly fill: HTMLDivElement;
   private readonly subs: { el: HTMLDivElement; t: number }[] = [];
   private nextSub = 0;
@@ -59,6 +61,7 @@ export class MissionHUD {
     this.status = div(`font:600 12px/1.2 ${HUD_MONO};letter-spacing:.1em;margin-top:6px;min-height:14px;`, this.panel);
     this.bar = div("height:3px;margin-top:5px;background:rgba(0,0,0,.45);overflow:hidden;display:none;", this.panel);
     this.fill = div(`height:100%;width:100%;background:${HUD_ACCENT};transform-origin:left;transform:scaleX(0);`, this.bar);
+    this.clockEl = div(`font:600 11px/1.2 ${HUD_MONO};letter-spacing:.08em;margin-top:6px;opacity:.75;display:none;`, this.panel);
 
     // Subtitles: bottom centre, above the weapon / health rows.
     const sw = div("position:absolute;left:50%;bottom:118px;transform:translateX(-50%);width:min(720px,86vw);display:flex;flex-direction:column;align-items:center;gap:4px;", this.root);
@@ -105,6 +108,13 @@ export class MissionHUD {
       this.lFill = q;
       if (q >= 0) this.fill.style.transform = `scaleX(${q})`;
     }
+  }
+
+  /** Run clock / star target line under the objective (empty hides). */
+  clock(text: string) {
+    if (text === this.lClock) return;
+    if (!text !== !this.lClock) this.clockEl.style.display = text ? "block" : "none";
+    this.clockEl.innerHTML = this.lClock = text;
   }
 
   radio(speaker: string, text: string) {

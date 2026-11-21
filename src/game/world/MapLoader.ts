@@ -97,6 +97,8 @@ export type MapDef = {
   atmosphere?: Partial<AtmosphereDef>;
   /** Set-dressing id (terrain, foliage, props) — see world/dressing. */
   dressing?: string;
+  /** AI nav-grid window (defaults to ±50 m). Large mission maps size it to their bounds. */
+  nav?: { minX: number; minZ: number; width: number; depth: number };
 };
 
 export type MapStats = { drawables: number; triangles: number; grassTriangles: number; treeTriangles: number; terrainTriangles: number };

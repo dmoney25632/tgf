@@ -2,9 +2,52 @@ import type * as THREE from "three";
 import type { EngineContext } from "../core/GameMode";
 import type { HitPart } from "../core/types";
 import type { KillInfo } from "../ai/AgentManager";
+import type { Combatant } from "../ai/types";
 import type { EnemyType } from "../survival/config";
-import type { SurvivalGameMode } from "../survival/SurvivalGameMode";
 import type { SurvivalHUD, TeamRow } from "../ui/SurvivalHUD";
+import type { NavGrid } from "../ai/NavGrid";
+import type { AgentManager } from "../ai/AgentManager";
+import type { PlayerState } from "../survival/PlayerState";
+import type { Wallet } from "../survival/ShopSystem";
+import type { WaveManager } from "../survival/WaveManager";
+import type { DifficultyId } from "../survival/config";
+import type { HelicopterManager } from "../vehicles/HelicopterManager";
+import type { MissionEvent, MissionState } from "../missions/types";
+
+/**
+ * What the co-op layer needs from a game mode. SurvivalGameMode and
+ * MissionGameMode both satisfy it; missions add `mission` (shared objectives,
+ * checkpoints and gunships). A mission's `waves` is a fixed "combat" phase so
+ * the survival wave flow (banners, shop, ready-up) never triggers.
+ */
+export interface CoopMode {
+  readonly nav: NavGrid;
+  readonly agents: AgentManager;
+  readonly state: PlayerState;
+  readonly loadout: { readonly maxHealth: number };
+  readonly ended: boolean;
+  end(victory: boolean): void;
+  readonly config: { readonly difficulty: DifficultyId };
+  readonly wallet: Wallet;
+  readonly waves: WaveManager;
+  readonly canShop: boolean;
+  readonly mission?: CoopMissionHooks;
+}
+
+export interface CoopMissionHooks {
+  /** Host: the mission ended in a win. */
+  readonly victory: boolean;
+  /** Client: holding interact at the current objective (plant / rescue). */
+  readonly holdingInteract: boolean;
+  readonly helis: HelicopterManager;
+  snapshot(): MissionState;
+  /** Client: adopt the host's mission state. */
+  applySnapshot(s: MissionState): void;
+  /** Client: a discrete host event (radio, objective banner, detonation…). */
+  remoteEvent(e: MissionEvent): void;
+  /** Client: the host respawned us (checkpoint / redeploy). */
+  onRespawn(): void;
+}
 
 /** Bits of SurvivalGameMode's private state the co-op layer may touch. */
 export type SurvivalBridge = {
@@ -27,7 +70,7 @@ export interface SurvivalNet {
   readonly busy: boolean;
   /** Any teammate still on their feet. */
   readonly teammatesUp: boolean;
-  attach(mode: SurvivalGameMode, ctx: EngineContext, bridge: SurvivalBridge): void;
+  attach(mode: CoopMode, ctx: EngineContext, bridge: SurvivalBridge): void;
   /** Every frame, after AI. */
   update(dt: number): void;
   /** Client: copy host vitals into the local PlayerState; returns transitions. */
@@ -49,3 +92,19 @@ export interface SurvivalNet {
   teamRows(out: TeamRow[]): void;
   dispose(): void;
 }
+
+/** Co-op layer as a mission sees it (CoopSurvivalNet implements both). */
+export interface MissionNet extends SurvivalNet {
+  missionState(s: MissionState): void;
+  missionEvent(e: MissionEvent): void;
+  respawnTeam(x: number, z: number, onlyDead: boolean): void;
+  teammates(out: TeammateView[]): TeammateView[];
+  readonly spawnOffset: [number, number];
+  /** Host: slot credited for the damage being applied right now (-1 = local player). */
+  readonly creditSlot: number;
+  creditName(slot: number): string;
+  /** Client: replicated hostiles still alive. */
+  readonly enemiesAlive: number;
+}
+
+export type TeammateView = { x: number; z: number; up: boolean; interact: boolean; combatant: Combatant | null };

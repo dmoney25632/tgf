@@ -12,11 +12,16 @@ import { DIFFICULTY, ENEMIES, OPERATORS, PLAYER, WAVES, type EnemyType } from ".
 import { PlayerLoadout } from "../survival/PlayerLoadout";
 import { PlayerState } from "../survival/PlayerState";
 import { HelicopterManager } from "../vehicles/HelicopterManager";
+import { Wallet } from "../survival/ShopSystem";
+import { WaveManager } from "../survival/WaveManager";
+import type { CoopMissionHooks, CoopMode, MissionNet, TeammateView } from "../net/types";
 import type { AttackHelicopter } from "../vehicles/AttackHelicopter";
 import { AIR } from "../survival/airSupport";
 import { getMission } from "./campaign";
 import { MissionDirector, scoreMission, type DirectorHost, type MissionFacts } from "./MissionDirector";
 import { MissionHUD } from "./MissionHUD";
+import { MISSION_AMMO } from "./operations";
+import { clock, starTargets, type StarTargets } from "./rating";
 import type { AirScript, MissionConfig, MissionDef, MissionEvent, MissionResult, MissionState, ObjectiveDef, Point, RadioLine } from "./types";
 
 const INTERACT_RANGE = 2.3;
@@ -25,6 +30,11 @@ const BOT_REVIVE_TIME = 2.5;
 const VIP_HEALTH = 180;
 const CHARGE_RADIUS = 9;
 const CHARGE_DAMAGE = 420;
+/** Hold [F] at an ammo crate: refill time and per-crate cooldown. */
+const RESUPPLY_TIME = 1.2;
+const RESUPPLY_COOLDOWN = 45;
+/** Default AI nav window for maps that don't size their own. */
+const NAV_DEFAULT = { minX: -50, minZ: -50, width: 100, depth: 100 };
 /** Small per-mission bump so the campaign escalates. */
 const MISSION_SCALE = [1, 1.08, 1.16];
 
@@ -39,7 +49,7 @@ const MISSION_SCALE = [1, 1.08, 1.16];
  * discrete events; a client calls `applySnapshot` with the host's state and
  * skips scripting (role "client").
  */
-export class MissionGameMode implements GameMode {
+export class MissionGameMode implements GameMode, CoopMode {
   readonly label = "MISSION";
   readonly def: MissionDef;
   readonly state = new PlayerState();
@@ -48,6 +58,15 @@ export class MissionGameMode implements GameMode {
   readonly agents: AgentManager;
   readonly helis: HelicopterManager;
   readonly director: MissionDirector;
+  // ---- Co-op (see net/types CoopMode) ------------------------------------------------
+  /** Unused by missions; the co-op layer's survival economy writes here harmlessly. */
+  readonly wallet = new Wallet();
+  /** Fixed "combat" phase so the co-op layer's survival wave flow never fires. */
+  readonly waves = Object.assign(new WaveManager(0, 1, 1), { phase: "combat" as const });
+  readonly canShop = false;
+  private readonly coop: MissionNet | undefined;
+  private readonly isClient: boolean;
+  private readonly mates: TeammateView[] = [];
   private readonly shud: SurvivalHUD;
   private readonly mhud: MissionHUD;
   private readonly diff: (typeof DIFFICULTY)[keyof typeof DIFFICULTY];
@@ -84,6 +103,9 @@ export class MissionGameMode implements GameMode {
   private promptProgress = -1;
   private statusKey = -1;
   private result: MissionResult | null = null;
+  /** Star target times at this difficulty (shown on the HUD clock). */
+  readonly stars: StarTargets;
+  private readonly ammo: (Point & { ready: number; hold: number })[];
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -93,6 +115,8 @@ export class MissionGameMode implements GameMode {
     const def = getMission(config.missionId);
     if (!def) throw new Error(`Unknown mission ${config.missionId}`);
     this.def = def;
+    this.coop = config.coop;
+    this.isClient = (config.coop?.role ?? config.net?.role) === "client";
     this.diff = DIFFICULTY[config.difficulty];
     this.scale = MISSION_SCALE[def.index - 1] ?? 1;
 
@@ -138,7 +162,11 @@ export class MissionGameMode implements GameMode {
     };
 
     // ---- AI / air ------------------------------------------------------------------
-    this.nav = new NavGrid(ctx.map.collision, -50, -50, 100, 100);
+    // Nav grid sized to the map (large mission maps declare their window).
+    const nw = ctx.map.def.nav ?? NAV_DEFAULT;
+    this.nav = new NavGrid(ctx.map.collision, nw.minX, nw.minZ, nw.width, nw.depth);
+    this.stars = starTargets(def, config.difficulty);
+    this.ammo = (MISSION_AMMO[def.id] ?? []).map((p) => ({ ...p, ready: 0, hold: 0 }));
     this.agents = new AgentManager(ctx.scene, ctx.map.collision, this.nav, ctx.effects, ctx.sfx, this.combatant, ctx.camera.position, {
       onEnemyKilled: (k) => this.onEnemyKilled(k),
       onAgentDamaged: (agent, amount, _part, killed, source) => {
@@ -155,7 +183,8 @@ export class MissionGameMode implements GameMode {
     this.agents.prewarm("armored", 2);
     const others = Object.values(OPERATORS).filter((o) => o.id !== op.id);
     const callsigns = ["Kestrel", "Halden"];
-    for (let i = 0; i < Math.min(2, config.squad); i++) {
+    // Co-op: remote players take the squad slots.
+    for (let i = 0; i < (this.coop ? 0 : Math.min(2, config.squad)); i++) {
       const c = others[i].colors;
       this.agents.addSquadmate(i, { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent }, { name: callsigns[i] });
     }
@@ -178,8 +207,20 @@ export class MissionGameMode implements GameMode {
 
     // ---- Script -----------------------------------------------------------------------
     this.director = new MissionDirector(def, this.host);
-    this.spawnTeamAt(def.start, def.start.yaw);
-    if (config.net?.role !== "client") this.director.start();
+    this.coop?.attach(this, ctx, {
+      shud: this.shud,
+      crateUsed: [],
+      countKill: (type, part, source) => {
+        this.kills[type] = (this.kills[type] ?? 0) + 1;
+        if (source === "melee") this.meleeKills++;
+        else if (source === "grenade") this.grenadeKills++;
+        void part;
+      },
+    });
+    const [sx, sz] = this.coop?.spawnOffset ?? [0, 0];
+    this.spawnTeamAt({ x: def.start.x + sx, z: def.start.z + sz }, def.start.yaw);
+    if (!this.isClient) this.director.start();
+    else this.mhud.objective(`OBJECTIVE 1 / ${def.objectives.length}`, def.objectives[0].title, def.objectives[0].detail ?? "");
     this.shud.showBanner(def.title.toUpperCase(), `${def.codename}  ·  ${def.location.toUpperCase()}`, 4.2, "#f2efe6");
     this.publish({ type: "objective", index: 0, title: def.objectives[0].title });
   }
@@ -189,13 +230,14 @@ export class MissionGameMode implements GameMode {
   // ---------------------------------------------------------------------------
 
   private readonly host: DirectorHost = {
-    spawn: (type, x, z, elite) => this.spawnEnemy(type, x, z, elite),
+    spawn: (type, x, z, elite, y) => this.spawnEnemy(type, x, z, elite, y),
     launchAir: (air) => this.launchAir(air),
     radio: (line) => this.onRadio(line),
     objectiveStarted: (i, def, resumed) => {
       this.statusKey = -1;
       this.mhud.objective(`OBJECTIVE ${i + 1} / ${this.def.objectives.length}`, def.title, def.detail ?? "");
       if (def.kind === "escort") this.prepareVip(def.vip);
+      if (i > 0 && !resumed && this.coop) this.redeployDead(def);
       if (i > 0 || resumed) {
         this.ctx.sfx.waveStart();
         this.shud.showBanner(resumed ? "CHECKPOINT" : "NEW OBJECTIVE", def.title, 2.8, resumed ? "#86c7ff" : "#f2efe6");
@@ -204,7 +246,7 @@ export class MissionGameMode implements GameMode {
     },
     objectiveDone: (i, def) => {
       this.ctx.sfx.waveClear();
-      this.shud.showBanner("OBJECTIVE COMPLETE", def.title, 2.4, "#9be070");
+      this.shud.showBanner("OBJECTIVE COMPLETE", i + 1 < this.def.objectives.length ? `${def.title}  ·  CHECKPOINT SAVED` : def.title, 2.4, "#9be070");
       this.state.heal();
       this.publish({ type: "objectiveDone", index: i });
       this.publish({ type: "checkpoint", index: i + 1 });
@@ -220,13 +262,8 @@ export class MissionGameMode implements GameMode {
       this.shud.showBanner("VIP FREED", "KEEP THEM ALIVE", 2.2, "#9be070");
     },
     callExtract: (def) => {
-      const from = def.heliFrom;
-      this.helis.launchTransport({
-        entry: from,
-        exit: { x: -from.x, z: -from.z },
-        orbit: { x: def.at.x, z: def.at.z, radius: 0, altitude: 12, seconds: 0 },
-        land: def.at,
-      });
+      this.launchTransport(def);
+      this.publish({ type: "extract", index: this.def.objectives.indexOf(def) });
     },
     restoreCheckpoint: (index, reason) => this.restoreCheckpoint(index, reason),
     end: (victory) => this.end(victory),
@@ -243,6 +280,7 @@ export class MissionGameMode implements GameMode {
   collectTargets(out: THREE.Object3D[]) {
     this.agents.hitboxes(out);
     this.helis.hitboxes(out);
+    this.coop?.collectTargets(out);
   }
 
   vitals(): Vitals {
@@ -260,15 +298,21 @@ export class MissionGameMode implements GameMode {
     // ---- Player vitals / revive --------------------------------------------------------
     const holdingF = ctx.input.isDown("KeyF");
     this.selfReviving = this.state.downed && this.state.selfRevives > 0 && holdingF;
-    const reviving = this.selfReviving || this.agents.reviver !== null;
-    if (!this.wiped) {
+    const reviving = this.selfReviving || this.agents.reviver !== null || (this.coop?.revivingMe() ?? false);
+    if (this.isClient && this.coop) {
+      // Co-op client: the host owns vitals.
+      const res = this.coop.clientVitals();
+      if (res === "downed") this.onLocalDowned();
+      else if (res === "revived") this.onPlayerRevived();
+    } else if (!this.wiped) {
       const res = this.state.update(dt, reviving, this.selfReviving ? PLAYER.selfReviveTime : PLAYER.reviveTime);
       if (res === "revived") this.onPlayerRevived();
-      else if (res === "bledout") this.wiped = true;
+      // Solo: bleeding out ends the attempt. Co-op: you sit out until a teammate reaches the next checkpoint.
+      else if (res === "bledout" && !this.coop) this.wiped = true;
     }
     ctx.player.downed = this.state.downed;
     ctx.player.speedMultiplier = this.loadout.speed * ctx.weapons.active.def.mobility;
-    ctx.weapons.disabled = this.ended || this.selfReviving || this.botReviveTarget !== null;
+    ctx.weapons.disabled = this.ended || this.selfReviving || this.botReviveTarget !== null || (this.coop?.busy ?? false);
     ctx.grenades.disabled = this.state.downed || this.ended;
     if (this.state.alive && this.state.health / this.state.maxHealth < 0.3) {
       this.heartbeat -= dt;
@@ -280,20 +324,24 @@ export class MissionGameMode implements GameMode {
 
     // ---- World --------------------------------------------------------------------------
     this.agents.update(dt);
+    this.coop?.update(dt);
     if (this.vip && this.vipActive && this.director.state.stage === "captive" && this.vip.state === "downed") this.vip.bleed = 99;
     const ht = this.heliTargets;
     ht.length = 0;
-    if (this.combatant.targetable) ht.push(this.combatant);
-    for (const s of this.agents.squad) if (s.targetable) ht.push(s);
+    if (!this.isClient) {
+      if (this.combatant.targetable) ht.push(this.combatant);
+      for (const s of this.agents.squad) if (s.targetable) ht.push(s);
+      if (this.coop) for (const m of this.coop.teammates(this.mates)) if (m.combatant?.targetable) ht.push(m.combatant);
+    }
     this.helis.update(dt, ht);
     this.updateProps(dt);
 
     // ---- Script -------------------------------------------------------------------------
     this.interactions(dt);
-    if (this.config.net?.role !== "client") {
+    if (!this.isClient) {
       this.gatherFacts();
       this.director.update(dt, this.facts);
-    }
+    } else if (this.coop) this.facts.hostiles = this.coop.enemiesAlive + this.helis.hostileAlive;
 
     if (this.ended && this.endTimer >= 0) {
       this.endTimer -= dt;
@@ -313,6 +361,7 @@ export class MissionGameMode implements GameMode {
   }
 
   onExplosion(at: THREE.Vector3) {
+    if (this.coop?.onExplosion(at)) return; // co-op clients: the host resolves grenade damage
     this.agents.explode(at, GRENADE.radius, GRENADE.maxDamage);
     this.helis.explode(at, GRENADE.radius, GRENADE.maxDamage);
     this.selfBlast(at, GRENADE.radius, GRENADE.maxDamage * GRENADE.selfDamage);
@@ -345,10 +394,113 @@ export class MissionGameMode implements GameMode {
   }
 
   private publish(e: MissionEvent) {
+    if (this.isClient) return;
     const net = this.config.net;
-    if (!net || net.role === "client") return;
-    net.onEvent?.(e);
-    net.onState?.(this.snapshot());
+    net?.onEvent?.(e);
+    net?.onState?.(this.snapshot());
+    if (this.coop) {
+      this.coop.missionEvent(e);
+      this.coop.missionState(this.snapshot());
+    }
+  }
+
+  /** Co-op hooks (CoopMode.mission): mission state, events and gunships over the wire. */
+  get mission(): CoopMissionHooks {
+    return (this.hooks ??= this.makeHooks());
+  }
+  private hooks: CoopMissionHooks | null = null;
+
+  private makeHooks(): CoopMissionHooks {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const m = this;
+    return {
+      get victory() {
+        return m.director.state.phase === "complete";
+      },
+      get holdingInteract() {
+        return (m.prompt.startsWith("HOLD [F] P") || m.prompt.startsWith("HOLD [F] F")) && m.ctx.input.isDown("KeyF");
+      },
+      get helis() {
+        return m.helis;
+      },
+      snapshot: () => m.snapshot(),
+      applySnapshot: (s) => m.applySnapshot(s),
+      remoteEvent: (e) => m.remoteEvent(e),
+      onRespawn: () => {
+        m.ctx.weapons.refillAmmo(1);
+        m.ctx.grenades.count = Math.max(m.ctx.grenades.count, m.loadout.operator.grenades + 1);
+        for (const a of m.ammo) a.ready = 0;
+      },
+    };
+  }
+
+  /** Co-op client: a host mission event (state itself arrives via applySnapshot). */
+  private remoteEvent(e: MissionEvent) {
+    const def = this.def;
+    switch (e.type) {
+      case "objective": {
+        const o = def.objectives[e.index];
+        if (!o) return;
+        this.statusKey = -1;
+        this.mhud.objective(`OBJECTIVE ${e.index + 1} / ${def.objectives.length}`, o.title, o.detail ?? "");
+        if (e.index > 0) {
+          this.ctx.sfx.waveStart();
+          this.shud.showBanner("NEW OBJECTIVE", o.title, 2.8, "#f2efe6");
+        }
+        return;
+      }
+      case "objectiveDone": {
+        const o = def.objectives[e.index];
+        this.ctx.sfx.waveClear();
+        if (o) this.shud.showBanner("OBJECTIVE COMPLETE", e.index + 1 < def.objectives.length ? `${o.title}  ·  CHECKPOINT SAVED` : o.title, 2.4, "#9be070");
+        return;
+      }
+      case "radio":
+        this.mhud.radio(e.speaker, e.text);
+        return;
+      case "retry": {
+        for (const t of this.targets) if (def.objectives.indexOf(t.def) >= e.index) t.mesh.visible = true;
+        this.helis.transport.hide();
+        this.shud.showBanner("SQUAD WIPED", `REDEPLOYING AT CHECKPOINT  ·  ${this.director.state.retries} / ${this.director.maxRetries}`, 3, "#ff8a6a");
+        return;
+      }
+      case "detonate": {
+        const o = def.objectives[e.index];
+        if (o?.kind === "destroy") this.detonateFx(o);
+        return;
+      }
+      case "extract": {
+        const o = def.objectives[e.index];
+        if (o?.kind === "extract") this.launchTransport(o);
+        return;
+      }
+      case "air":
+        this.shud.showBanner("GUNSHIP INBOUND", "SHOOT IT DOWN — AIM FOR THE COCKPIT", 2.6, "#ffb46a");
+        return;
+    }
+  }
+
+  private launchTransport(def: Extract<ObjectiveDef, { kind: "extract" }>) {
+    const from = def.heliFrom;
+    this.helis.launchTransport({
+      entry: from,
+      exit: { x: -from.x, z: -from.z },
+      orbit: { x: def.at.x, z: def.at.z, radius: 0, altitude: 12, seconds: 0 },
+      land: def.at,
+    });
+  }
+
+  /** Co-op host: bled-out players rejoin at the start of each new section. */
+  private redeployDead(def: ObjectiveDef) {
+    const at = def.checkpoint ?? { x: this.ctx.player.position.x, z: this.ctx.player.position.z };
+    this.coop?.respawnTeam(at.x, at.z, true);
+    if (this.state.dead) {
+      this.state.reset(this.loadout.maxHealth, 0);
+      this.ctx.player.downed = false;
+      this.ctx.weapons.lockSlot = -1;
+      const [ox, oz] = this.coop?.spawnOffset ?? [0, 0];
+      this.spawnTeamAt({ x: at.x + ox, z: at.z + oz }, def.checkpoint?.yaw ?? this.ctx.player.yaw);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -397,10 +549,12 @@ export class MissionGameMode implements GameMode {
     const c = this.wp;
     const near = (x: number, z: number, rad: number) => Math.hypot(x - c.x, z - c.z) <= rad;
     const playerUp = this.state.alive && !this.state.downed;
+    const mates = this.coop ? this.coop.teammates(this.mates) : this.mates;
     f.inZone = false;
     f.contested = false;
     if (r > 0) {
       f.inZone = playerUp && near(p.x, p.z, r);
+      for (const m of mates) if (m.up && near(m.x, m.z, r)) f.inZone = true;
       if (!f.inZone && obj?.kind === "defend") for (const s of this.agents.squad) if (s !== this.vip && s.alive && near(s.position.x, s.position.z, r)) f.inZone = true;
       if (obj?.kind === "defend") {
         // Contested: more hostiles inside than defenders (and at least three).
@@ -408,10 +562,13 @@ export class MissionGameMode implements GameMode {
         let team = playerUp && near(p.x, p.z, r) ? 1 : 0;
         for (const a of this.agents.active) if (a.alive && near(a.position.x, a.position.z, r)) n++;
         for (const s of this.agents.squad) if (s.alive && near(s.position.x, s.position.z, r)) team++;
+        for (const m of mates) if (m.up && near(m.x, m.z, r)) team++;
         f.contested = n >= 3 && n > team;
       }
     }
     f.interacting = this.prompt.startsWith("HOLD [F] P") || this.prompt.startsWith("HOLD [F] F") ? this.ctx.input.isDown("KeyF") : false;
+    // A teammate holding interact at the objective counts too.
+    if (!f.interacting && r > 0) for (const m of mates) if (m.up && m.interact && near(m.x, m.z, INTERACT_RANGE + 0.8)) f.interacting = true;
     const vip = this.vip;
     const escorting = this.vipActive && vip !== null && this.director.state.stage !== "captive";
     f.vipAlive = escorting && vip!.alive;
@@ -421,10 +578,19 @@ export class MissionGameMode implements GameMode {
     f.heliLanded = this.helis.transport.landed;
     f.allAboard = false;
     if (obj?.kind === "extract") {
-      f.allAboard = playerUp && near(p.x, p.z, obj.radius) && (!escorting || (vip!.alive && near(vip!.position.x, vip!.position.z, obj.radius + 2)));
+      // Everyone still standing has to be at the LZ (and at least one of you).
+      let aboard = playerUp ? near(p.x, p.z, obj.radius) : true;
+      let anyUp = playerUp;
+      for (const m of mates) {
+        if (!m.up) continue;
+        anyUp = true;
+        if (!near(m.x, m.z, obj.radius)) aboard = false;
+      }
+      f.allAboard = anyUp && aboard && (!escorting || (vip!.alive && near(vip!.position.x, vip!.position.z, obj.radius + 2)));
     }
-    f.teamWiped =
-      this.wiped || (this.state.downed && this.state.selfRevives === 0 && !this.agents.squad.some((s) => s !== this.vip && s.alive));
+    f.teamWiped = this.coop
+      ? this.coop.teamWiped()
+      : this.wiped || (this.state.downed && this.state.selfRevives === 0 && !this.agents.squad.some((s) => s !== this.vip && s.alive));
   }
 
   private interactions(dt: number) {
@@ -435,6 +601,14 @@ export class MissionGameMode implements GameMode {
     this.promptProgress = -1;
     if (this.ended || this.state.downed) {
       this.botReviveTarget = null;
+      return;
+    }
+
+    // Co-op: revive a downed teammate (the host resolves it).
+    const coopPrompt = this.coop?.interact(dt, input.isDown("KeyF"));
+    if (coopPrompt) {
+      this.prompt = coopPrompt.prompt;
+      this.promptProgress = coopPrompt.progress;
       return;
     }
 
@@ -465,6 +639,27 @@ export class MissionGameMode implements GameMode {
       return;
     }
     this.botReviveTarget = null;
+
+    // Ammo crates: hold [F] to refill (per-crate cooldown).
+    for (const a of this.ammo) {
+      if (a.ready > this.seconds || Math.hypot(a.x - p.x, a.z - p.z) > INTERACT_RANGE + 0.4) {
+        a.hold = 0;
+        continue;
+      }
+      a.hold = input.isDown("KeyF") ? a.hold + dt / RESUPPLY_TIME : 0;
+      if (a.hold >= 1) {
+        a.hold = 0;
+        a.ready = this.seconds + RESUPPLY_COOLDOWN;
+        ctx.weapons.refillAmmo(1);
+        ctx.grenades.count = Math.max(ctx.grenades.count, this.loadout.operator.grenades + 1);
+        ctx.sfx.cash();
+        this.shud.showBanner("RESUPPLIED", "", 1.2, "#9be070");
+        return;
+      }
+      this.prompt = "HOLD [F] RESUPPLY AMMO";
+      this.promptProgress = a.hold;
+      return;
+    }
 
     const obj = this.director.objective;
     const stage = this.director.state.stage;
@@ -500,9 +695,10 @@ export class MissionGameMode implements GameMode {
     return out;
   }
 
-  private spawnEnemy(type: EnemyType, x: number, z: number, elite: boolean) {
+  private spawnEnemy(type: EnemyType, x: number, z: number, elite: boolean, y?: number) {
     if (this.ended) return;
-    const at = this.snap(x, z, this.tmp);
+    // Perched spawns (tower / roof snipers) keep their authored height.
+    const at = y === undefined ? this.snap(x, z, this.tmp) : this.tmp.set(x, y, z);
     const p = this.ctx.player.position;
     const yaw = Math.atan2(-(p.x - at.x), -(p.z - at.z));
     const m = this.scale;
@@ -524,6 +720,7 @@ export class MissionGameMode implements GameMode {
     });
     if (!h) return false;
     this.shud.showBanner("GUNSHIP INBOUND", "SHOOT IT DOWN — AIM FOR THE COCKPIT", 2.6, "#ffb46a");
+    this.publish({ type: "air" });
     return true;
   }
 
@@ -617,6 +814,14 @@ export class MissionGameMode implements GameMode {
   }
 
   private detonate(def: Extract<ObjectiveDef, { kind: "destroy" }>) {
+    const at = this.detonateFx(def);
+    this.agents.explode(at, CHARGE_RADIUS, CHARGE_DAMAGE);
+    this.selfBlast(at, def.safeRadius, CHARGE_DAMAGE * 0.4);
+    this.publish({ type: "detonate", index: this.def.objectives.indexOf(def) });
+  }
+
+  /** The blast's look and sound (everyone); damage is the host's. */
+  private detonateFx(def: Extract<ObjectiveDef, { kind: "destroy" }>) {
     const ctx = this.ctx;
     const t = this.targets.find((x) => x.def === def);
     const at = this.tmp.set(def.at.x, this.floorAt(def.at.x, def.at.z) + 0.6, def.at.z);
@@ -630,8 +835,7 @@ export class MissionGameMode implements GameMode {
       const a = Math.random() * Math.PI * 2, v = 4 + Math.random() * 7;
       ctx.effects.debris.spawn(at.x, at.y + 0.5, at.z, Math.cos(a) * v, 5 + Math.random() * 8, Math.sin(a) * v, 0.18, 0.16, 0.13, 2.4, 0.14, 0.1, 1, 14, 0.2);
     }
-    this.agents.explode(at, CHARGE_RADIUS, CHARGE_DAMAGE);
-    this.selfBlast(at, def.safeRadius, CHARGE_DAMAGE * 0.4);
+    return at;
   }
 
   private selfBlast(at: THREE.Vector3, radius: number, maxDamage: number) {
@@ -654,6 +858,12 @@ export class MissionGameMode implements GameMode {
 
   private onEnemyKilled(k: KillInfo) {
     const ctx = this.ctx;
+    if (this.coop?.killCredit(k)) {
+      // A teammate's kill (already in the killfeed): it still counts for the squad's mission tally.
+      this.director.credit("kill");
+      if (k.part === "head" && !k.source) this.director.credit("headshot");
+      return;
+    }
     const def = ENEMIES[k.agent.spec.role as EnemyType];
     let weaponName: string = ctx.weapons.active.def.name;
     let killer = ctx.callsign;
@@ -680,22 +890,32 @@ export class MissionGameMode implements GameMode {
 
   private onHeliDestroyed(h: AttackHelicopter, source: string) {
     this.director.credit("gunship");
+    const by = this.coop?.creditSlot ?? -1;
+    if (by >= 0) {
+      this.ctx.hud.killfeed(this.coop!.creditName(by), source === "grenade" ? GRENADE.name : "", h.name, false);
+      this.shud.showBanner("GUNSHIP DOWN", "", 2.6, "#ffc845");
+      return;
+    }
     if (source !== "ai") this.kills.Gunship = (this.kills.Gunship ?? 0) + 1;
     this.ctx.hud.killfeed(source === "ai" ? "Squad" : this.ctx.callsign, source === "grenade" ? GRENADE.name : this.ctx.weapons.active.def.name, h.name, false);
     this.shud.showBanner("GUNSHIP DOWN", "", 2.6, "#ffc845");
   }
 
   private onHeliCrash(at: THREE.Vector3) {
-    this.agents.explode(at, AIR.crashRadius, AIR.crashDamage);
     const d = at.distanceTo(this.ctx.camera.position);
     this.ctx.shake.add(Math.max(0, 0.7 * (1 - d / 45)));
+    if (this.isClient) {
+      this.shud.showBanner("GUNSHIP DOWN", "", 2.6, "#ffc845");
+      return;
+    }
+    this.agents.explode(at, AIR.crashRadius, AIR.crashDamage);
     const p = this.ctx.player.position;
     const pd = Math.hypot(p.x - at.x, p.z - at.z);
     if (pd < AIR.crashRadius) this.playerHit(AIR.crashDamage * 0.5 * (1 - pd / AIR.crashRadius), at);
   }
 
   private playerHit(amount: number, from: THREE.Vector3) {
-    if (this.ended || this.wiped) return;
+    if (this.ended || this.wiped || this.isClient) return;
     const ctx = this.ctx;
     const wasDowned = this.state.downed;
     const before = this.state.health + this.state.armor;
@@ -710,13 +930,17 @@ export class MissionGameMode implements GameMode {
     ctx.hud.hurt(taken, angle);
     ctx.sfx.hurt(taken > 20);
     ctx.shake.add(Math.min(0.22, taken / 90));
-    if (r.downed && !wasDowned) {
-      ctx.sfx.downed();
-      ctx.weapons.forceSlot(1);
-      ctx.weapons.lockSlot = 1;
-      ctx.player.downed = true;
-      ctx.hud.killfeed("Hostiles", "", ctx.callsign, false);
-    }
+    if (r.downed && !wasDowned) this.onLocalDowned();
+  }
+
+  private onLocalDowned() {
+    const ctx = this.ctx;
+    ctx.sfx.downed();
+    ctx.weapons.forceSlot(1);
+    ctx.weapons.lockSlot = 1;
+    ctx.player.downed = true;
+    ctx.hud.killfeed("Hostiles", "", ctx.callsign, false);
+    if (!this.isClient) this.director.credit("down");
   }
 
   private onPlayerRevived() {
@@ -744,10 +968,11 @@ export class MissionGameMode implements GameMode {
     // VIP: captive again if we roll back to (or before) the rescue.
     const esc = this.def.objectives.findIndex((o) => o.kind === "escort");
     if (esc >= 0 && index <= esc) this.vipActive = false;
-    // Respawn at the previous objective's position.
-    let p: Point = this.def.start;
-    let yaw = this.def.start.yaw;
-    for (let i = index - 1; i >= 0; i--) {
+    // Respawn at the objective's authored checkpoint, else the previous objective's position.
+    const cp = this.def.objectives[index]?.checkpoint;
+    let p: Point = cp ?? this.def.start;
+    let yaw = cp?.yaw ?? this.def.start.yaw;
+    for (let i = index - 1; !cp && i >= 0; i--) {
       const o = this.def.objectives[i];
       const at = "to" in o ? o.to : "at" in o ? o.at : null;
       if (at) {
@@ -758,24 +983,30 @@ export class MissionGameMode implements GameMode {
         break;
       }
     }
-    this.spawnTeamAt(p, yaw);
+    const [ox, oz] = this.coop?.spawnOffset ?? [0, 0];
+    this.spawnTeamAt({ x: p.x + ox, z: p.z + oz }, yaw);
+    // Co-op: the whole squad redeploys at the checkpoint.
+    this.coop?.respawnTeam(p.x, p.z, false);
     if (this.vipActive && this.vip) {
       // Escort already done: the VIP comes back with the team.
       this.snap(p.x + 1.5, p.z + 1.5, this.tmp);
       this.vip.spawn(this.tmp, yaw, 1);
       this.vip.state = "follow";
     }
-    this.shud.showBanner(reason, `RETRYING FROM CHECKPOINT  ·  ${this.director.state.retries} / 3`, 3, "#ff8a6a");
+    ctx.grenades.count = Math.max(ctx.grenades.count, this.loadout.operator.grenades + 1);
+    for (const a of this.ammo) a.ready = 0;
+    this.shud.showBanner(reason, `RETRYING FROM CHECKPOINT  ·  ${this.director.state.retries} / ${this.director.maxRetries}`, 3, "#ff8a6a");
     this.publish({ type: "retry", index });
   }
 
-  private end(victory: boolean) {
+  end(victory: boolean) {
     if (this.ended) return;
     this.ended = true;
     this.endTimer = victory ? 6 : 3;
     this.helis.recallAll();
-    this.result = scoreMission(this.def, this.director.state, this.diff.reward);
-    if (victory) this.shud.showBanner("MISSION COMPLETE", `${this.def.codename}  ·  GRADE ${this.result.grade}`, 5, "#9be070");
+    if (this.isClient) this.helis.recallAll();
+    this.result = scoreMission(this.def, this.director.state, this.diff.reward, this.config.difficulty);
+    if (victory) this.shud.showBanner("MISSION COMPLETE", `${this.def.codename}  ·  ${"★".repeat(this.result.stars)}${"☆".repeat(3 - this.result.stars)}  ·  ${clock(this.result.seconds)}`, 5, "#9be070");
     else this.shud.showBanner("MISSION FAILED", this.director.state.failReason, 4, "#ff5a4a");
     this.publish({ type: "end", victory });
   }
@@ -787,7 +1018,7 @@ export class MissionGameMode implements GameMode {
 
   summary(): MatchSummary {
     const s = this.ctx.weapons.stats;
-    const r = this.result ?? scoreMission(this.def, this.director.state, this.diff.reward);
+    const r = this.result ?? scoreMission(this.def, this.director.state, this.diff.reward, this.config.difficulty);
     return {
       mode: "mission",
       victory: r.victory,
@@ -828,6 +1059,7 @@ export class MissionGameMode implements GameMode {
       status: this.state.downed ? `DOWN ${Math.ceil(this.state.bleed)}s` : "",
       you: true,
     });
+    this.coop?.teamRows(rows);
     for (const s of this.agents.squad) {
       if (s === this.vip && !this.vipActive) continue;
       const captive = s === this.vip && this.director.state.stage === "captive";
@@ -843,6 +1075,7 @@ export class MissionGameMode implements GameMode {
     if (!boss) for (const h of this.helis.helis) if (h.targetable) boss = { name: h.name.toUpperCase(), frac: h.health / h.maxHealth };
 
     this.drawObjectiveStatus();
+    this.drawClock();
     const r = this.objectivePoint(this.director.objective, this.wp);
     const obj = this.director.objective;
     const label = !obj ? "" : obj.kind === "destroy" ? obj.label : obj.kind === "escort" ? (this.director.state.stage === "captive" ? obj.vip.name.toUpperCase() : "LZ") : obj.kind === "extract" ? "EXTRACT" : obj.kind === "defend" ? "DEFEND" : "OBJECTIVE";
@@ -867,7 +1100,7 @@ export class MissionGameMode implements GameMode {
             ? `${this.agents.reviver.name.toUpperCase()} IS REVIVING YOU`
             : sw
               ? "HOLD [F] — SECOND WIND  ·  SIDEARM STILL WORKS"
-              : this.agents.squad.some((s) => s !== this.vip && s.alive)
+              : this.agents.squad.some((s) => s !== this.vip && s.alive) || this.coop?.teammatesUp
                 ? "HOLD ON — YOUR SQUAD IS COMING  ·  SIDEARM STILL WORKS"
                 : "NO ONE LEFT TO REVIVE YOU",
         boss,
@@ -911,7 +1144,22 @@ export class MissionGameMode implements GameMode {
   }
   private lastStatus = "";
 
+  /** Run clock and the next star target (whole seconds only). */
+  private drawClock() {
+    const s = this.director.state;
+    const sec = Math.floor(s.elapsed);
+    if (sec === this.clockSec && s.phase === this.clockPhase) return;
+    this.clockSec = sec;
+    this.clockPhase = s.phase;
+    const t = this.stars;
+    const next = sec <= t.three ? `★★★ ${clock(t.three)}` : sec <= t.two ? `★★ ${clock(t.two)}` : "★";
+    this.mhud.clock(s.phase === "briefing" ? "" : `${clock(sec)}  ·  ${next}  ·  RETRIES ${s.retries}/${this.director.maxRetries}`);
+  }
+  private clockSec = -1;
+  private clockPhase = "";
+
   dispose() {
+    this.coop?.dispose();
     this.mhud.dispose();
     this.shud.dispose();
     this.helis.dispose();

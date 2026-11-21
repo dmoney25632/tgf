@@ -7,7 +7,11 @@ import { cn } from "@/lib/utils";
 import { DIFFICULTY, OPERATORS, OPERATOR_IDS, type DifficultyId, type OperatorId } from "@/game/survival/config";
 import { PRIMARY_IDS, SECONDARY_IDS, WEAPONS, type WeaponId } from "@/game/weapons/weapons";
 import { NET } from "@/game/net/protocol";
-import { COOP_MAPS } from "@/game/net/ids";
+import { COOP_MAPS, coopMission } from "@/game/net/ids";
+import { ALL_MISSIONS } from "@/game/missions/campaign";
+
+/** Missions a party can run together (no escorts). */
+const COOP_MISSIONS = ALL_MISSIONS.filter((m) => coopMission(m.id)).sort((a, b) => b.index - a.index);
 import {
   makeRoomCode, normalizeRoomCode,
   type NetTransport, type PeerMeta, type RoomSettings, type RosterEntry,
@@ -458,6 +462,25 @@ export function CoopApp({
 
               <div className="mt-6 grid gap-4">
                 <div>
+                  <Label>Mode</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Pill active={!coopMission(roomSettings.missionId)} disabled={!isHost} onClick={() => setSettings((s) => ({ ...s, missionId: undefined }))}>
+                      Survival
+                    </Pill>
+                    {COOP_MISSIONS.map((m) => (
+                      <Pill key={m.id} active={roomSettings.missionId === m.id} disabled={!isHost} onClick={() => setSettings((s) => ({ ...s, missionId: m.id }))}>
+                        Mission · {m.title}
+                      </Pill>
+                    ))}
+                  </div>
+                  {coopMission(roomSettings.missionId) && (
+                    <p className="mt-2 text-xs text-neutral-400">
+                      {coopMission(roomSettings.missionId)!.briefing} Downed teammates can be revived; if the whole squad goes down you redeploy at the last checkpoint. Everyone needs the same game version.
+                    </p>
+                  )}
+                </div>
+                {!coopMission(roomSettings.missionId) && (
+                <div>
                   <Label>Map</Label>
                   <div className="flex flex-wrap gap-1.5">
                     {COOP_MAPS.map((m) => (
@@ -467,6 +490,7 @@ export function CoopApp({
                     ))}
                   </div>
                 </div>
+                )}
                 <div>
                   <Label>Difficulty</Label>
                   <div className="flex flex-wrap gap-1.5">
@@ -477,6 +501,7 @@ export function CoopApp({
                     ))}
                   </div>
                 </div>
+                {!coopMission(roomSettings.missionId) && (
                 <div>
                   <Label>Waves</Label>
                   <div className="flex flex-wrap gap-1.5">
@@ -487,7 +512,8 @@ export function CoopApp({
                     ))}
                   </div>
                 </div>
-                {!isHost && <p className="text-xs text-neutral-500">The host picks the map and difficulty.</p>}
+                )}
+                {!isHost && <p className="text-xs text-neutral-500">The host picks the mode, map and difficulty.</p>}
               </div>
             </div>
 

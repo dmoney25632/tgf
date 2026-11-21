@@ -426,12 +426,15 @@ export function Lobby({
   onDeploy,
   party,
   notice,
+  onMissions,
 }: {
   callsign: string;
   initial: LobbyChoice;
   onDeploy: (c: LobbyChoice) => void;
   party?: PartyActions;
   notice?: string | null;
+  /** Opens the missions screen (entry hook; see iron-horizon-client.tsx). */
+  onMissions?: () => void;
 }) {
   const [c, setC] = useState<LobbyChoice>(initial);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -474,6 +477,11 @@ export function Lobby({
             </div>
           </div>
           <nav className="flex items-center gap-1.5">
+            {onMissions && (
+              <button type="button" onMouseEnter={sfxHover} onClick={() => (sfxClick(), onMissions())} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Missions
+              </button>
+            )}
             <Link href="/leaderboard" onClick={sfxClick} className={buttonVariants({ variant: "ghost", size: "sm" })}>
               Leaderboard
             </Link>

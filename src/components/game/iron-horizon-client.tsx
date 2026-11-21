@@ -18,6 +18,9 @@ import { MatchSummaryView } from "./match-summary";
 import { LoadingScreen } from "./loading-screen";
 import { PauseMenu } from "./pause-menu";
 import { useGamepadNav, useInputDevice } from "./gamepad";
+import { getMission } from "@/game/missions/campaign";
+import { MissionScreen } from "@/components/missions/mission-screen";
+import { MissionDebrief } from "@/components/missions/mission-debrief";
 
 const LOBBY_KEY = "tgf.iron-horizon.lobby";
 
@@ -58,15 +61,21 @@ export function IronHorizonClient({
   const [run, setRun] = useState(0);
   const [party, setParty] = useState<{ code: string; host: boolean; key: number } | null>(null);
   const [partyNotice, setPartyNotice] = useState<string | null>(null);
+  // Missions screen. Entry hooks: the lobby's "Missions" button and /play/iron-horizon?mission=<id>.
+  const [missions, setMissions] = useState(false);
 
   useEffect(() => {
     // Restore the last lobby picks after mount (localStorage isn't available during SSR).
-    const restored = loadLobby();
+    const restored: LobbyChoice = { ...loadLobby(), mission: undefined };
+    const params = new URLSearchParams(window.location.search);
     // Invite links (?room=CODE) drop you straight into that party.
-    const room = normalizeRoomCode(new URLSearchParams(window.location.search).get("room") ?? "");
+    const room = normalizeRoomCode(params.get("room") ?? "");
+    // Mission links (?mission=<id>) open that mission's briefing screen.
+    const mission = getMission(params.get("mission") ?? "")?.id;
     queueMicrotask(() => {
-      setChoice(room ? { ...restored, mode: "survival" } : restored);
+      setChoice(room ? { ...restored, mode: "survival" } : mission ? { ...restored, mission } : restored);
       if (room && partyTransport) setParty({ code: room, host: false, key: Date.now() });
+      else if (mission) setMissions(true);
     });
   }, [partyTransport]);
 
@@ -95,7 +104,7 @@ export function IronHorizonClient({
         transport={partyTransport}
         start={{ code: party.code, host: party.host }}
         initialLoadout={{ operator: choice.operator, primary: choice.primary, secondary: choice.secondary }}
-        initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave }}
+        initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave, missionId: choice.mission }}
         onLeave={leaveParty}
       />
     );
@@ -107,6 +116,30 @@ export function IronHorizonClient({
     onJoin: (code, c) => enterParty(code, false, c),
   };
 
+  const launch = (c: LobbyChoice) => {
+    saveLobby({ ...c, mission: undefined });
+    setChoice(c);
+    setRun((r) => r + 1);
+    setInGame(true);
+  };
+
+  if (!inGame && missions) {
+    return (
+      <MissionScreen
+        callsign={callsign}
+        initial={choice}
+        partyUnavailable={partyActions.unavailable}
+        onDeploy={launch}
+        onHostCoop={(c) => enterParty(makeRoomCode(), true, c)}
+        onBack={() => {
+          setMissions(false);
+          setChoice((c) => (c ? { ...c, mission: undefined } : c));
+          if (window.location.search.includes("mission=")) window.history.replaceState(null, "", window.location.pathname);
+        }}
+      />
+    );
+  }
+
   if (!inGame) {
     return (
       <Lobby
@@ -114,16 +147,13 @@ export function IronHorizonClient({
         initial={choice}
         party={partyActions}
         notice={partyNotice}
-        onDeploy={(c) => {
-          saveLobby(c);
-          setChoice(c);
-          setRun((r) => r + 1);
-          setInGame(true);
-        }}
+        onMissions={() => setMissions(true)}
+        onDeploy={(c) => launch({ ...c, mission: undefined })}
       />
     );
   }
 
+  const mission = choice.mission ? getMission(choice.mission) : undefined;
   return (
     <GameView
       key={run}
@@ -131,6 +161,16 @@ export function IronHorizonClient({
       choice={choice}
       onAgain={() => setRun((r) => r + 1)}
       onLobby={() => setInGame(false)}
+      extras={
+        mission
+          ? {
+              briefing: mission.briefing,
+              notes: mission.notes,
+              title: mission.title,
+              renderSummary: (s, saved, onAgain, onLobby) => <MissionDebrief s={s} saved={saved} callsign={callsign} mode="solo" squad={1} onAgain={onAgain} onLobby={onLobby} />,
+            }
+          : undefined
+      }
     />
   );
 }
@@ -139,7 +179,7 @@ const MIN_LOADING_MS = 1300;
 const MAX_LOADING_MS = 20000;
 
 /** Mission runs pass a summary renderer and briefing (see components/missions). */
-export type GameViewExtras = { briefing?: string; renderSummary?: (s: MatchSummary, saved: string, onAgain: () => void, onLobby: () => void) => React.ReactNode };
+export type GameViewExtras = { briefing?: string; notes?: string[]; title?: string; renderSummary?: (s: MatchSummary, saved: string, onAgain: () => void, onLobby: () => void) => React.ReactNode };
 
 export function GameView({ callsign, choice, onAgain, onLobby, extras }: { callsign: string; choice: LobbyChoice; onAgain: () => void; onLobby: () => void; extras?: GameViewExtras }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -331,9 +371,10 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
       {!loadGone && (
         <div ref={loadRef}>
           <LoadingScreen
-            mapName={mapName}
-            modeLabel={choice.mission ? "Mission" : survival ? "Survival" : "Training"}
+            mapName={extras?.title ?? mapName}
+            modeLabel={choice.mission ? `Mission · ${mapName}` : survival ? "Survival" : "Training"}
             objective={objective}
+            notes={extras?.notes}
             progress={progress}
             ready={canDeploy}
             leaving={deployed}

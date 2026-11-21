@@ -35,6 +35,7 @@ export function LoadingScreen({
   dev,
   error,
   notice,
+  notes,
   onDeploy,
   onGone,
 }: {
@@ -47,6 +48,8 @@ export function LoadingScreen({
   dev: DeviceSnapshot;
   error: string | null;
   notice?: string;
+  /** Mission briefing bullets under the objective. */
+  notes?: string[];
   onDeploy: (e: React.MouseEvent) => void;
   onGone: () => void;
 }) {
@@ -78,6 +81,16 @@ export function LoadingScreen({
         <p className="font-mono text-[11px] tracking-[0.36em] text-white/90 uppercase">Iron Horizon · {modeLabel}</p>
         <h1 className="mt-2 text-4xl font-black tracking-[0.06em] uppercase md:text-6xl">{mapName}</h1>
         <p className="mt-2 max-w-xl text-sm text-neutral-400 md:text-base">{objective}</p>
+        {notes && notes.length > 0 && (
+          <ul className="mt-3 max-w-2xl space-y-1 text-xs text-neutral-400 md:text-sm">
+            {notes.map((n) => (
+              <li key={n} className="flex gap-2">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-white/50" />
+                {n}
+              </li>
+            ))}
+          </ul>
+        )}
 
         <div className="mt-10 flex items-end justify-between gap-6">
           <p key={tip} className="max-w-xl animate-in text-sm text-neutral-300 duration-500 fade-in slide-in-from-bottom-1">
