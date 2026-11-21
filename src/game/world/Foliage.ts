@@ -202,6 +202,9 @@ function makeTree(kind: TreeKind, seed: number) {
   return { bark, leaves };
 }
 
+/** Indirect-light multiplier for Lambert vegetation (≈ hemisphere + the IBL it can't see). */
+const VEG_SKY_FILL = 1.9;
+
 /** Wind + distance fade for instanced vegetation (Lambert). */
 function windHook(time: { value: number }, fadeFar: { value: number }, strength: number, heightScale: number, fade: boolean) {
   return (shader: THREE.WebGLProgramParametersWithUniforms) => {
@@ -228,7 +231,12 @@ function windHook(time: { value: number }, fadeFar: { value: number }, strength:
         transformed += transpose(iRot) * windW / iS2;
         ${fade ? "transformed *= 1.0 - smoothstep(fadeFar * 0.7, fadeFar, distance(iPos.xz, cameraPosition.xz));" : ""}`,
       );
-    shader.fragmentShader = shader.fragmentShader.replace("#include <lights_lambert_pars_fragment>", VEG_LIGHT);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <lights_lambert_pars_fragment>", VEG_LIGHT)
+      // Lambert gets no image-based light (scene.environment is PBR-only), so
+      // the sky fill that lights the ground around it would be missing and
+      // grass/leaves would read as dark cut-outs: stand in for it here.
+      .replace("#include <lights_fragment_end>", `irradiance *= ${VEG_SKY_FILL.toFixed(2)};\n#include <lights_fragment_end>`);
   };
 }
 
@@ -330,7 +338,7 @@ export class Foliage {
     const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     grassMat.name = "ih-grass";
     grassMat.onBeforeCompile = windHook(windTime, this.fadeFar, 0.35, 1.0, true);
-    grassMat.customProgramCacheKey = () => "ih-grass-v2";
+    grassMat.customProgramCacheKey = () => "ih-grass-v3";
     this.disposables.push(grassMat);
     const T = 25;
     const B = spec.grassBounds;
@@ -398,7 +406,7 @@ export class Foliage {
         const tallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
         tallMat.name = "ih-tallgrass";
         tallMat.onBeforeCompile = windHook(windTime, this.tallFade, 0.5, 0.8, true);
-        tallMat.customProgramCacheKey = () => "ih-tallgrass-v2";
+        tallMat.customProgramCacheKey = () => "ih-tallgrass-v3";
         this.disposables.push(tallMat);
         const order = mats.map((_, i) => i).sort(() => r() - 0.5);
         const mesh = new THREE.InstancedMesh(tallClump, tallMat, mats.length);
@@ -425,7 +433,7 @@ export class Foliage {
       const mat = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide });
       mat.onBeforeCompile = windHook(windTime, this.fadeFar, strength, hScale, false);
       // The hook bakes constants into GLSL, so programs must not be shared across them.
-      mat.customProgramCacheKey = () => `ih-leaves-v2:${strength}:${hScale}`;
+      mat.customProgramCacheKey = () => `ih-leaves-v3:${strength}:${hScale}`;
       mat.name = "ih-leaves";
       this.disposables.push(mat);
       return mat;

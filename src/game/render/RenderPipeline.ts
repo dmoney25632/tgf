@@ -118,7 +118,8 @@ export function installSpecularAa() {
   specularAaInstalled = true;
   const C = THREE.ShaderChunk as Record<string, string>;
   const anchor = "material.roughness += geometryRoughness;";
-  if (!C.lights_physical_fragment.includes(anchor)) return;
+  // The chunk outlives this module under hot reload: never patch it twice.
+  if (!C.lights_physical_fragment.includes(anchor) || C.lights_physical_fragment.includes("ihDn")) return;
   C.lights_physical_fragment = C.lights_physical_fragment.replace(
     anchor,
     `${anchor}
