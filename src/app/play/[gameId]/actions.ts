@@ -17,7 +17,17 @@ export type MatchReport = {
   wave?: number;
   headshots?: number;
   score?: number;
+  difficulty?: string;
+  /** Match length in seconds. */
+  seconds?: number;
+  /** Players in the squad (1 solo, 2–4 co-op). */
+  squad?: number;
+  meleeKills?: number;
+  grenadeKills?: number;
+  damage?: number;
 };
+
+const DIFFICULTIES = new Set(["recruit", "regular", "veteran"]);
 
 const clampInt = (n: unknown, max: number) => Math.max(0, Math.min(max, Math.floor(Number(n) || 0)));
 
@@ -51,6 +61,12 @@ export async function saveMatch(report: MatchReport): Promise<{ ok: boolean; err
     p_wave: clampInt(report.wave, 1000),
     p_headshots: Math.min(kills, clampInt(report.headshots, 500)),
     p_score: clampInt(report.score, 10000000),
+    p_difficulty: typeof report.difficulty === "string" && DIFFICULTIES.has(report.difficulty) ? report.difficulty : null,
+    p_seconds: clampInt(report.seconds, 86400),
+    p_squad: Math.max(1, clampInt(report.squad, 4)),
+    p_melee_kills: Math.min(kills, clampInt(report.meleeKills, 500)),
+    p_grenade_kills: Math.min(kills, clampInt(report.grenadeKills, 500)),
+    p_damage: clampInt(report.damage, 10000000),
   });
   if (!error) return { ok: true };
   // Don't echo raw database errors to the client.

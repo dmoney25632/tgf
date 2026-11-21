@@ -41,3 +41,14 @@ test("survival reports carry the furthest wave and score; other modes don't", ()
 test("skipped starting waves don't earn score", () => {
   assert.equal(matchScore({ ...base, startWave: 7 }), matchScore(base) - 6 * 500);
 });
+
+test("reports carry difficulty, length, squad and kill breakdown for the leaderboards", () => {
+  const r = matchReport({ ...base, meleeKills: 4, grenadeKills: 6, damageDealt: 12345.6, seconds: 600.4 }, "survival-coop", 3);
+  assert.equal(r.difficulty, "regular");
+  assert.equal(r.seconds, 600);
+  assert.equal(r.squad, 3);
+  assert.equal(r.meleeKills, 4);
+  assert.equal(r.grenadeKills, 6);
+  assert.equal(r.damage, 12346);
+  assert.equal(matchReport(base).squad, 1);
+});

@@ -62,11 +62,11 @@ export function CoopGame({
       setSummary(e.summary);
       setShopOpen(false);
       const s = e.summary;
-      saveMatch(matchReport(s, s.mode === "mission" ? "mission-coop" : "survival-coop"))
+      saveMatch(matchReport(s, s.mode === "mission" ? "mission-coop" : "survival-coop", Math.max(2, Math.min(4, launch.roster.length))))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
         .catch(() => setSaved("Stats not saved (network error)."));
     }
-  }, []);
+  }, [launch.roster.length]);
 
   useEffect(() => {
     let cancelled = false;

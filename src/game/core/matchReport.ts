@@ -11,7 +11,7 @@ export function matchScore(s: MatchSummary) {
 }
 
 /** Payload for saveMatch(): survival runs carry the furthest wave they cleared. */
-export function matchReport(s: MatchSummary, mode: string = s.mode) {
+export function matchReport(s: MatchSummary, mode: string = s.mode, squad = 1) {
   const survival = s.mode === "survival";
   return {
     gameId: "iron-horizon",
@@ -25,5 +25,11 @@ export function matchReport(s: MatchSummary, mode: string = s.mode) {
     wave: survival ? s.wavesSurvived : 0,
     headshots: s.headshots,
     score: survival ? matchScore(s) : 0,
+    difficulty: s.difficulty,
+    seconds: Math.round(s.seconds),
+    squad,
+    meleeKills: s.meleeKills,
+    grenadeKills: s.grenadeKills,
+    damage: Math.round(s.damageDealt),
   };
 }
