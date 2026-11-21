@@ -4,7 +4,7 @@ import { FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import { FXAAShader } from "three/addons/shaders/FXAAShader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { QualityPreset } from "../config";
-import { analyzeHdri, getAtmosphere } from "./Atmosphere";
+import { analyzeHdri, DEFAULT_GRADE, getAtmosphere, type GradeDef } from "./Atmosphere";
 import { loadHdri } from "../assets/AssetLoader";
 import { dynamicResolutionBudget, snapRefreshMs } from "./dynamicResolution";
 
@@ -13,19 +13,11 @@ import { dynamicResolutionBudget, snapRefreshMs } from "./dynamicResolution";
 // -----------------------------------------------------------------------------
 
 /**
- * Filmic grade (display-referred, applied after AgX): cinematic war-film
- * look. Deep, slightly cool teal-grey shadows, warm sunlit highlights,
- * a firm S-curve, true blacks, and saturation pulled back a touch (AgX
- * already desaturates brights). Baked into the shaders as constants.
+ * Filmic grade (display-referred, applied after AgX): see GradeDef. The
+ * post path reads it from uniforms (per map); Low bakes DEFAULT_GRADE into
+ * the patched CustomToneMapping as constants.
  */
-const GRADE = {
-  saturation: 0.94,
-  /** 0..1 strength of the smoothstep S-curve. */
-  contrast: 0.62,
-  shadowTint: [0.93, 0.995, 1.05],
-  highlightTint: [1.055, 1.0, 0.915],
-  lift: 0.0,
-};
+const GRADE = DEFAULT_GRADE;
 
 /** AgX maps mid-grey darker than three's ACES; this keeps map exposures valid. */
 const AGX_EXPOSURE_GAIN = 1.45;
@@ -36,9 +28,10 @@ const BLOOM_LEVELS = 5;
 const POST = {
   /** Energy-conserving bloom mix (every pixel blooms a little, like a lens). */
   bloom: 0.045,
-  aoRadius: 1.3,
-  aoIntensity: 5.5,
-  aoBias: 0.06,
+  /** World-space reach (m): wide enough to ground walls, props and soldiers. */
+  aoRadius: 2.0,
+  aoIntensity: 6.5,
+  aoBias: 0.09,
   vignette: 0.38,
   /** Film grain amplitude; re-seeded at GRAIN_HZ (per-frame noise reads as TV static at 120+ Hz). */
   grain: 0.014,
@@ -64,16 +57,34 @@ const GRAIN_HZ = 24;
 const f = (n: number) => n.toFixed(5);
 const v3 = (a: number[]) => `vec3(${a.map(f).join(", ")})`;
 
-/** Shared grade function (sRGB in, sRGB out). */
-const GRADE_GLSL = /* glsl */ `
-vec3 ihGrade( vec3 c ) {
+/** Grade body (sRGB in/out); constants or uniform names are spliced in. */
+const gradeBody = (g: { sat: string; vib: string; con: string; gam: string; st: string; ht: string; lift: string }) => /* glsl */ `
 	c = clamp( c, 0.0, 1.0 );
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-	c = mix( vec3( l ), c, ${f(GRADE.saturation)} );
-	c *= mix( ${v3(GRADE.shadowTint)}, ${v3(GRADE.highlightTint)}, smoothstep( 0.05, 0.8, l ) );
+	// Vibrance: lift muted colours more than already-rich ones.
+	float chroma = max( c.r, max( c.g, c.b ) ) - min( c.r, min( c.g, c.b ) );
+	c = max( mix( vec3( l ), c, ${g.sat} * ( 1.0 + ${g.vib} * ( 1.0 - smoothstep( 0.0, 0.45, chroma ) ) ) ), 0.0 );
+	c *= mix( ${g.st}, ${g.ht}, smoothstep( 0.05, 0.8, l ) );
 	c = clamp( c, 0.0, 1.0 );
-	c = mix( c, c * c * ( 3.0 - 2.0 * c ), ${f(GRADE.contrast)} );
-	return c * ${f(1 - GRADE.lift)} + ${f(GRADE.lift)};
+	c = pow( c, vec3( ${g.gam} ) );
+	c = mix( c, c * c * ( 3.0 - 2.0 * c ), ${g.con} );
+	return c * ( 1.0 - ${g.lift} ) + ${g.lift};`;
+
+/** Shared grade function with the default grade baked in (Low's tone mapping). */
+const GRADE_GLSL = /* glsl */ `
+vec3 ihGrade( vec3 c ) {${gradeBody({ sat: f(GRADE.saturation), vib: f(GRADE.vibrance), con: f(GRADE.contrast), gam: f(GRADE.gamma), st: v3(GRADE.shadowTint), ht: v3(GRADE.highlightTint), lift: f(GRADE.lift) })}
+}`;
+
+/** Per-map grade driven by uniforms (post path). */
+const GRADE_U_GLSL = /* glsl */ `
+uniform float gSat;
+uniform float gVib;
+uniform float gCon;
+uniform float gGam;
+uniform vec3 gShadow;
+uniform vec3 gHigh;
+uniform float gLift;
+vec3 ihGradeU( vec3 c ) {${gradeBody({ sat: "gSat", vib: "gVib", con: "gCon", gam: "gGam", st: "gShadow", ht: "gHigh", lift: "gLift" })}
 }`;
 
 let gradeInstalled = false;
@@ -107,7 +118,8 @@ export function installSpecularAa() {
   specularAaInstalled = true;
   const C = THREE.ShaderChunk as Record<string, string>;
   const anchor = "material.roughness += geometryRoughness;";
-  if (!C.lights_physical_fragment.includes(anchor)) return;
+  // The chunk outlives this module under hot reload: never patch it twice.
+  if (!C.lights_physical_fragment.includes(anchor) || C.lights_physical_fragment.includes("ihDn")) return;
   C.lights_physical_fragment = C.lights_physical_fragment.replace(
     anchor,
     `${anchor}
@@ -157,12 +169,14 @@ void main() {
 	vec3 N = normalize( cross( dx, dy ) );
 	if ( dot( N, P ) > 0.0 ) N = -N;
 	vec2 uvR = radius * 0.5 * projXY / -z;
-	uvR *= min( 1.0, 0.12 / max( uvR.y, 1e-5 ) );
+	uvR *= min( 1.0, 0.2 / max( uvR.y, 1e-5 ) );
 	float noise = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) * 6.2831853;
 	float sum = 0.0;
 	float r2 = radius * radius;
 	for ( int i = 0; i < AO_SAMPLES; i ++ ) {
 		float a = ( float( i ) + 0.5 ) / float( AO_SAMPLES );
+		// Denser near the centre: crisp contact darkening plus a wide, soft skirt.
+		a = a * ( 0.15 + 0.85 * a );
 		float ang = float( i ) * 2.39996323 + noise;
 		vec2 suv = uv + vec2( cos( ang ), sin( ang ) ) * uvR * a;
 		vec3 S = viewPos( suv, viewZ( suv ) );
@@ -327,8 +341,9 @@ uniform float ca;
 uniform float time;
 uniform sampler2D tAdapt;
 uniform float adaptRef;
+uniform float dofAmount;
 varying vec2 vUv;
-// ihGrade() comes with the patched tonemapping_pars_fragment above.
+${GRADE_U_GLSL}
 void main() {
 	vec2 d = vUv - 0.5;
 	float r2 = dot( d, d );
@@ -347,6 +362,20 @@ void main() {
 		float lit = smoothstep( 0.6, 3.5, dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ) );
 		col *= mix( ao, 1.0, max( vm, lit * 0.6 ) );
 	#endif
+	#ifdef USE_DOF
+		// Aim-down-sights depth of field, for free: the bloom chain already holds a
+		// wide blur of the frame and the AO pass a linear world depth. Only what's
+		// well behind the focus (whatever the crosshair is on) softens, more towards
+		// the edges; the viewmodel and the target stay sharp.
+		if ( dofAmount > 0.001 ) {
+			float wz = texture2D( tAO, vUv ).g;
+			float fz = min( texture2D( tAO, vec2( 0.5 ) ).g, 400.0 );
+			float vmPix = step( texture2D( tDepth, vUv ).x, 0.99999 );
+			float behind = smoothstep( fz * 1.5 + 3.0, fz * 3.0 + 14.0, wz );
+			float k = dofAmount * behind * ( 1.0 - vmPix ) * mix( 0.45, 0.8, smoothstep( 0.04, 0.3, r2 ) );
+			col = mix( col, texture2D( tBloom, vUv ).rgb * ${f(1 / BLOOM_LEVELS)}, k );
+		}
+	#endif
 	#ifdef USE_BLOOM
 		// The chain sums every level; normalise so strength stays a mix factor.
 		col = mix( col, texture2D( tBloom, vUv ).rgb * ${f(1 / BLOOM_LEVELS)}, bloomStrength );
@@ -361,7 +390,7 @@ void main() {
 	#endif
 	col = AgXToneMapping( col );
 	col = sRGBTransferOETF( vec4( col, 1.0 ) ).rgb;
-	col = ihGrade( col );
+	col = ihGradeU( col );
 	col *= mix( 1.0, smoothstep( 0.9, 0.15, sqrt( r2 ) ), vignette );
 	gl_FragColor = vec4( clamp( col, 0.0, 1.0 ), 1.0 );
 }`;
@@ -597,6 +626,9 @@ export class RenderPipeline {
     return this.renderer.getPixelRatio();
   }
 
+  /** 0..1 aim-down-sights depth of field (High/Medium post path only; set per frame). */
+  focusBlur = 0;
+
   /** Whether the post stack draws the vignette (the HUD's CSS one is for low). */
   get postVignette() {
     return this.post !== null;
@@ -750,6 +782,7 @@ export class RenderPipeline {
     if (q.bloom) defines.USE_BLOOM = "";
     if (q.godRays) defines.USE_SHAFTS = "";
     if (this.adapt) defines.USE_ADAPT = "";
+    if (ao && q.bloom) defines.USE_DOF = "";
     defines.USE_CA = "";
     this.finalMat = shader(
       FINAL_FRAG,
@@ -768,6 +801,8 @@ export class RenderPipeline {
         time: { value: 0 },
         tAdapt: { value: null },
         adaptRef: { value: POST.adaptRef },
+        dofAmount: { value: 0 },
+        ...this.gradeUniforms(),
       },
       defines,
     );
@@ -809,6 +844,20 @@ export class RenderPipeline {
         toneMapped: false,
       });
     }
+  }
+
+  /** The map's grade (DEFAULT_GRADE + its overrides) as final-pass uniforms. */
+  private gradeUniforms(): Record<string, THREE.IUniform> {
+    const g: GradeDef = { ...DEFAULT_GRADE, ...getAtmosphere(this.scene)?.def.grade };
+    return {
+      gSat: { value: g.saturation },
+      gVib: { value: g.vibrance },
+      gCon: { value: g.contrast },
+      gGam: { value: g.gamma },
+      gShadow: { value: new THREE.Vector3(...g.shadowTint) },
+      gHigh: { value: new THREE.Vector3(...g.highlightTint) },
+      gLift: { value: g.lift },
+    };
   }
 
   setSize(w: number, h: number) {
@@ -986,6 +1035,7 @@ export class RenderPipeline {
 
       fm.uniforms.time.value = time;
       fm.uniforms.toneMappingExposure.value = this.exposure;
+      fm.uniforms.dofAmount.value = this.focusBlur;
       if (this.fxaaMat && p.ldr) {
         this.pass(fm, p.ldr);
         this.fxaaMat.uniforms.time.value = time;

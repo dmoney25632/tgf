@@ -10,6 +10,7 @@ import { cable, chainlink, fbox, groundDecal, groundPatch, groundStrip, railing,
 import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/debris";
 import { HOUSES, LAMPS, MANOR_YARD, ORCHARD, PICKUP, POLES, SQUARE, STATUE, TANK, TOWER, houseById } from "../maps/brennhollow";
 import { villageMaterial } from "./brennhollowTextures";
+import { applyWeathering } from "../../render/Materials";
 import { churchInterior, churchTower, house, manorDetail, pickup, rnd, statue, tankHulk, type Village } from "./brennhollowHouses";
 import { band, clearOf, fbm2, fence, pallets, smoothstep, tyre, wireSpan, type Dressing, type WorldExtra } from "./common";
 
@@ -571,6 +572,11 @@ export const brennhollow: Dressing = (kit) => {
   const timber = villageMaterial("timber", texSize >= 512 ? 512 : 256, quality.anisotropy);
   const setts = villageMaterial("setts", texSize, quality.anisotropy);
   slate.mat.normalScale.set(1.1, 1.1);
+  // Moss and lichen (the map's weather colour): roofs and wall feet, a little between the setts.
+  applyWeathering(slate.mat, 1);
+  applyWeathering(stone.mat, 1);
+  applyWeathering(timber.mat, 0.6);
+  applyWeathering(setts.mat, 0.3);
   extras.push(layer(layerBuilders.slate, slate, true));
   extras.push(layer(layerBuilders.stone, stone, true));
   extras.push(layer(layerBuilders.timber, timber, true));
@@ -578,7 +584,16 @@ export const brennhollow: Dressing = (kit) => {
 
   return {
     terrain: { height, splat, inner: 52, outer: 53 },
-    foliage: { grass, grassBounds: 58, trees, bushes, tallGrass, tallGrassBounds: 66 },
+    foliage: {
+      grass,
+      grassBounds: 58,
+      trees,
+      bushes,
+      tallGrass,
+      tallGrassBounds: 66,
+      // Damp valley meadow: green tufts with straw-coloured patches, not desert scrub.
+      grassPalette: { dry: 0x9a9a58, lush: 0x5e8236, brown: 0x6e7436, rust: 0x8c7c46 },
+    },
     extras,
   };
 };

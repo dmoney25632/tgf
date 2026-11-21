@@ -51,6 +51,13 @@ Returning players download only the assets that changed: asset URLs carry a cont
   After 10 s on budget it tries one level up, and the wait doubles each time an upgrade fails within 8 s. No step toggles a shader define, so stepping never recompiles materials. Choosing a preset in the menu resets the level.
 - **Shader precompile.** `renderer.compileAsync` runs on both scenes when the match loads, including hidden pooled effects. After that, `GpuWarmup` compiles materials it hasn't seen yet (6 per tick, about every 10 frames) while the scene is "warm": the first 15 s, after a quality change, and when objects are added to the scene root.
 - **Texture uploads.** Photo texture sets swap in only after `renderer.initTexture` has uploaded them. The upload queue runs at 3 ms per frame (at least 1 texture), and other not-yet-uploaded scene textures (glTF props) are pre-uploaded the same way. Nothing in `src/game/render` allocates per frame. Scans run only while the scene is warm.
+- **Grass distance LOD.** Grass instances are stored in random order, so each tile draws a prefix of them (`mesh.count`). From 20% to 85% of the grass draw distance a tile thins smoothly to 40% (`GRASS_FAR_KEEP` in `Foliage.ts`). This keeps the higher base density (2.8 per m²) at roughly the old triangle count. Pebbles cost one instanced draw call and scale with the grass budget.
+- **Cheap look features.** None of these adds a pass or a render target:
+  - The per-map grade (`AtmosphereDef.grade`) is uniforms in the final pass. On Low it is baked into the tone-mapping patch.
+  - Weathering (`MapDef.weather`, `applyWeathering`) is a few ALU in the material shaders and reuses the shared grime noise texture.
+  - ADS depth of field (Medium/High only) mixes toward the bloom chain's blur, using the linear depth the AO pass already writes.
+  - `LIGHT_BALANCE` (sun/sky ratio) and `VEG_SKY_FILL` are constants.
+  - Measured on Brennhollow High at spawn: +2.4% triangles, +1 draw call. GPU time was within the noise of the shared test GPU (roughly 14–20 ms before and after).
 - **Canvas MSAA** is off when the starting preset uses post-processing, because the composer does its own MSAA or FXAA. Switching to Low mid-session then has no AA until a reload.
 
 ## How to measure

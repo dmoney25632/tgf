@@ -483,7 +483,10 @@ export const BRENNHOLLOW: MapDef = {
     cloudCover: 0.62,
     envIntensity: 0.45,
     exposure: 1.0,
+    // Damp green valley: cool teal shadows, warm sun, rich foliage.
+    grade: { saturation: 1.06, vibrance: 0.3, shadowTint: [0.9, 0.99, 1.05], highlightTint: [1.06, 1.01, 0.9] },
   },
+  weather: { color: 0x4d6626, amount: 1.3 },
   dressing: "brennhollow",
   spawns: [{ x: 0, z: 4.5, yaw: 0 }],
   boxes,

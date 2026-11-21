@@ -485,6 +485,8 @@ export class GameEngine {
 
     if (!visible) return;
     this.updateLightOcclusion(dt);
+    // Scopes draw their own overlay; iron sights and optics soften the background.
+    this.pipeline.focusBlur = this.weapons.active.def.scope ? 0 : this.weapons.adsAmount;
     this.pipeline.render(dt);
     // Dynamic resolution changed the drawing buffer: keep pixel-sized effects in step.
     if (this.pipeline.resolutionVersion !== this.resolutionVersion) {

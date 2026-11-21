@@ -233,7 +233,10 @@ export const CINDER_FLATS: MapDef = {
     cloudCover: 0.22,
     envIntensity: 0.42,
     exposure: 1.0,
+    // Desert refinery: hot highlights, firm contrast.
+    grade: { contrast: 0.76, highlightTint: [1.08, 1.0, 0.86], shadowTint: [0.94, 0.98, 1.05] },
   },
+  weather: { color: 0xc4a67c, amount: 0.55 },
   dressing: "cinderFlats",
   spawns: [{ x: 0, z: 6.5, yaw: 0 }],
   boxes,

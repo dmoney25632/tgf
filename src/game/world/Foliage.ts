@@ -16,7 +16,13 @@ export type FoliageSpec = {
   /** Waist-high dry grass density 0..1 (scattered within ±tallGrassBounds). */
   tallGrass?(x: number, z: number): number;
   tallGrassBounds?: number;
+  /** Short-grass colours (sRGB hex); defaults are a dry, sunburnt mix. */
+  grassPalette?: Partial<GrassPalette>;
 };
+
+/** Patches blend dry → lush with age; the sparsest patches go brown or rusty. */
+export type GrassPalette = { dry: number; lush: number; brown: number; rust: number };
+const DRY_GRASS: GrassPalette = { dry: 0xa59a68, lush: 0x6f7a44, brown: 0x7d6a48, rust: 0x8a5a3a };
 
 /** Deterministic RNG. */
 export function rng(seed: number) {
@@ -196,6 +202,9 @@ function makeTree(kind: TreeKind, seed: number) {
   return { bark, leaves };
 }
 
+/** Indirect-light multiplier for Lambert vegetation (≈ hemisphere + the IBL it can't see). */
+const VEG_SKY_FILL = 1.9;
+
 /** Wind + distance fade for instanced vegetation (Lambert). */
 function windHook(time: { value: number }, fadeFar: { value: number }, strength: number, heightScale: number, fade: boolean) {
   return (shader: THREE.WebGLProgramParametersWithUniforms) => {
@@ -222,7 +231,12 @@ function windHook(time: { value: number }, fadeFar: { value: number }, strength:
         transformed += transpose(iRot) * windW / iS2;
         ${fade ? "transformed *= 1.0 - smoothstep(fadeFar * 0.7, fadeFar, distance(iPos.xz, cameraPosition.xz));" : ""}`,
       );
-    shader.fragmentShader = shader.fragmentShader.replace("#include <lights_lambert_pars_fragment>", VEG_LIGHT);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <lights_lambert_pars_fragment>", VEG_LIGHT)
+      // Lambert gets no image-based light (scene.environment is PBR-only), so
+      // the sky fill that lights the ground around it would be missing and
+      // grass/leaves would read as dark cut-outs: stand in for it here.
+      .replace("#include <lights_fragment_end>", `irradiance *= ${VEG_SKY_FILL.toFixed(2)};\n#include <lights_fragment_end>`);
   };
 }
 
@@ -246,7 +260,37 @@ const VEG_LIGHT = THREE.ShaderChunk.lights_lambert_pars_fragment.replace(
 `,
 );
 
-type GrassTile = { mesh: THREE.InstancedMesh; total: number; box: THREE.Box3 };
+type GrassTile = { mesh: THREE.InstancedMesh; total: number; full: number; box: THREE.Box3 };
+
+/**
+ * Grass LOD: tiles keep every instance up close and thin out to this
+ * fraction at the fade distance (instances are in random order, so a
+ * shorter prefix is an even thinning). Dense near the camera, cheap far away.
+ */
+const GRASS_FAR_KEEP = 0.4;
+
+/** Small half-buried stones on open ground (per m², at foliage density 1). */
+const PEBBLES_PER_M2 = 0.05;
+
+/** Low-poly stone: a jittered, flattened icosahedron (unit size). */
+function makePebble(r: () => number) {
+  const g = new THREE.IcosahedronGeometry(0.5, 0).toNonIndexed();
+  const p = g.getAttribute("position");
+  const v = new THREE.Vector3();
+  // Same jitter for coincident corners (non-indexed copies), so faces stay closed.
+  const jitter = new Map<string, number>();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const key = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
+    let k = jitter.get(key);
+    if (k === undefined) jitter.set(key, (k = 0.75 + r() * 0.45));
+    p.setXYZ(i, v.x * k, v.y * k * 0.6, v.z * k);
+  }
+  g.computeVertexNormals(); // flat facets read as chipped stone
+  // World materials use vertex colours: white, so the instance colour shows.
+  g.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(p.count * 3).fill(1), 3));
+  return g;
+}
 
 /**
  * Instanced vegetation: grass tiles (frustum + distance culled, faded in the
@@ -261,12 +305,13 @@ export class Foliage {
   private bushes: { mesh: THREE.InstancedMesh; total: number } | null = null;
   private tall: { mesh: THREE.InstancedMesh; total: number } | null = null;
   private litter: { mesh: THREE.InstancedMesh; total: number } | null = null;
+  private pebbles: { mesh: THREE.InstancedMesh; total: number } | null = null;
   private readonly tallFade = { value: 90 };
   private readonly disposables: { dispose(): void }[] = [];
   private readonly fadeFar = { value: 50 };
   private grassDistance = 50;
   private readonly tmp = new THREE.Vector3();
-  triangles = { grass: 0, trees: 0, bushes: 0, tallGrass: 0, litter: 0 };
+  triangles = { grass: 0, trees: 0, bushes: 0, tallGrass: 0, litter: 0, pebbles: 0 };
 
   constructor(
     spec: FoliageSpec,
@@ -284,7 +329,8 @@ export class Foliage {
     const p = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
-    const dry = new THREE.Color(0xa59a68), green = new THREE.Color(0x6f7a44), brown = new THREE.Color(0x7d6a48);
+    const pal = { ...DRY_GRASS, ...spec.grassPalette };
+    const dry = new THREE.Color(pal.dry), green = new THREE.Color(pal.lush), brown = new THREE.Color(pal.brown);
 
     // ---- Grass ---------------------------------------------------------------
     const clump = makeGrassClump(r, 9, 0.66, 0.19);
@@ -292,18 +338,18 @@ export class Foliage {
     const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     grassMat.name = "ih-grass";
     grassMat.onBeforeCompile = windHook(windTime, this.fadeFar, 0.35, 1.0, true);
-    grassMat.customProgramCacheKey = () => "ih-grass-v2";
+    grassMat.customProgramCacheKey = () => "ih-grass-v3";
     this.disposables.push(grassMat);
     const T = 25;
     const B = spec.grassBounds;
-    const maxPerM2 = 1.8;
+    const maxPerM2 = 2.8;
     // Low-frequency colour field: grass grows in patches (lush, dry, rusty), not salt-and-pepper.
     const patch = (x: number, z: number) => {
       const a = Math.sin(x * 0.11 + Math.sin(z * 0.07) * 2.1) * 0.5 + 0.5;
       const b = Math.sin(z * 0.13 + Math.sin(x * 0.05) * 2.7 + 1.3) * 0.5 + 0.5;
       return a * 0.6 + b * 0.4;
     };
-    const rust = new THREE.Color(0x8a5a3a);
+    const rust = new THREE.Color(pal.rust);
     for (let tz = -B; tz < B; tz += T) {
       for (let tx = -B; tx < B; tx += T) {
         const mats: THREE.Matrix4[] = [];
@@ -331,7 +377,7 @@ export class Foliage {
         mesh.receiveShadow = true;
         mesh.computeBoundingSphere();
         mesh.computeBoundingBox();
-        this.tiles.push({ mesh, total: mats.length, box: new THREE.Box3(new THREE.Vector3(tx, -1, tz), new THREE.Vector3(tx + T, 2, tz + T)) });
+        this.tiles.push({ mesh, total: mats.length, full: mats.length, box: new THREE.Box3(new THREE.Vector3(tx, -1, tz), new THREE.Vector3(tx + T, 2, tz + T)) });
         this.group.add(mesh);
       }
     }
@@ -360,7 +406,7 @@ export class Foliage {
         const tallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
         tallMat.name = "ih-tallgrass";
         tallMat.onBeforeCompile = windHook(windTime, this.tallFade, 0.5, 0.8, true);
-        tallMat.customProgramCacheKey = () => "ih-tallgrass-v2";
+        tallMat.customProgramCacheKey = () => "ih-tallgrass-v3";
         this.disposables.push(tallMat);
         const order = mats.map((_, i) => i).sort(() => r() - 0.5);
         const mesh = new THREE.InstancedMesh(tallClump, tallMat, mats.length);
@@ -387,7 +433,7 @@ export class Foliage {
       const mat = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide });
       mat.onBeforeCompile = windHook(windTime, this.fadeFar, strength, hScale, false);
       // The hook bakes constants into GLSL, so programs must not be shared across them.
-      mat.customProgramCacheKey = () => `ih-leaves-v2:${strength}:${hScale}`;
+      mat.customProgramCacheKey = () => `ih-leaves-v3:${strength}:${hScale}`;
       mat.name = "ih-leaves";
       this.disposables.push(mat);
       return mat;
@@ -504,6 +550,45 @@ export class Foliage {
         this.triangles.litter = mats.length * 2;
       }
     }
+    // ---- Pebbles: stones half-sunk into open ground (natural ground only) ----
+    {
+      const bounds = Math.max(spec.grassBounds, spec.tallGrassBounds ?? 0);
+      const mats: THREE.Matrix4[] = [];
+      const cols: THREE.Color[] = [];
+      const tries = Math.round((2 * bounds) * (2 * bounds) * PEBBLES_PER_M2);
+      const e = new THREE.Euler();
+      for (let i = 0; i < tries; i++) {
+        const x = (r() * 2 - 1) * bounds, z = (r() * 2 - 1) * bounds;
+        const natural = Math.max(spec.grass(x, z), spec.tallGrass?.(x, z) ?? 0);
+        if (natural < 0.05 || blocked(x, z)) continue;
+        // Mostly gravel-sized, the odd fist- or head-sized stone.
+        const big = r();
+        const size = big > 0.93 ? 0.3 + r() * 0.35 : 0.06 + r() * 0.14;
+        e.set((r() - 0.5) * 0.5, r() * Math.PI * 2, (r() - 0.5) * 0.5);
+        q.setFromEuler(e);
+        s.set(size * (0.8 + r() * 0.5), size * (0.7 + r() * 0.6), size * (0.8 + r() * 0.5));
+        p.set(x, height(x, z) - s.y * 0.18, z);
+        mats.push(new THREE.Matrix4().compose(p, q, s));
+        const g = 0.72 + r() * 0.4;
+        cols.push(new THREE.Color(g * (0.98 + r() * 0.06), g, g * (0.92 + r() * 0.06)));
+      }
+      if (mats.length) {
+        const geo = makePebble(r);
+        this.disposables.push(geo);
+        const mesh = new THREE.InstancedMesh(geo, lib.get("rock"), mats.length);
+        mats.forEach((mm, i) => {
+          mesh.setMatrixAt(i, mm);
+          mesh.setColorAt(i, cols[i]);
+        });
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        mesh.name = "pebbles";
+        this.group.add(mesh);
+        this.pebbles = { mesh, total: mats.length };
+        this.triangles.pebbles = mats.length * (geo.getAttribute("position").count / 3);
+      }
+    }
     this.triangles.grass = this.tiles.reduce((a, t) => a + t.total, 0) * (clump.index!.count / 3);
     this.setQuality(quality);
   }
@@ -512,22 +597,27 @@ export class Foliage {
     const d = q.foliageDensity;
     this.grassDistance = q.grassDistance;
     this.fadeFar.value = q.grassDistance;
-    for (const t of this.tiles) t.mesh.count = Math.floor(t.total * d);
+    for (const t of this.tiles) t.mesh.count = t.full = Math.floor(t.total * d);
     const td = Math.min(1, 0.4 + d * 0.6);
     for (const t of this.trees) t.mesh.count = Math.max(1, Math.floor(t.total * td));
     if (this.bushes) this.bushes.mesh.count = Math.floor(this.bushes.total * Math.min(1, 0.3 + d * 0.7));
     if (this.tall) this.tall.mesh.count = Math.floor(this.tall.total * Math.min(1, 0.15 + d * d * 0.85));
     this.tallFade.value = q.grassDistance * 2;
     if (this.litter) this.litter.mesh.count = Math.floor(this.litter.total * Math.min(1, 0.35 + d * 0.65));
+    if (this.pebbles) this.pebbles.mesh.count = Math.floor(this.pebbles.total * Math.min(1, 0.25 + d * 0.75));
   }
 
-  /** Hides grass tiles beyond the fade distance (cheap CPU cull). */
+  /** Hides grass tiles beyond the fade distance and thins the far ones (cheap CPU LOD). */
   update(camera: THREE.Camera) {
     const cp = camera.position;
+    const gd = this.grassDistance;
     for (const t of this.tiles) {
       t.box.clampPoint(cp, this.tmp);
       this.tmp.y = cp.y;
-      t.mesh.visible = this.tmp.distanceTo(cp) < this.grassDistance && t.mesh.count > 0;
+      const dist = this.tmp.distanceTo(cp);
+      const keep = 1 - (1 - GRASS_FAR_KEEP) * THREE.MathUtils.smoothstep(dist, gd * 0.2, gd * 0.85);
+      t.mesh.count = Math.floor(t.full * keep);
+      t.mesh.visible = dist < gd && t.mesh.count > 0;
     }
   }
 
@@ -537,6 +627,7 @@ export class Foliage {
     this.bushes?.mesh.dispose();
     this.tall?.mesh.dispose();
     this.litter?.mesh.dispose();
+    this.pebbles?.mesh.dispose();
     for (const d of this.disposables) d.dispose();
     this.group.removeFromParent();
   }
