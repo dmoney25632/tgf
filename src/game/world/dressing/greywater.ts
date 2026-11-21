@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachGrime, finishGrime } from "../architecture/grime";
 import { rng, type BushPlacement, type TreePlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
 import { MeshBuilder } from "../MeshBuilder";
@@ -36,6 +37,7 @@ export const greywater: Dressing = (kit) => {
   const name = qualityName(quality);
   const detail = worldDetail(name);
   const extras: WorldExtra[] = [];
+  attachGrime(B, qualityName(quality), "wet");
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const flat = () => 0;
 
@@ -167,7 +169,7 @@ export const greywater: Dressing = (kit) => {
   // ---- Barracks, generator, mast, flagpole ---------------------------------------------------------------------
   {
     const b = BARRACKS;
-    building(B, props, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, w: b.x1 - b.x0, d: b.z1 - b.z0, floors: 1, floorH: b.h, seed: 303, tint: 0x9a9a8a, damage: 0.05, front: 3, detail: true });
+    building(B, props, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, w: b.x1 - b.x0, d: b.z1 - b.z0, floors: 1, floorH: b.h, seed: 303, tint: 0x9a9a8a, damage: 0.05, front: 3, detail: true, glazed: true });
     // Lit windows along the west and south sides.
     for (let z = b.z0 + 2.5; z < b.z1 - 1; z += 4) if (Math.abs(z) > 1.5) glowPane(B, b.x0 - 0.03, 2.0, z, 0.02, 0.9, 1.2, r() < 0.7 ? WIN : 0x3a3428);
     for (let x = b.x0 + 3; x < b.x1 - 1; x += 4) glowPane(B, x, 2.0, b.z1 + 0.03, 1.2, 0.9, 0.02, r() < 0.6 ? WIN : 0x3a3428);
@@ -255,6 +257,7 @@ export const greywater: Dressing = (kit) => {
   extras.push(searchlights());
   extras.push(convoy(kit));
 
+  extras.push(...finishGrime(B));
   return {
     terrain: { height, splat, inner: 130, outer: 480 },
     foliage: {

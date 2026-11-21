@@ -411,11 +411,16 @@ export function waterTank(B: MeshBuilder, x: number, y: number, z: number, black
   B.box("metal_dark", x, y + 0.5, z, 1, 0.05, 1, 0x4a4a46, { group });
 }
 
-/** Vertical downpipe with a kick-out at the bottom. */
+/** Vertical downpipe with a hopper head at the top, wall clips and a kick-out shoe at the bottom. */
 export function downpipe(B: MeshBuilder, f: Frame, u: number, top: number, group = "decor") {
-  const a = f.at(u, 0.25, 0.09), b = f.at(u, top, 0.09);
+  const a = f.at(u, 0.25, 0.09), b = f.at(u, top - 0.3, 0.09);
   rod(B, a, b, 0.045, 0x8a8a82, group, "metal_painted");
   rod(B, a, f.at(u, 0.05, 0.3), 0.045, 0x7a7a72, group, "metal_painted");
+  // Hopper head collecting the roof outlet, tapering into the pipe.
+  fbox(B, f, "metal_painted", u, top - 0.15, 0.11, 0.26, 0.26, 0.2, 0x7e7e76, { group });
+  fbox(B, f, "metal_painted", u, top - 0.31, 0.1, 0.14, 0.1, 0.14, 0x7e7e76, { group });
+  fbox(B, f, "metal_painted", u, top + 0.03, 0.08, 0.08, 0.08, 0.16, 0x7e7e76, { group });
+  for (let y = 1.2; y < top - 0.6; y += 1.8) fbox(B, f, "metal_dark", u, y, 0.06, 0.12, 0.035, 0.12, 0x3a3a36, { group });
 }
 
 /** Sagging cable bundle between two points. */

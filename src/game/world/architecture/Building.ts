@@ -6,6 +6,8 @@ import {
   Frame, acUnit, awning, blastOutline, cable, dish, downpipe, fbox, railing, rebar, wall, wallDecal, waterTank,
   type Blast, type Opening, type Tint,
 } from "./kit";
+import { grimeOf, holeRects } from "./grime";
+import { cornerTrim, corbels, doorSurround, facadeCable, glazeOpening, glazeShop, wallClutter, windowSurround, worldFit, type CornerStyle } from "./facade";
 
 /** Sun-faded plaster colours common to the region (tints over the plaster photo texture). */
 export const PLASTER_TINTS = [0xe4d8c0, 0xd9c7a4, 0xcdb898, 0xe8dccb, 0xc9b9a6, 0xd6c2b4, 0xbfb6a6, 0xe0cfae, 0xc4ae8e, 0xd2c8b8];
@@ -40,6 +42,13 @@ export type BuildingSpec = {
   back?: number;
   /** Dark interior volume behind the windows (backdrop buildings). */
   hollow?: boolean;
+  /**
+   * Openings are glazed / backed (the building is never entered: its
+   * collider fills the footprint). Default: same as `hollow`; never on ruins.
+   */
+  glazed?: boolean;
+  /** Ground height for street props at the facade feet (default: groundY). */
+  ground?: (x: number, z: number) => number;
 };
 
 function rnd(seed: number) {
@@ -102,6 +111,19 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
   const frames = facades(s.x, s.z, s.w, s.d, gy);
   const front = s.front ?? 0;
   const wallMat: WorldMat = "plaster";
+  // Newer facade detail draws from its own stream so the window layout of
+  // every existing building stays exactly as it was.
+  const r2 = rnd(s.seed * 31 + 7);
+  const glazed = !s.ruin && (s.glazed ?? !!s.hollow);
+  const far = group.startsWith("far");
+  const grime = grimeOf(B);
+  // Fine mouldings (quoins, corbels, hoods) are skipped on the low preset when the map says so.
+  const fine = grime ? grime.quality !== "low" : true;
+  const cornerPick = (["quoins", "quoins", "pilaster", "none"] as const)[Math.floor(r2() * 4)];
+  const corner: CornerStyle = s.ruin || far || !detail ? "none" : !fine && cornerPick === "quoins" ? "pilaster" : cornerPick;
+  const surround = detail && !far && r2() < 0.4;
+  const trim2 = trim.clone().lerp(new THREE.Color(0xf4f0e6), 0.25);
+  const ground = s.ground ?? (() => gy);
 
   // Foundation (hides slopes), plinth.
   B.box("concrete_dirty", s.x, gy - 0.4, s.z, s.w + 0.12, 1.2, s.d + 0.12, tint.clone().multiplyScalar(0.7), { group });
@@ -154,6 +176,8 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
     const okOpen = openings.filter((o) => o.y + o.h + (o.arch ? o.w / 2 : 0) < crownAt(o.u) - (s.ruin ? 0.9 : 0.25));
     const okBlast = blasts.filter((b) => b.y + b.r < crownAt(b.u) - 0.9);
     wall(B, f, { length: L, height: H + parapet, thickness: T, openings: okOpen, blasts: okBlast, ruin: s.ruin ? 0.6 : 0, collapse, seed: s.seed + side }, wallMat, tint, { group });
+    if (full && !collapse) cornerTrim(B, f, L, H, okOpen, corner, trim2, group, wallMat);
+    if (full && detail && fine && !s.ruin && !far) corbels(B, f, L, H, okOpen, trim, group, wallMat);
 
     // Floor bands + cornice + coping (skipped over collapsed stretches).
     const bandable = (y: number) => !collapse || y < H + parapet - collapse[2] - 0.3;
@@ -180,17 +204,20 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
           if (sh > 0) {
             const p = f.at(o.u, top - sh, -0.06);
             // Every other shutter only on high (open, dark shopfront otherwise).
-            props.place("rollershutter_door", { x: p.x, y: p.y, z: p.z, fit: [o.w, sh, 0.25], rotY: f.rotY + Math.PI, tier: Math.round(p.x * 0.7 + p.z * 1.3) & 1 ? 2 : 0 });
+            props.place("rollershutter_door", { x: p.x, y: p.y, z: p.z, fit: worldFit(f.rotY + Math.PI, o.w, sh, 0.25), rotY: f.rotY + Math.PI, tier: Math.round(p.x * 0.7 + p.z * 1.3) & 1 ? 2 : 0 });
           }
         }
+        if (glazed) glazeShop(B, f, o, r2, !s.hollow, SHUTTER_TINTS[Math.floor(r2() * SHUTTER_TINTS.length)], group, T);
         if (detail && full && r() < 0.7) awning(B, f, o.u, gy + top + 0.55, o.w + 0.6, 1.4, 0.5, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < damage * 0.6, group);
         continue;
       }
       if (w.kind === "arch") {
+        if (glazed && !s.hollow) fbox(B, f, "plain", o.u, (o.h + o.w / 2) / 2, -T - 0.03, o.w + 0.1, o.h + o.w / 2 + 0.1, 0.02, 0x0f0e0d, { group, noAo: true });
         fbox(B, f, wallMat, o.u - o.w / 2 - 0.12, 0.6, 0.04, 0.24, 1.2, 0.08, trim, { group });
         fbox(B, f, wallMat, o.u + o.w / 2 + 0.12, 0.6, 0.04, 0.24, 1.2, 0.08, trim, { group });
         continue;
       }
+      if (glazed && (w.kind === "win" || w.kind === "balcony")) glazeOpening(B, f, o, r2, damage, !s.hollow, group, T);
       if (!detail && !full) continue;
       // Frame inside the reveal.
       const fd = -0.12;
@@ -206,6 +233,7 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
       if (w.kind === "win" || w.kind === "balcony") {
         if (w.kind === "win") fbox(B, f, "concrete", o.u, o.y - 0.04, 0.06, o.w + 0.22, 0.08, 0.2, trim, { group });
         if (!o.arch) fbox(B, f, wallMat, o.u, top + 0.09, 0.03, o.w + 0.3, 0.18, 0.06, trim, { group });
+        if (surround && !o.arch && full) windowSurround(B, f, o, trim, group, wallMat);
         // Shutters: open against the wall, closed, or one hanging off.
         if (detail) {
           const k = r();
@@ -224,7 +252,10 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
         }
       }
       if (w.kind === "door") {
-        const ajar = r();
+        // Sealed buildings keep their doors shut (nothing behind them).
+        const ajar = glazed ? 0 : r();
+        if (glazed) r();
+        if (detail && !far) doorSurround(B, f, o, trim, r2() < 0.4 && fine, group, wallMat);
         fbox(B, f, "metal_painted", o.u + (ajar < 0.5 ? 0 : 0.25), o.h / 2, -0.15, o.w - 0.04, o.h - 0.02, 0.05, frameTint, { group, yaw: ajar < 0.5 ? 0 : 0.9 });
         fbox(B, f, "concrete", o.u, 0.07, 0.25, o.w + 0.5, 0.14, 0.5, trim, { group });
       }
@@ -244,7 +275,17 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
       // Grime: drips under sills, soot above some upper windows.
       if (r() < 0.5) wallDecal(B, f, "leak", o.u + (r() - 0.5) * 0.3, o.y - 0.55, o.w * 0.9, 1.0, 0xffffff, 0.012, group);
       if (w.floor > 0 && r() < damage * 0.4) wallDecal(B, f, "soot", o.u, top + 0.7, o.w * 1.8, 1.8, 0xffffff, 0.014, group);
-      if (detail && full && w.kind === "win" && r() < 0.12) acUnit(B, f, o.u + o.w / 2 + 0.6, o.y + 0.1, Math.floor(r() * 1e6), group);
+      if (detail && full && w.kind === "win" && r() < 0.12) {
+        acUnit(B, f, o.u + o.w / 2 + 0.6, o.y + 0.1, Math.floor(r() * 1e6), group);
+        grime?.rust(f, o.u + o.w / 2 + 0.6, o.y + 0.05, 0.7, 1.1 + r2() * 0.8);
+      } else if (detail && full && fine && !far && w.kind === "win" && w.floor > 0 && r2() < 0.1) {
+        // Extra AC units (own stream) on the other side, where the wall is clear.
+        const u = o.u - o.w / 2 - 0.6;
+        if (u > 0.7 && !okOpen.some((q) => q !== o && Math.abs(q.u - u) < q.w / 2 + 0.5 && Math.abs(q.y - o.y) < 1.5)) {
+          acUnit(B, f, u, o.y + 0.1, Math.floor(r2() * 1e6), group);
+          grime?.rust(f, u, o.y + 0.05, 0.7, 1.1 + r2() * 0.8);
+        }
+      }
     }
     // Damage: spalled plaster rings around holes, loose spalls, bullet pocks, rebar.
     for (const b of okBlast) {
@@ -263,6 +304,25 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
     if (detail && full) {
       downpipe(B, f, 0.25, H + parapet - 0.1, group);
       if (r() < 0.5) downpipe(B, f, L - 0.25, H + parapet - 0.1, group);
+    }
+    // Service cable along the street front, a meter box near the door; clutter at the foot.
+    if (detail && full && isFront && !s.ruin && s.floors > 1 && r2() < 0.75) {
+      const door = okOpen.find((o) => (o as Win).kind === "door" || (o as Win).kind === "shop");
+      facadeCable(B, f, L, fh - 0.26, okOpen, r2, group, door ? door.u + (door.w / 2 + 0.6) * (r2() < 0.5 ? -1 : 1) : -1);
+    }
+    if (props && detail && !blank && (isFront || (full && r2() < 0.35))) wallClutter(props, f, L, okOpen, ground, r2, far, isFront && !far ? 2 : 1);
+    if (grime) {
+      grime.facade(f, {
+        length: L,
+        top: collapse ? H + parapet - collapse[2] - 0.4 : s.ruin ? H * 0.6 : H + parapet,
+        seed: s.seed * 7 + side,
+        holes: holeRects(okOpen, okBlast),
+        fromTop: !s.ruin && !collapse,
+        corners: !s.ruin && !collapse,
+        cracks: okOpen.filter((o) => (o as Win).kind === "win"),
+        amount: far ? 0.55 : full ? 1 : 0.7,
+        d: 0.036,
+      });
     }
   });
 

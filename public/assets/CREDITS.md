@@ -38,3 +38,11 @@ Obtained from the three.js repository (`examples/models/gltf/LeePerrySmith/`); t
 |---|---|---|
 | `textures/worn_plaster_wall`, `rough_plaster_brick_02`, `rusty_corrugated_iron`, `worn_asphalt`, `rubble`, `damaged_concrete_floor` | [Poly Haven](https://polyhaven.com/textures) (1K JPG) | [CC0](https://polyhaven.com/license) |
 | `models/covered_car`, `old_tyre`, `trashbag`, `plastic_jerrycan`, `propane_tank`, `utility_box_01`, `rollershutter_door`, `steel_frame_shelves_01`, `metal_office_desk`, `plastic_monobloc_chair_01`, `hanging_industrial_lamp` | [Poly Haven models](https://polyhaven.com/models) (1K glTF) | [CC0](https://polyhaven.com/license) |
+
+## Map detail additions (CC0)
+
+| Folder | Source | License |
+|---|---|---|
+| `models/plastic_crate_02`, `wooden_crate_02`, `Barrel_02`, `utility_box_02` | [Poly Haven models](https://polyhaven.com/models) (1K glTF; textures re-encoded to JPEG q80/q85 like `scripts/optimize-assets.sh`) | [CC0](https://polyhaven.com/license) |
+
+The facade grime atlas (rain streaks, roof runs, rising damp, cracks, rust, algae, corner dirt) is painted procedurally on a canvas at load time (`src/game/world/architecture/grime.ts`); it uses no third-party images.
