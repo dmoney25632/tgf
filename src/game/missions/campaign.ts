@@ -1,4 +1,5 @@
 import type { MissionDef, Point } from "./types";
+import { OPERATIONS } from "./operations";
 
 /**
  * "Sarrow Basin" — an original three-mission campaign.
@@ -326,6 +327,9 @@ export const CAMPAIGN: MissionDef[] = [
   },
 ];
 
+/** Every playable mission: the campaign, then standalone operations. */
+export const ALL_MISSIONS: MissionDef[] = [...CAMPAIGN, ...OPERATIONS];
+
 export function getMission(id: string) {
-  return CAMPAIGN.find((m) => m.id === id);
+  return ALL_MISSIONS.find((m) => m.id === id);
 }

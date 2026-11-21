@@ -19,11 +19,17 @@ import { saveMatch } from "@/app/play/[gameId]/actions";
 import { matchReport } from "@/game/core/matchReport";
 import { ShopOverlay } from "@/components/game/shop-overlay";
 import { MatchSummaryView } from "@/components/game/match-summary";
+import { MissionDebrief } from "@/components/missions/mission-debrief";
+import { coopMission } from "@/game/net/ids";
 
 export type CoopLaunch = { matchId: string; roster: RosterEntry[]; settings: RoomSettings; hostId: string };
 export type CoopLoadout = { operator: OperatorId; primary: WeaponId; secondary: WeaponId; look?: CharacterLook };
 
-/** One online co-op survival match. The engine + net layer load lazily. */
+/**
+ * One online co-op match: Survival, or a mission when the room has a
+ * `missionId` (the host runs the script; objectives, checkpoints and
+ * gunships replicate through CoopSurvivalNet). The engine + net layer load lazily.
+ */
 export function CoopGame({
   launch,
   transport,
@@ -48,6 +54,7 @@ export function CoopGame({
   const [mode, setMode] = useState<SurvivalGameMode | null>(null);
   const isHost = launch.hostId === transport.selfId;
   const dev = useInputDevice();
+  const mission = coopMission(launch.settings.missionId);
 
   const onEvent = useCallback((e: EngineEvent) => {
     if (e.type === "shop") setShopOpen(e.open);
@@ -55,7 +62,7 @@ export function CoopGame({
       setSummary(e.summary);
       setShopOpen(false);
       const s = e.summary;
-      saveMatch(matchReport(s, "survival-coop"))
+      saveMatch(matchReport(s, s.mode === "mission" ? "mission-coop" : "survival-coop"))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
         .catch(() => setSaved("Stats not saved (network error)."));
     }
@@ -65,15 +72,19 @@ export function CoopGame({
     let cancelled = false;
     let engine: GameEngine | null = null;
     Promise.all([import("@/game/core/Engine"), import("@/game/net/CoopSurvivalNet"), import("@/game/net/ids")])
-      .then(([{ GameEngine }, { CoopSurvivalNet }, { coopMap }]) => {
+      .then(([{ GameEngine }, { CoopSurvivalNet }, { coopRoomMap, coopMission }]) => {
         if (cancelled || !hostRef.current) return;
         const net: CoopSurvivalNet = new CoopSurvivalNet({ transport, matchId: launch.matchId, hostId: launch.hostId, roster: launch.roster, settings: launch.settings });
         const s = launch.settings;
+        const m = coopMission(s.missionId);
         engine = new GameEngine(hostRef.current, {
           callsign,
           settings: loadSettings(mobileDefaultQuality() ?? detectQuality()),
-          mode: "survival",
-          map: coopMap(s.mapId),
+          mode: m ? "mission" : "survival",
+          map: coopRoomMap(s.mapId, s.missionId),
+          mission: m
+            ? { missionId: m.id, operator: loadout.operator, primary: loadout.primary, secondary: loadout.secondary, difficulty: s.difficulty, squad: 0, coop: net }
+            : undefined,
           loadout: [loadout.primary, loadout.secondary],
           survival: {
             operator: loadout.operator,
@@ -121,12 +132,17 @@ export function CoopGame({
     <div className="fixed inset-0 bg-black">
       <div ref={hostRef} className="absolute inset-0" />
       {shopOpen && mode && <ShopOverlay mode={mode} dev={dev} onResume={resumeFromShop} />}
-      {summary && <MatchSummaryView s={summary} saved={saved} onAgain={onExit} onLobby={onExit} />}
+      {summary &&
+        (summary.mission ? (
+          <MissionDebrief s={summary} saved={saved} callsign={callsign} mode="coop" squad={launch.roster.length} onLobby={onExit} lobbyLabel="Back to the party" />
+        ) : (
+          <MatchSummaryView s={summary} saved={saved} onAgain={onExit} onLobby={onExit} />
+        ))}
       {showPause && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-white/10 bg-neutral-950/90 p-6 text-neutral-100">
             <p className="font-mono text-[11px] tracking-[0.3em] text-white/80 uppercase">Iron Horizon · Online co-op</p>
-            <h1 className="mt-1 text-2xl font-bold">Hold the outpost</h1>
+            <h1 className="mt-1 text-2xl font-bold">{mission ? `${mission.title} · ${mission.codename}` : "Hold the outpost"}</h1>
             <p className="mt-1 text-sm text-neutral-400">{names}</p>
             <p className="mt-3 text-xs text-neutral-500">
               The match keeps running while this menu is open.{" "}

@@ -105,6 +105,14 @@ export class AttackHelicopter implements Hittable, Combatant {
   private hasPrev = false;
   private retargetTimer = 0;
   lastDamageSource = "";
+  /**
+   * Network puppet (co-op clients): the host flies the real gunship. Hits are
+   * forwarded through `remote` instead of applied, and `puppetTo` steers the
+   * model to the host's pose. Null for locally simulated helicopters.
+   */
+  remote: ((amount: number, part: HitPart, source: string) => void) | null = null;
+  private readonly puppetGoal = new THREE.Vector3();
+  private puppetYaw = 0;
 
   // Scratch.
   private readonly goal = new THREE.Vector3();
@@ -190,6 +198,10 @@ export class AttackHelicopter implements Hittable, Combatant {
   get flightState() {
     return this.state;
   }
+  /** Heading (rad), for network replication and backstab checks. */
+  heading() {
+    return this.yaw;
+  }
 
   aimPoint(out: THREE.Vector3) {
     return out.copy(this.position);
@@ -242,6 +254,11 @@ export class AttackHelicopter implements Hittable, Combatant {
 
   applyDamage(amount: number, part: HitPart, _from?: THREE.Vector3, source = ""): HitResult {
     if (!this.alive || this.plan?.friendly) return { damage: 0, killed: false, counts: false };
+    if (this.remote) {
+      // The host decides; show the hit marker now.
+      this.remote(amount, part, source);
+      return { damage: amount, killed: false, counts: true };
+    }
     const mul = source === "grenade" ? HELI.explosiveMul : part === "head" ? 1.25 : part === "legs" ? 0.8 : 1;
     const dmg = Math.min(this.health, amount * mul);
     this.health -= dmg;
@@ -273,8 +290,43 @@ export class AttackHelicopter implements Hittable, Combatant {
   // Update
   // ---------------------------------------------------------------------------
 
+  /** Co-op client: appear (if idle) and glide towards the host's pose. */
+  puppetTo(x: number, y: number, z: number, yaw: number, health: number, maxHealth: number) {
+    if (this.state === "idle" || this.state === "wreck") {
+      this.launch({ entry: { x, z }, exit: { x, z }, orbit: { x, z, radius: 0, altitude: y, seconds: 0 }, health: maxHealth });
+      this.position.set(x, y, z);
+      this.yaw = yaw;
+    }
+    this.puppetGoal.set(x, y, z);
+    this.puppetYaw = yaw;
+    this.health = health;
+    this.maxHealth = maxHealth;
+  }
+
+  /** Co-op client: the host's gunship went down — spiral in locally. */
+  puppetKill() {
+    if (!this.alive) return;
+    this.health = 0;
+    this.setState("dying");
+    this.yawRate = (Math.random() < 0.5 ? -1 : 1) * 1.2;
+    this.rope.visible = false;
+  }
+
   update(dt: number, targets: readonly Combatant[]) {
     if (this.state === "idle" || !this.plan) return;
+    if (this.remote && this.alive) {
+      // Puppet: follow the host's pose, no AI, no gun.
+      const k = Math.min(1, dt * 6);
+      this.velocity.subVectors(this.puppetGoal, this.position).multiplyScalar(Math.min(4, 1 / Math.max(dt, 1e-3)) * k * 0.25);
+      this.position.lerp(this.puppetGoal, k);
+      let dy = this.puppetYaw - this.yaw;
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      this.yaw += dy * k;
+      this.pitch += (0.08 - this.pitch) * k;
+      this.roll += (-dy * 0.6 - this.roll) * k;
+      this.updateVisuals(dt, false);
+      return;
+    }
     const plan = this.plan;
     this.stateTime += dt;
     let fire = false;

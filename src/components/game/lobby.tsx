@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Crosshair, Globe, Lock, Pencil, Settings, Trophy, User } from "lucide-react";
+import { ChevronDown, Crosshair, Flag, Globe, Lock, Pencil, Settings, Trophy, User } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 import { WEAPONS, PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from "@/game/weapons/weapons";
@@ -166,6 +166,7 @@ export function Lobby({
   onDeploy,
   party,
   notice,
+  onMissions,
 }: {
   callsign: string;
   character: Character;
@@ -173,6 +174,8 @@ export function Lobby({
   onDeploy: (c: LobbyChoice) => void;
   party: PartyActions;
   notice?: string | null;
+  /** Opens the missions screen (entry hook; see iron-horizon-client.tsx). */
+  onMissions?: () => void;
 }) {
   const [c, setC] = useState<LobbyChoice>(initial);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -287,6 +290,26 @@ export function Lobby({
                 </span>
                 <span className="font-mono text-xs font-bold tracking-widest">PLAY</span>
               </button>
+
+              {/* Missions */}
+              {onMissions && (
+                <button
+                  type="button"
+                  onMouseEnter={sfxHover}
+                  onClick={() => {
+                    uiSound("select");
+                    onMissions();
+                  }}
+                  className="flex items-center gap-4 rounded-2xl border border-white/10 px-5 py-4 text-left transition-colors hover:border-white/30"
+                >
+                  <Flag className="size-5 shrink-0 text-neutral-400" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block leading-tight font-bold">Missions</span>
+                    <span className="block text-sm text-neutral-500">Story operations, solo or co-op. Stars and fastest times.</span>
+                  </span>
+                  <span className="font-mono text-xs font-bold tracking-widest text-neutral-400">BRIEF</span>
+                </button>
+              )}
 
               {/* Private lobby */}
               <div className="rounded-2xl border border-white/10 px-5 py-4">

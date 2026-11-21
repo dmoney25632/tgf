@@ -5,6 +5,7 @@ import { cinderFlats } from "./cinderFlats";
 import { saltpanGantry } from "./saltpanGantry";
 import { brennhollow } from "./brennhollow";
 import { morroAzul } from "./morroAzul";
+import { ironCrossing } from "./ironCrossing";
 
 export type { Dressing, DressingKit, DressingPlan } from "./common";
 
@@ -16,6 +17,7 @@ export const DRESSINGS: Record<string, Dressing> = {
   saltpanGantry,
   brennhollow,
   morroAzul,
+  ironCrossing,
 };
 
 /** Flat gravel ground, no foliage — for maps without a dressing. */

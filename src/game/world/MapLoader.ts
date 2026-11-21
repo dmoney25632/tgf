@@ -99,6 +99,8 @@ export type MapDef = {
   dressing?: string;
   /** Moss / dust weathering on upward faces and wall feet (default: light dust). */
   weather?: Partial<WeatherDef>;
+  /** AI nav-grid window (defaults to ±50 m). Large mission maps size it to their bounds. */
+  nav?: { minX: number; minZ: number; width: number; depth: number };
 };
 
 export type MapStats = { drawables: number; triangles: number; grassTriangles: number; treeTriangles: number; terrainTriangles: number };

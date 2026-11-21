@@ -1,5 +1,6 @@
 import type { EnemyType, DifficultyId, OperatorId } from "../survival/config";
 import type { WeaponId } from "../weapons/weapons";
+import type { MissionNet } from "../net/types";
 
 /**
  * Mission data model. Everything here is plain, serializable data: mission
@@ -18,8 +19,8 @@ export type WaveScript = {
   at: number;
   type: EnemyType;
   count: number;
-  /** Entry points (one is picked per enemy, cycling). */
-  from: Point[];
+  /** Entry points (one is picked per enemy, cycling). `y` places a perched sniper on a roof or tower. */
+  from: (Point & { y?: number })[];
   /** Spawn as elites. */
   elite?: boolean;
   /** Re-send every N seconds while the objective is active (defend holds). */
@@ -50,6 +51,8 @@ type ObjectiveBase = {
   done?: RadioLine[];
   /** Kill every scripted hostile before this objective can complete. */
   clearFirst?: boolean;
+  /** Where the team respawns when the mission rolls back to this objective (default: the previous objective's point). */
+  checkpoint?: Point & { yaw: number };
 };
 
 export type ObjectiveDef =
@@ -79,6 +82,12 @@ export type MissionDef = {
   objectives: ObjectiveDef[];
   /** Par time (s) for the time bonus. */
   par: number;
+  /** Retries before the mission fails outright (default MISSION.maxRetries). */
+  maxRetries?: number;
+  /** Star-rating target times in seconds at Regular: [three stars, two stars]. See rating.ts. */
+  stars?: [number, number];
+  /** Shown on the mission screen while the team waits (loading-screen briefing bullets). */
+  notes?: string[];
   /** Radio that plays at mission start. */
   intro?: RadioLine[];
   /** Radio at the end. */
@@ -96,6 +105,8 @@ export type MissionConfig = {
   squad: number;
   /** Optional networking hooks (see MissionNetOptions). */
   net?: MissionNetOptions;
+  /** Online co-op (CoopSurvivalNet): remote players replace the AI squad; the host runs the script. */
+  coop?: MissionNet;
 };
 
 /**
@@ -132,6 +143,8 @@ export type MissionState = {
   headshots: number;
   gunships: number;
   vipDowned: number;
+  /** Times a team member went down (feeds the star rating). Optional for older hosts. */
+  downs?: number;
   /** Scripted hostiles still to spawn for this objective. */
   pending: number;
   failReason: string;
@@ -143,6 +156,12 @@ export type MissionEvent =
   | { type: "radio"; speaker: string; text: string }
   | { type: "checkpoint"; index: number }
   | { type: "retry"; index: number }
+  /** destroy objective `index`: the charge went off. */
+  | { type: "detonate"; index: number }
+  /** extract objective `index`: the transport was called. */
+  | { type: "extract"; index: number }
+  /** A gunship sortie launched (banner on clients). */
+  | { type: "air" }
   | { type: "end"; victory: boolean };
 
 export type MissionResult = {
@@ -160,6 +179,12 @@ export type MissionResult = {
   gunships: number;
   score: number;
   grade: "S" | "A" | "B" | "C" | "D";
+  /** 1–3 stars on a win (0 on a loss); see rating.ts. */
+  stars: number;
+  /** Team member downs during the run. */
+  downs: number;
+  /** Difficulty id the run was played on. */
+  difficulty: string;
   breakdown: { label: string; value: number }[];
   failReason: string;
 };

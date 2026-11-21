@@ -1,4 +1,5 @@
 import type { EnemyType } from "../survival/config";
+import { rateMission } from "./rating";
 import type { AirScript, MissionDef, MissionResult, MissionState, ObjectiveDef, RadioLine, WaveScript } from "./types";
 
 /**
@@ -39,7 +40,8 @@ export type MissionFacts = {
 };
 
 export type DirectorHost = {
-  spawn(type: EnemyType, x: number, z: number, elite: boolean): void;
+  /** `y` (when set) places the enemy at that height instead of on the nav floor (perched snipers). */
+  spawn(type: EnemyType, x: number, z: number, elite: boolean, y?: number): void;
   /** False when no helicopter is free (retried shortly after). */
   launchAir(air: AirScript, objective: ObjectiveDef): boolean;
   radio(line: RadioLine): void;
@@ -80,7 +82,7 @@ export const MISSION = {
   },
 };
 
-type SpawnReq = { type: EnemyType; x: number; z: number; elite: boolean };
+type SpawnReq = { type: EnemyType; x: number; z: number; elite: boolean; y: number };
 type Schedule = { script: WaveScript | null; next: number; sent: number };
 type AirReq = { script: AirScript | null; next: number; done: boolean };
 type RadioReq = { line: RadioLine | null; t: number };
@@ -90,7 +92,7 @@ const POOL = 64;
 export function newMissionState(id: string): MissionState {
   return {
     missionId: id, phase: "briefing", objective: 0, objectiveTime: 0, progress: 0, stage: "", timer: -1,
-    elapsed: 0, checkpoint: 0, retries: 0, kills: 0, headshots: 0, gunships: 0, vipDowned: 0, pending: 0, failReason: "",
+    elapsed: 0, checkpoint: 0, retries: 0, kills: 0, headshots: 0, gunships: 0, vipDowned: 0, downs: 0, pending: 0, failReason: "",
   };
 }
 
@@ -116,13 +118,17 @@ export class MissionDirector {
   constructor(readonly def: MissionDef, private readonly host: DirectorHost) {
     this.state = newMissionState(def.id);
     for (let i = 0; i < POOL; i++) {
-      this.spawns.push({ type: "rifleman", x: 0, z: 0, elite: false });
+      this.spawns.push({ type: "rifleman", x: 0, z: 0, elite: false, y: NaN });
       this.radios.push({ line: null, t: 0 });
     }
     for (let i = 0; i < 16; i++) {
       this.sched.push({ script: null, next: 0, sent: 0 });
       this.air.push({ script: null, next: 0, done: false });
     }
+  }
+
+  get maxRetries() {
+    return this.def.maxRetries ?? MISSION.maxRetries;
   }
 
   get objective(): ObjectiveDef | undefined {
@@ -144,9 +150,10 @@ export class MissionDirector {
   }
 
   /** Counted by the mode as kills happen. */
-  credit(kind: "kill" | "headshot" | "gunship" | "vipDowned") {
+  credit(kind: "kill" | "headshot" | "gunship" | "vipDowned" | "down") {
     const s = this.state;
     if (kind === "kill") s.kills++;
+    else if (kind === "down") s.downs = (s.downs ?? 0) + 1;
     else if (kind === "headshot") s.headshots++;
     else if (kind === "gunship") s.gunships++;
     else s.vipDowned++;
@@ -234,7 +241,9 @@ export class MissionDirector {
       if (e.sent >= times || t < e.next) continue;
       for (let k = 0; k < w.count; k++) {
         const p = w.from[(k + e.sent) % w.from.length];
-        this.enqueue(w.type, p.x + ((k % 3) - 1) * 1.6, p.z + (((k / 3) | 0) % 3 - 1) * 1.6, !!w.elite);
+        // Perched spawns go exactly where authored; ground spawns fan out around the point.
+        if (p.y !== undefined) this.enqueue(w.type, p.x, p.z, !!w.elite, p.y);
+        else this.enqueue(w.type, p.x + ((k % 3) - 1) * 1.6, p.z + (((k / 3) | 0) % 3 - 1) * 1.6, !!w.elite);
       }
       e.sent++;
       e.next = t + (w.every ?? 0);
@@ -250,7 +259,8 @@ export class MissionDirector {
     if (this.spawnTail > this.spawnHead && this.spawnTimer <= 0 && f.spawnRoom > 0) {
       const r = this.spawns[this.spawnHead % POOL];
       this.spawnHead++;
-      this.host.spawn(r.type, r.x, r.z, r.elite);
+      if (Number.isNaN(r.y)) this.host.spawn(r.type, r.x, r.z, r.elite);
+      else this.host.spawn(r.type, r.x, r.z, r.elite, r.y);
       this.spawnTimer = MISSION.spawnGap;
     }
     this.updatePending();
@@ -268,10 +278,11 @@ export class MissionDirector {
     this.state.pending = n;
   }
 
-  private enqueue(type: EnemyType, x: number, z: number, elite: boolean) {
+  private enqueue(type: EnemyType, x: number, z: number, elite: boolean, y = NaN) {
     if (this.spawnTail - this.spawnHead >= POOL) return;
     const r = this.spawns[this.spawnTail % POOL];
     this.spawnTail++;
+    r.y = y;
     r.type = type;
     r.x = x;
     r.z = z;
@@ -367,7 +378,7 @@ export class MissionDirector {
   private fail(reason: string) {
     const s = this.state;
     s.failReason = reason;
-    if (s.retries >= MISSION.maxRetries) {
+    if (s.retries >= this.maxRetries) {
       this.finish(false);
       return;
     }
@@ -440,7 +451,7 @@ export class MissionDirector {
 // Scoring
 // ---------------------------------------------------------------------------
 
-export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1): MissionResult {
+export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1, difficulty = "regular"): MissionResult {
   const P = MISSION.points;
   const victory = s.phase === "complete";
   const done = victory ? def.objectives.length : s.objective;
@@ -468,5 +479,8 @@ export function scoreMission(def: MissionDef, s: MissionState, difficultyMul = 1
     objectivesDone: done, objectivesTotal: def.objectives.length,
     seconds, par: def.par, retries: s.retries, kills: s.kills, headshots: s.headshots, gunships: s.gunships,
     score, grade, breakdown, failReason: victory ? "" : s.failReason,
+    stars: rateMission(def, { victory, seconds, difficulty, retries: s.retries, downs: s.downs ?? 0 }).stars,
+    downs: s.downs ?? 0,
+    difficulty,
   };
 }

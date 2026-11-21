@@ -8,6 +8,12 @@ export type RoomSettings = {
   difficulty: DifficultyId;
   waveTarget: WaveTarget;
   startWave: number;
+  /**
+   * Co-op mission run (game/missions). Absent = Survival. Optional so rooms
+   * from older builds still parse; an older client in a mission room would
+   * launch Survival, so the room screen asks everyone to be on the same build.
+   */
+  missionId?: string;
 };
 
 export type RosterEntry = { id: string; name: string; slot: number; operator: OperatorId; look?: CharacterLook };

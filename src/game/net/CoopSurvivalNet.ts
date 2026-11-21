@@ -7,7 +7,6 @@ import type { Combatant } from "../ai/types";
 import { DIFFICULTY, ECONOMY, ENEMIES, OPERATORS, PERKS, PLAYER, WAVES, type EnemyType } from "../survival/config";
 import { PlayerState } from "../survival/PlayerState";
 import { Wallet } from "../survival/ShopSystem";
-import type { SurvivalGameMode } from "../survival/SurvivalGameMode";
 import type { WavePhase } from "../survival/WaveManager";
 import type { TeamRow } from "../ui/SurvivalHUD";
 import { GRENADE, MELEE, WEAPONS } from "../weapons/weapons";
@@ -23,7 +22,8 @@ import {
   type SnapshotPayload, type StatePayload, type NetRates, netRates,
 } from "./protocol";
 import type { NetTransport, RoomSettings, RosterEntry } from "./transport";
-import type { SurvivalBridge, SurvivalNet } from "./types";
+import type { CoopMode, MissionNet, SurvivalBridge, TeammateView } from "./types";
+import type { MissionEvent, MissionState } from "../missions/types";
 
 export type CoopMatchSetup = {
   transport: NetTransport;
@@ -36,6 +36,12 @@ export type CoopMatchSetup = {
 const REVIVE_RANGE = 2.2;
 const SPAWN_OFFSETS: [number, number][] = [[0, 0], [1.6, 0], [-1.6, 0], [0, 1.8]];
 const MAX_CLAIMS_PER_MSG = 64;
+/** Missions: full state resend interval and gunship pose rate. */
+const MISSION_STATE_EVERY = 1;
+const AIR_EVERY = 0.25;
+/** Per-message cap on gunship hit claims and on one claim's damage. */
+const MAX_HELI_HITS = 24;
+const MAX_HELI_HIT = 240;
 
 type Peer = {
   entry: RosterEntry;
@@ -62,6 +68,9 @@ type Peer = {
   claims: HitClaimWire[];
   explosions: [number, number, number][];
   buys: [string, number][];
+  /** Missions: holding interact at the objective; gunship hit claims. */
+  interact: boolean;
+  heliHits: [number, number, number, number][];
   lastRewardShot: number;
   lastExplosion: number;
 };
@@ -82,11 +91,11 @@ const blankVitals = (slot: number): PlayerVitals => ({
  * and mirror waves/vitals/wallet from snapshots.
  * Everyone renders teammates as full soldiers with name tags.
  */
-export class CoopSurvivalNet implements SurvivalNet {
+export class CoopSurvivalNet implements MissionNet {
   readonly role: "host" | "client";
   readonly slot: number;
   private readonly peers = new Map<number, Peer>();
-  private mode!: SurvivalGameMode;
+  private mode!: CoopMode;
   private ctx!: EngineContext;
   private bridge!: SurvivalBridge;
   private readonly offs: (() => void)[] = [];
@@ -100,6 +109,9 @@ export class CoopSurvivalNet implements SurvivalNet {
   private readonly claims: HitClaimWire[] = [];
   private readonly explosions: [number, number, number][] = [];
   private readonly buys: [string, number][] = [];
+  private readonly heliHits: [number, number, number, number][] = [];
+  private msAcc = 0;
+  private airAcc = 0;
 
   // Host.
   private readonly encoder: SnapshotEncoder;
@@ -153,7 +165,7 @@ export class CoopSurvivalNet implements SurvivalNet {
         lastHeard: performance.now(), connected: true, heard: false, pendingShots: 0, shotTimer: 0,
         vitals: blankVitals(entry.slot), wasDowned: false,
         state: new PlayerState(), wallet: new Wallet(), combatant: null, pos: new THREE.Vector3(), speed: 0,
-        claims: [], explosions: [], buys: [], lastRewardShot: -1, lastExplosion: -1e9,
+        claims: [], explosions: [], buys: [], interact: false, heliHits: [], lastRewardShot: -1, lastExplosion: -1e9,
       });
     }
   }
@@ -188,7 +200,7 @@ export class CoopSurvivalNet implements SurvivalNet {
   // Wiring
   // ---------------------------------------------------------------------------
 
-  attach(mode: SurvivalGameMode, ctx: EngineContext, bridge: SurvivalBridge) {
+  attach(mode: CoopMode, ctx: EngineContext, bridge: SurvivalBridge) {
     this.mode = mode;
     this.ctx = ctx;
     this.bridge = bridge;
@@ -322,6 +334,8 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (Array.isArray(payload.c)) for (const c of payload.c.slice(0, MAX_CLAIMS_PER_MSG)) if (Array.isArray(c) && c.length === 6) p.claims.push(c);
       if (Array.isArray(payload.x)) for (const x of payload.x.slice(0, 4)) if (Array.isArray(x) && x.length === 3) p.explosions.push(x);
       if (Array.isArray(payload.buy)) for (const b of payload.buy.slice(0, 16)) if (Array.isArray(b) && typeof b[0] === "string") p.buys.push(b);
+      p.interact = payload.i === 1;
+      if (Array.isArray(payload.hh)) for (const h of payload.hh.slice(0, MAX_HELI_HITS)) if (Array.isArray(h) && h.length === 4) p.heliHits.push(h);
       // A client's delta decoder lost sync: heal with a keyframe (rate-limited).
       if (payload.k === 1 && now - this.lastKeyRequest > 250) {
         this.lastKeyRequest = now;
@@ -410,6 +424,8 @@ export class CoopSurvivalNet implements SurvivalNet {
     if (this.claims.length) payload.c = this.claims.splice(0, MAX_CLAIMS_PER_MSG);
     if (this.explosions.length) payload.x = this.explosions.splice(0);
     if (this.buys.length) payload.buy = this.buys.splice(0);
+    if (this.mode.mission?.holdingInteract) payload.i = 1;
+    if (this.heliHits.length) payload.hh = this.heliHits.splice(0, MAX_HELI_HITS);
     if (this.role === "client" && this.wantKeyframe) payload.k = 1;
     return payload;
   }
@@ -427,6 +443,7 @@ export class CoopSurvivalNet implements SurvivalNet {
       this.applyClaims(p);
       this.applyExplosions(p);
       this.applyBuys(p);
+      this.applyHeliHits(p);
       // Remote vitals: downed / bleed-out / revive, same rules as the local player.
       if (p.heard && !mode.ended) {
         const reviving = this.isBeingRevived(p.slot);
@@ -454,11 +471,25 @@ export class CoopSurvivalNet implements SurvivalNet {
       if (all) w.skip();
     }
 
+    // Missions: resend the full state now and then (covers lost events / late snapshots), stream gunships.
+    if (mode.mission) {
+      this.msAcc += dt;
+      if (this.msAcc >= MISSION_STATE_EVERY) {
+        this.msAcc = 0;
+        this.missionState(mode.mission.snapshot());
+      }
+      this.airAcc += dt;
+      if (this.airAcc >= AIR_EVERY) {
+        this.airAcc = 0;
+        this.pushAir();
+      }
+    }
+
     if (mode.ended && !this.endEvent) {
       const earned = new Array(this.playerCount).fill(0);
       earned[this.slot] = mode.wallet.earned;
       for (const p of this.peers.values()) earned[p.slot] = p.wallet.earned;
-      this.endEvent = { k: "end", victory: w.phase === "victory", earned };
+      this.endEvent = { k: "end", victory: mode.mission ? mode.mission.victory : w.phase === "victory", earned };
       this.endRepeats = 3;
     }
   }
@@ -613,6 +644,129 @@ export class CoopSurvivalNet implements SurvivalNet {
       p.wallet.add(bonus);
       p.state.heal();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Missions (host API, called by MissionGameMode)
+  // ---------------------------------------------------------------------------
+
+  /** Host: replicate the mission state (latest wins within one snapshot). */
+  missionState(s: MissionState) {
+    if (this.role !== "host") return;
+    for (let i = this.events.length - 1; i >= 0; i--) if (this.events[i].k === "ms") this.events.splice(i, 1);
+    this.events.push({ k: "ms", s });
+  }
+
+  /** Host: replicate a discrete mission event. */
+  missionEvent(e: MissionEvent) {
+    if (this.role !== "host" || e.type === "end") return; // the end rides the regular "end" event
+    this.events.push({ k: "mev", e });
+  }
+
+  /**
+   * Host: put remote players back on their feet at (x, z) — everyone after a
+   * checkpoint rollback, or only bled-out players when a new section starts.
+   */
+  respawnTeam(x: number, z: number, onlyDead: boolean) {
+    if (this.role !== "host") return;
+    for (const p of this.peers.values()) {
+      if (onlyDead && !p.state.dead) continue;
+      p.state.reset(p.state.maxHealth, onlyDead ? 0 : (OPERATORS[p.entry.operator] ?? OPERATORS.ridge).startArmor);
+      const [ox, oz] = SPAWN_OFFSETS[p.slot % SPAWN_OFFSETS.length];
+      this.events.push({ k: "respawn", to: p.slot, x: x + ox, z: z + oz });
+    }
+  }
+
+  /** Client: replicated hostiles still alive. */
+  get enemiesAlive() {
+    let n = 0;
+    for (const e of this.proxies.values()) if (e.active && e.alive) n++;
+    return n;
+  }
+
+  /** Offset for the local player when the squad spawns together. */
+  get spawnOffset(): [number, number] {
+    return SPAWN_OFFSETS[this.slot % SPAWN_OFFSETS.length];
+  }
+
+  /** Host: remote players (for objective zones, extraction and gunship targets). */
+  teammates(out: TeammateView[]) {
+    out.length = 0;
+    for (const p of this.peers.values()) {
+      if (!p.connected || !p.heard) continue;
+      out.push({ x: p.pos.x, z: p.pos.z, up: p.state.alive && !p.state.downed, interact: p.interact, combatant: p.combatant });
+    }
+    return out;
+  }
+
+  private pushAir() {
+    const m = this.mode.mission;
+    if (!m) return;
+    const h: [number, number, number, number, number, number, number][] = [];
+    let any = false;
+    for (const heli of m.helis.helis) {
+      const st = heli.alive ? 1 : heli.flightState === "dying" ? 2 : 0;
+      if (st) any = true;
+      const p = heli.position;
+      h.push([Math.round(p.x * 10), Math.round(p.y * 10), Math.round(p.z * 10), Math.round(heli.heading() * 100), Math.round(heli.health), Math.round(heli.maxHealth), st]);
+    }
+    // Idle skies: one empty update after the last bird, then nothing.
+    if (any || this.airWasActive) this.events.push({ k: "air", h });
+    this.airWasActive = any;
+  }
+  private airWasActive = false;
+
+  private applyHeliHits(p: Peer) {
+    const m = this.mode.mission;
+    if (!p.heliHits.length || !m) {
+      p.heliHits.length = 0;
+      return;
+    }
+    if (!p.state.dead && p.connected && !this.mode.ended) {
+      let budget = MAX_HELI_HIT * 4;
+      for (const [idx, d10, partIdx, src] of p.heliHits) {
+        const heli = m.helis.helis[idx];
+        const dmg = Math.min(MAX_HELI_HIT, Math.max(0, d10 / 10), budget);
+        if (!heli || !heli.targetable || dmg <= 0) continue;
+        // Must be within gun range of the shooter.
+        if (heli.position.distanceTo(p.pos) > 180) continue;
+        budget -= dmg;
+        this.attributing = p.slot;
+        this.attributingWeapon = src === 1 ? GRENADE.name : WEAPONS[WEAPON_IDS[p.last?.weapon ?? 0]]?.name ?? "";
+        heli.applyDamage(dmg, PARTS[partIdx] ?? "body", p.pos, src === 1 ? "grenade" : "");
+        this.attributing = -1;
+      }
+    }
+    p.heliHits.length = 0;
+  }
+
+  /** Host: who's credited for the heli kill happening right now (-1 = local). */
+  get creditSlot() {
+    return this.attributing;
+  }
+  creditName(slot: number) {
+    return this.nameOf(slot);
+  }
+
+  private applyAir(h: [number, number, number, number, number, number, number][]) {
+    const m = this.mode.mission;
+    if (!m || !Array.isArray(h)) return;
+    const list = m.helis.helis;
+    for (let i = 0; i < list.length; i++) {
+      const heli = list[i];
+      const r = h[i];
+      if (!heli.remote) heli.remote = (amount, part, source) => this.queueHeliHit(i, amount, part, source);
+      if (!Array.isArray(r) || r.length !== 7) continue;
+      const [x, y, z, yaw, hp, max, st] = r;
+      if (st === 1) heli.puppetTo(x / 10, y / 10, z / 10, yaw / 100, hp, Math.max(1, max));
+      else if (st === 2) heli.puppetKill();
+      else if (heli.alive) heli.hide();
+    }
+  }
+
+  private queueHeliHit(index: number, amount: number, part: HitPart, source: string) {
+    if (this.heliHits.length >= MAX_HELI_HITS * 2) return;
+    this.heliHits.push([index, Math.round(amount * 10), Math.max(0, PARTS.indexOf(part)), source === "grenade" ? 1 : 0]);
   }
 
   private slotOfCombatant(c: Combatant | null) {
@@ -799,6 +953,19 @@ export class CoopSurvivalNet implements SurvivalNet {
         this.spawnLocal(ev.x, ev.z, this.ctx.player.yaw);
         ctx.player.downed = false;
         ctx.weapons.lockSlot = -1;
+        this.mode.mission?.onRespawn();
+        return;
+      }
+      case "ms": {
+        if (ev.s && typeof ev.s === "object" && ev.s.missionId) this.mode.mission?.applySnapshot(ev.s);
+        return;
+      }
+      case "mev": {
+        if (ev.e && typeof ev.e === "object") this.mode.mission?.remoteEvent(ev.e);
+        return;
+      }
+      case "air": {
+        this.applyAir(ev.h);
         return;
       }
       case "end": {
