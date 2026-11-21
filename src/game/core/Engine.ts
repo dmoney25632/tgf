@@ -123,6 +123,8 @@ export class GameEngine {
   /** Cached container size (read only on resize, never per frame). */
   private viewW = 1;
   private viewH = 1;
+  /** Shared with modes via EngineContext.view. */
+  private readonly view = { w: 1, h: 1 };
   private resolutionVersion = -1;
 
   constructor(private readonly container: HTMLElement, private readonly opts: EngineOptions = {}) {
@@ -136,7 +138,9 @@ export class GameEngine {
     this.map = loadMap(this.scene, mapDef, preset);
     this.viewmodel = new WeaponViewmodel(null);
     this.viewmodel.setSun(this.map.sun ?? null);
-    this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun);
+    // Canvas MSAA only when the starting preset draws without post (a later switch to Low
+    // keeps a non-multisampled canvas until the next match).
+    this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun, !preset.postProcessing);
     this.viewmodel.scene.environment = this.pipeline.envMap;
 
     this.input = new Input(this.pipeline.canvas);
@@ -226,6 +230,7 @@ export class GameEngine {
       sfx: this.sfx,
       callsign: this.callsign,
       quality: this.settings.quality,
+      view: this.view,
       emit: (e) => this.opts.onEvent?.(e),
       unlock: () => this.input.disengage(),
       spawnPoint: (out) => {
@@ -763,6 +768,8 @@ export class GameEngine {
     if (!w || !h) return;
     this.viewW = w;
     this.viewH = h;
+    this.view.w = w;
+    this.view.h = h;
     this.pipeline.setSize(w, h);
     this.hud.setVignette(!this.pipeline.postVignette);
     this.camera.aspect = w / h;

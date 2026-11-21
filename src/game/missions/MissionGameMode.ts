@@ -1079,7 +1079,7 @@ export class MissionGameMode implements GameMode, CoopMode {
     const obj = this.director.objective;
     const label = !obj ? "" : obj.kind === "destroy" ? obj.label : obj.kind === "escort" ? (this.director.state.stage === "captive" ? obj.vip.name.toUpperCase() : "LZ") : obj.kind === "extract" ? "EXTRACT" : obj.kind === "defend" ? "DEFEND" : "OBJECTIVE";
     if (r > 0) this.wp.y += 1.6;
-    const w = ctx.container.clientWidth, h = ctx.container.clientHeight;
+    const w = ctx.view.w, h = ctx.view.h;
     this.mhud.frame(dt, ctx.camera, w, h, r > 0 && !this.ended ? this.wp : null, label, ctx.player.position);
 
     const sw = this.state.selfRevives > 0;

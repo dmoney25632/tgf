@@ -62,6 +62,8 @@ export type EngineContext = {
   sfx: Sfx;
   callsign: string;
   quality: QualityName;
+  /** Container size in CSS px, cached on resize (reading clientWidth per frame forces layout). */
+  readonly view: { readonly w: number; readonly h: number };
   emit(e: EngineEvent): void;
   /** Release the mouse (menus). */
   unlock(): void;

@@ -222,16 +222,19 @@ export class ParticleSystem {
       this.age[i] = t;
       this.alpha[i] = smoke ? this.alpha0[i] * Math.min(1, t * 9) * Math.pow(1 - t, 1.6) : this.alpha0[i] * (1 - t) * (1 - t);
     }
-    // Keep the live window tight so idle pools cost nothing.
-    if (maxAlive === 0 && this.next === 0) this.live = 0;
-    this.geometry.setDrawRange(0, Math.max(maxAlive, 1));
-    // Upload only the touched window, and nothing at all once idle.
-    if (n === 0) return;
+    // Keep the live window tight so idle pools cost nothing (every slot is dead,
+    // so the ring position doesn't matter: the next spawn reopens the window).
+    if (maxAlive === 0) this.live = 0;
+    this.geometry.setDrawRange(0, maxAlive);
+    this.points.visible = maxAlive > 0;
+    // Upload only what's drawn (slots past maxAlive are outside the draw range),
+    // and nothing at all once idle.
+    if (maxAlive === 0) return;
     const a = this.geometry.attributes;
     for (const k of UPLOAD) {
       const attr = a[k] as THREE.BufferAttribute;
       attr.clearUpdateRanges();
-      attr.addUpdateRange(0, n * attr.itemSize);
+      attr.addUpdateRange(0, maxAlive * attr.itemSize);
       attr.needsUpdate = true;
     }
   }

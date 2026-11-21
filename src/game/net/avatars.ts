@@ -146,6 +146,9 @@ export class RemoteAvatar {
  * player's bullets: damage is predicted locally (flinch, hitmarker, kill
  * marker) and queued as a hit claim for the host to validate.
  */
+/** How long a locally predicted kill waits for the host before the enemy gets back up. */
+const PREDICT_CONFIRM_MS = 700;
+
 export class RemoteEnemy implements Hittable {
   readonly model: Humanoid;
   readonly def: EnemyDef;
@@ -197,7 +200,7 @@ export class RemoteEnemy implements Hittable {
   }
 
   /** Local bullets / knife. Damage is a prediction; the host decides. */
-  applyDamage(amount: number, part: HitPart, _from?: THREE.Vector3, source = ""): HitResult {
+  applyDamage(amount: number, part: HitPart, from?: THREE.Vector3, source = ""): HitResult {
     if (!this.alive || this.predictedDead) return { damage: 0, killed: false, counts: false };
     const armor = part === "head" ? 1 : this.def.bodyArmor;
     const dmg = Math.min(this.health, amount * armor);
@@ -207,6 +210,12 @@ export class RemoteEnemy implements Hittable {
     if (killed) {
       this.health = 0;
       this.predictedDead = true;
+      // Drop the body now instead of a round trip later; apply() revives it if the host disagrees.
+      this.dead = true;
+      const behind = !!from && Math.sin(this.yaw) * (from.x - this.position.x) + Math.cos(this.yaw) * (from.z - this.position.z) < 0;
+      this.model.die(behind);
+      this.pendingShots = 0;
+      if (this.laser) this.laser.visible = false;
     } else this.model.flinch(part === "head", amount / 40, false);
     this.claim(this, amount, part, source);
     return { damage: dmg, killed, counts: true };
@@ -216,6 +225,15 @@ export class RemoteEnemy implements Hittable {
   apply(e: { state: number; health: number; maxHealth: number; elite: boolean; crouched: boolean; aiming: boolean; target: number; charge: number; shots: number }) {
     const wasActive = this.active;
     const nowDead = e.state === STATE_DEAD;
+    if (this.predictedDead && wasActive && !nowDead) {
+      // Our kill is in flight to the host: keep the body down while it confirms.
+      if (performance.now() - this.lastLocalHit < PREDICT_CONFIRM_MS) return;
+      // The host never confirmed (claim rejected): stand back up.
+      this.predictedDead = false;
+      this.dead = false;
+      this.model.revive();
+    }
+    if (nowDead) this.predictedDead = false;
     if (!wasActive || (this.dead && !nowDead)) {
       // (Re)spawned from the host's pool.
       this.active = true;

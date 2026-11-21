@@ -10,6 +10,9 @@ const DIRS: readonly [number, number, number][] = [
 /** A cover spot beside an obstacle: `nx,nz` points from the obstacle toward the spot. */
 export type CoverPoint = { x: number; z: number; y: number; nx: number; nz: number; tall: boolean; claimed: number };
 
+/** String-pulling lookahead (cells): waypoints end up at most ~18 m apart. */
+const SMOOTH_WINDOW = 24;
+
 /**
  * Ground-level navigation heightfield over the map, with A* on an 8-connected
  * grid (binary heap, typed arrays, reused between searches) and line-of-sight
@@ -63,12 +66,17 @@ export class NavGrid {
         const x = minX + (c + 0.5) * cell;
         const z = minZ + (r + 0.5) * cell;
         let floor = 0;
+        // Only boxes near this cell (in box order, so results match a full scan).
+        const near = world.near(x - radius, z - radius, x + radius, z + radius);
+        const boxes = world.boxes;
         // Low boxes become floor (curbs, pallets, steps).
-        for (const b of world.boxes) {
+        for (let k = 0; k < near.length; k++) {
+          const b = boxes[near[k]];
           if (x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z && b.min.y <= floor + 0.01 && b.max.y <= floor + maxStep && b.max.y > floor) floor = b.max.y;
         }
         let blocked = false;
-        for (const b of world.boxes) {
+        for (let k = 0; k < near.length; k++) {
+          const b = boxes[near[k]];
           if (!(x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z)) continue;
           if (b.max.y > floor + 0.02 && b.min.y < floor + headroom) {
             blocked = true;
@@ -138,7 +146,7 @@ export class NavGrid {
    * A* from (sx,sz) to (tx,tz). Writes smoothed waypoints (x,z pairs) into
    * `out` and returns the count, or 0 if unreachable / budget exhausted.
    */
-  findPath(sx: number, sz: number, tx: number, tz: number, out: Float32Array, maxNodes = 6000): number {
+  findPath(sx: number, sz: number, tx: number, tz: number, out: Float32Array, maxNodes = 6000, partial = false): number {
     // Count every request against the per-frame budget, failed lookups included.
     this.searches++;
     const start = this.nearestWalkable(sx, sz);
@@ -160,6 +168,9 @@ export class NavGrid {
     this.push(start);
     let expanded = 0;
     let found = false;
+    // Closest expanded cell to the goal: the partial-path target when the goal can't be reached.
+    let bestCell = start;
+    let bestH = this.f[start];
 
     while (this.heapSize > 0) {
       const cur = this.pop();
@@ -171,6 +182,11 @@ export class NavGrid {
       this.closed[cur] = stamp;
       if (++expanded > maxNodes) break;
       const c = cur % cols, r = Math.floor(cur / cols);
+      const hc = this.f[cur] - this.g[cur];
+      if (hc < bestH) {
+        bestH = hc;
+        bestCell = cur;
+      }
       const fy = this.floor[cur];
       for (const [dc, dr, cost] of DIRS) {
         const nc = c + dc, nr = r + dr;
@@ -190,11 +206,16 @@ export class NavGrid {
         }
       }
     }
-    if (!found) return 0;
+    if (!found && (!partial || bestCell === start)) return 0;
+    const end = found ? goal : bestCell;
+    if (!found) {
+      tx = this.cx(end);
+      tz = this.cz(end);
+    }
 
     // Walk back into a temporary reversed list (reuse heap memory).
     let n = 0;
-    for (let i = goal; i !== -1; i = this.parent[i]) this.heap[n++] = i;
+    for (let i = end; i !== -1; i = this.parent[i]) this.heap[n++] = i;
     // heap[n-1] = start … heap[0] = goal. String-pull: skip cells in direct LOS.
     let count = 0;
     let anchorX = sx, anchorZ = sz;
@@ -202,7 +223,8 @@ export class NavGrid {
     const maxOut = out.length / 2;
     while (k > 0 && count < maxOut - 1) {
       let far = k - 1;
-      for (let j = 0; j < k; j++) {
+      // Farthest visible cell, looking at most SMOOTH_WINDOW cells ahead (keeps this linear in path length).
+      for (let j = Math.max(0, k - SMOOTH_WINDOW); j < k; j++) {
         const cand = this.heap[j];
         if (this.clearLine(anchorX, anchorZ, this.cx(cand), this.cz(cand))) {
           far = j;

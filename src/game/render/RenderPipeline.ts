@@ -460,6 +460,9 @@ const rt = (type: THREE.TextureDataType = THREE.HalfFloatType, opts: THREE.Rende
 const shader = (fragmentShader: string, uniforms: Record<string, THREE.IUniform>, defines: Record<string, string | number> = {}) =>
   new THREE.ShaderMaterial({ vertexShader: FS_VERT, fragmentShader, uniforms, defines, depthTest: false, depthWrite: false, toneMapped: false });
 
+/** PMREM cube size for every environment map (see the constructor). */
+const ENV_CUBE_SIZE = 512;
+
 /**
  * Owns the WebGL renderer and draws the world + first-person viewmodel.
  *
@@ -548,11 +551,13 @@ export class RenderPipeline {
     private readonly viewScene: THREE.Scene,
     private readonly viewCamera: THREE.PerspectiveCamera,
     private readonly sun: THREE.DirectionalLight,
+    canvasAntialias = true,
   ) {
     installGradeToneMapping();
     installSpecularAa();
-    // Canvas MSAA only matters on low (post draws one full-screen triangle into it).
-    this.renderer = new THREE.WebGLRenderer({ antialias: true,powerPreference: "high-performance", stencil: false });
+    // Canvas MSAA only matters without post (post draws one full-screen triangle
+    // into it and antialiases in its own MSAA target): skip the wasted 4× backbuffer.
+    this.renderer = new THREE.WebGLRenderer({ antialias: canvasAntialias, powerPreference: "high-performance", stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.CustomToneMapping;
     const atmo = getAtmosphere(scene);
@@ -588,10 +593,13 @@ export class RenderPipeline {
       const envScene = new THREE.Scene();
       const sky = new THREE.Mesh(atmo.sky.geometry, atmo.sky.material);
       envScene.add(sky);
-      this.env = pmrem.fromScene(envScene, 0.02, 0.1, 1000).texture;
+      // 512 to match the HDRI's PMREM (2k equirect → 512 cube): env map size is part
+      // of three's shader cache key, so a mismatch recompiles every lit material
+      // mid-match when the HDRI swaps in.
+      this.env = pmrem.fromScene(envScene, 0.02, 0.1, 1000, { size: ENV_CUBE_SIZE }).texture;
     } else {
       const room = new RoomEnvironment();
-      this.env = pmrem.fromScene(room, 0.04).texture;
+      this.env = pmrem.fromScene(room, 0.04, 0.1, 100, { size: ENV_CUBE_SIZE }).texture;
       room.dispose();
     }
     pmrem.dispose();
@@ -661,6 +669,8 @@ export class RenderPipeline {
         atmo.applyHdri(info.horizon.clone().multiplyScalar(scale), info.sky.clone().multiplyScalar(scale));
         if (info.hasSun) atmo.setSunAzimuth(info.sunAzimuth);
       }
+      // Compile the equirect background program now rather than on a visible frame.
+      this.warmup.eager(1500);
     });
   }
 

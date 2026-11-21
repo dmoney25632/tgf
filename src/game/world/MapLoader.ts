@@ -15,6 +15,7 @@ import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
 import { buildTerrain } from "./Terrain";
 import { Foliage } from "./Foliage";
 import { DRESSINGS, defaultDressing } from "./dressing/index";
+import { accelerateRaycast } from "./MeshRaycastGrid";
 
 /**
  * How a box is drawn (its collider is always the plain AABB):
@@ -316,6 +317,9 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
 
   const sky = SkyOcclusion.fromRoofs(def.boxes.filter((b) => b.tag === "roof")).activate();
   sky.patchScene(root);
+
+  // Bullets raycast these every shot: index the big merged ones spatially.
+  for (const m of meshes) accelerateRaycast(m);
 
   return {
     def,

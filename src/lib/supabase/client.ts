@@ -10,5 +10,8 @@ import { SUPABASE_KEY, SUPABASE_URL, isSupabaseConfigured } from "./config";
  */
 export function getBrowserClient(): SupabaseClient | null {
   if (!isSupabaseConfigured) return null;
-  return createBrowserClient(SUPABASE_URL, SUPABASE_KEY);
+  // Realtime heartbeats run in a Web Worker (inline blob script) so a co-op
+  // host in a hidden tab, where page timers get throttled to once a minute,
+  // doesn't time out and stall the whole party.
+  return createBrowserClient(SUPABASE_URL, SUPABASE_KEY, { realtime: { worker: true } });
 }

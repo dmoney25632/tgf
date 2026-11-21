@@ -64,7 +64,7 @@ export const MOBILE_OVERRIDES: Record<QualityName, Partial<QualityPreset>> = {
     minResolutionScale: 0.6,
     shadows: true,
     shadowMapSize: 1024,
-    shadowInterval: 1,
+    shadowInterval: 2,
     shadowExtent: 34,
     postProcessing: true,
     bloom: true,

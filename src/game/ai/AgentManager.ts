@@ -12,6 +12,8 @@ import type { Combatant } from "./types";
 
 const THINK_INTERVAL = 0.2;
 const MAX_SEARCHES_PER_FRAME = 3;
+/** And at most this much A* time per frame (ms): big maps make single searches expensive. */
+const MAX_SEARCH_MS_PER_FRAME = 1.5;
 const BODY_RADIUS = 0.32;
 
 export type KillInfo = { agent: Agent; part: HitPart; source: string };
@@ -38,6 +40,8 @@ export class AgentManager {
   private readonly lasers = new Map<Agent, THREE.Mesh>();
   private nextId = 1;
   private time = 0;
+  /** A* time spent this frame (ms). */
+  private searchMs = 0;
   /** Squad bot currently reviving the player, if any. */
   reviver: Agent | null = null;
   /** Running squad revive progress for the player (0..1 handled by PlayerState). */
@@ -218,6 +222,7 @@ export class AgentManager {
   update(dt: number) {
     this.time += dt;
     this.nav.searches = 0;
+    this.searchMs = 0;
     this.reviver = null;
 
     for (let i = this.active.length - 1; i >= 0; i--) {
@@ -684,12 +689,15 @@ export class AgentManager {
     // pathLen is 0, which would otherwise search every frame.
     const now = performance.now();
     if (now < ag.pathRetryAt) return;
-    if (this.nav.searches >= MAX_SEARCHES_PER_FRAME) {
+    if (this.nav.searches >= MAX_SEARCHES_PER_FRAME || this.searchMs >= MAX_SEARCH_MS_PER_FRAME) {
       ag.repathTimer = 0.05 + Math.random() * 0.1;
       return;
     }
     ag.goal.set(x, 0, z);
-    ag.pathLen = this.nav.findPath(ag.position.x, ag.position.z, x, z, ag.path);
+    const t0 = performance.now();
+    // Partial paths: an unreachable goal still gets the agent as close as the grid allows.
+    ag.pathLen = this.nav.findPath(ag.position.x, ag.position.z, x, z, ag.path, 6000, true);
+    this.searchMs += performance.now() - t0;
     ag.pathIdx = 0;
     ag.repathTimer = repath * (0.8 + Math.random() * 0.4);
     if (ag.pathLen === 0) ag.pathRetryAt = now + 400 + Math.random() * 300;

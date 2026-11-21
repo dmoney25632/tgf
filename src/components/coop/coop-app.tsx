@@ -220,7 +220,9 @@ export function CoopApp({
     try {
       const t = await openTransport(roomCode, id);
       transportRef.current = t;
-      t.onPresence((list) => setPeers([...list]));
+      // Presence heartbeats repeat the same roster: only re-render on a real change
+      // (a re-render here also re-renders the running match).
+      t.onPresence((list) => setPeers((cur) => (JSON.stringify(cur) === JSON.stringify(list) ? cur : [...list])));
       t.on("launch", (p) => {
         const l = p as CoopLaunch;
         if (l && Array.isArray(l.roster) && l.roster.some((r) => r.id === id)) {

@@ -138,6 +138,7 @@ export class GrenadeSystem {
   private readonly dir = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, "YXZ");
   private readonly p = new THREE.Vector3();
+  private readonly arcVel = new THREE.Vector3();
   private readonly q = new THREE.Vector3();
   private readonly axis = new THREE.Vector3();
   private readonly arc: THREE.Line;
@@ -386,7 +387,7 @@ export class GrenadeSystem {
     this.marker.visible = show;
     if (!show) return;
     const pos = this.p;
-    const vel = this.dir.clone();
+    const vel = this.arcVel.copy(this.dir);
     this.launchState(eye, yaw, pitch, playerVel, pos, vel);
     const r = RADIUS[this.held];
     let n = 0;
@@ -404,7 +405,20 @@ export class GrenadeSystem {
     geo.setDrawRange(0, n);
     (geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     geo.computeBoundingSphere();
-    this.arc.computeLineDistances();
+    // Dash distances in place (computeLineDistances() makes a new GL buffer every call).
+    let dist = geo.getAttribute("lineDistance") as THREE.BufferAttribute | undefined;
+    if (!dist || dist.count < ARC_POINTS) {
+      dist = new THREE.BufferAttribute(new Float32Array(ARC_POINTS), 1);
+      dist.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute("lineDistance", dist);
+    }
+    const d = dist.array as Float32Array;
+    d[0] = 0;
+    for (let i = 1; i < n; i++) {
+      const a = (i - 1) * 3, b = i * 3;
+      d[i] = d[i - 1] + Math.hypot(this.arcPos[b] - this.arcPos[a], this.arcPos[b + 1] - this.arcPos[a + 1], this.arcPos[b + 2] - this.arcPos[a + 2]);
+    }
+    dist.needsUpdate = true;
     this.marker.position.set(pos.x, pos.y - r + 0.02, pos.z);
   }
 

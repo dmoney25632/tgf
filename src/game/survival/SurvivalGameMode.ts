@@ -158,10 +158,13 @@ export class SurvivalGameMode implements GameMode {
     // Smoke clouds block AI sight lines.
     this.agents.obscured = (a, b) => ctx.grenades.blocksSight(a, b);
     if (this.net?.role !== "client") {
-      this.agents.prewarm("rifleman", 12);
-      this.agents.prewarm("rusher", 4);
-      this.agents.prewarm("armored", 3);
-      this.agents.prewarm("sniper", 2);
+      // Build enough soldiers up front for a full wave plus the dying (bodies stay
+      // ~5 s before returning to the pool): building one mid-wave is a frame hitch.
+      const cap = WAVES.maxAliveByQuality[ctx.quality] + 8;
+      this.agents.prewarm("rifleman", Math.ceil(cap * 0.55));
+      this.agents.prewarm("rusher", Math.ceil(cap * 0.2));
+      this.agents.prewarm("armored", Math.ceil(cap * 0.15));
+      this.agents.prewarm("sniper", 3);
     }
 
     const others = Object.values(OPERATORS).filter((o) => o.id !== op.id);
@@ -742,8 +745,8 @@ export class SurvivalGameMode implements GameMode {
       },
       dt,
       ctx.camera,
-      ctx.container.clientWidth,
-      ctx.container.clientHeight,
+      ctx.view.w,
+      ctx.view.h,
     );
   }
 

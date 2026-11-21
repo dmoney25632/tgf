@@ -270,10 +270,13 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     dustMotes: true,
     aoSamples: 10,
     godRays: true,
-    shadowInterval: 1,
+    // Static shadows are cached and re-rendered on camera turn / move anyway;
+    // every other frame only halves soldier-shadow updates (invisible at 60+ fps).
+    shadowInterval: 2,
     minResolutionScale: 0.65,
     targetFrameMs: 16.7,
-    maxLocalLights: 6,
+    // Each point light costs every lit pixel (forward shading), lit or not.
+    maxLocalLights: 4,
   },
 };
 

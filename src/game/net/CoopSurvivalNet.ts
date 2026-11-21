@@ -80,14 +80,19 @@ const blankVitals = (slot: number): PlayerVitals => ({
   health: 100, maxHealth: 100, armor: 0, bleed: 0, revive: 0, selfRevives: 0, money: ECONOMY.startMoney,
 });
 
+/** Lag-compensation history: 8 samples 70 ms apart ≈ the last 0.56 s. */
+const HISTORY_LEN = 8;
+const HISTORY_STEP = 0.07;
+
 /**
  * Online co-op for Survival, host-authoritative.
  *
  * Host: runs the full simulation (AI, waves, damage, economy). Keeps a
  * PlayerState + Wallet per remote player, lets the AI target them, validates
- * their hit claims, and broadcasts delta snapshots at 12 Hz.
+ * their hit claims (lag-compensated against recent enemy positions), and
+ * broadcasts delta snapshots at 8–12 Hz (rates scale with party size).
  * Clients: predict their own movement and shooting, render host enemies as
- * interpolated proxies ~100 ms in the past, send state + hit claims at 20 Hz,
+ * interpolated proxies ~100–190 ms in the past, send state + hit claims at 6–20 Hz,
  * and mirror waves/vitals/wallet from snapshots.
  * Everyone renders teammates as full soldiers with name tags.
  */
@@ -126,6 +131,13 @@ export class CoopSurvivalNet implements MissionNet {
   private lastPhase: WavePhase = "prematch";
   private lastWave = 0;
   private readonly agentById = new Map<number, Agent>();
+  /**
+   * Lag compensation: recent aim points per enemy (ring of HISTORY_LEN samples,
+   * ~HISTORY_STEP apart). A client shot at where the enemy was on its screen
+   * (render delay + latency ago), so line of sight is also tested against those.
+   */
+  private readonly history = new Map<number, { pts: Float32Array; head: number; n: number }>();
+  private historyAcc = 0;
   private readonly shotsBy = new Map<number, number>();
 
   // Client.
@@ -438,6 +450,7 @@ export class CoopSurvivalNet implements MissionNet {
     const mode = this.mode;
     this.agentById.clear();
     for (const a of mode.agents.active) this.agentById.set(a.id, a);
+    this.recordHistory(dt);
 
     for (const p of this.peers.values()) {
       this.applyClaims(p);
@@ -537,6 +550,22 @@ export class CoopSurvivalNet implements MissionNet {
     if (taken > 0) this.events.push({ k: "hurt", to: p.slot, a: Math.round(taken * 10) / 10, x: Math.round(from.x * 10) / 10, z: Math.round(from.z * 10) / 10 });
   }
 
+  private recordHistory(dt: number) {
+    if ((this.historyAcc += dt) < HISTORY_STEP) return;
+    this.historyAcc = 0;
+    for (const id of this.history.keys()) if (!this.agentById.has(id)) this.history.delete(id);
+    for (const a of this.agentById.values()) {
+      let h = this.history.get(a.id);
+      if (!h) this.history.set(a.id, (h = { pts: new Float32Array(HISTORY_LEN * 3), head: 0, n: 0 }));
+      const q = a.aimPoint(this.tmp3);
+      h.pts[h.head * 3] = q.x;
+      h.pts[h.head * 3 + 1] = q.y;
+      h.pts[h.head * 3 + 2] = q.z;
+      h.head = (h.head + 1) % HISTORY_LEN;
+      h.n = Math.min(HISTORY_LEN, h.n + 1);
+    }
+  }
+
   private applyClaims(p: Peer) {
     if (!p.claims.length) return;
     const now = performance.now() / 1000;
@@ -555,6 +584,8 @@ export class CoopSurvivalNet implements MissionNet {
       if (agent) {
         const a = agent.aimPoint(new THREE.Vector3());
         pts.push({ x: a.x, y: a.y, z: a.z }, { x: a.x, y: a.y + 0.4, z: a.z }, { x: agent.position.x, y: agent.position.y + 0.7, z: agent.position.z });
+        const h = this.history.get(id);
+        if (h) for (let k = 0; k < h.n; k++) pts.push({ x: h.pts[k * 3], y: h.pts[k * 3 + 1], z: h.pts[k * 3 + 2] });
       }
       const verdict = this.validator.validate({
         now, shooterId: p.slot, shooterEye: eye,
