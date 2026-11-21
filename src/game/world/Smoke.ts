@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { QualityName } from "../config";
 import type { WorldExtra } from "./dressing/common";
 import { worldDetail } from "./quality";
+import { fxLightingFor } from "../effects/FxLighting";
 
 /** Soft, lumpy smoke puff (alpha in A, slight shading in RGB). */
 function puffTexture() {
@@ -31,16 +32,23 @@ export type SmokeSource = { x: number; y: number; z: number; scale: number; dark
  * Distant smoke columns: one InstancedMesh of camera-facing puffs (a single
  * draw call for every column). Each puff loops up its column in the vertex
  * shader — growing, drifting downwind and fading — so the CPU only updates a
- * time uniform. Unlit-ish (tinted by fog) to stay cheap.
+ * time uniform. Shaded by the scene sun / sky (shared effect lighting) with a
+ * fake per-puff sphere normal, so columns have a lit and a shadowed side.
  */
 export function smokeColumns(sources: SmokeSource[], quality: QualityName): WorldExtra {
   const maxPuffs = 26;
   const geo = new THREE.PlaneGeometry(1, 1);
   const tex = puffTexture();
   const time = { value: 0 };
+  const sunDir = { value: new THREE.Vector3(0.35, 0.85, 0.4).normalize() };
+  const sunColor = { value: new THREE.Color(1, 0.96, 0.9) };
+  const ambColor = { value: new THREE.Color(0.62, 0.66, 0.72) };
   const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: true, color: 0xffffff });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.time = time;
+    shader.uniforms.fxSunDir = sunDir;
+    shader.uniforms.fxSunColor = sunColor;
+    shader.uniforms.fxAmbColor = ambColor;
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
@@ -68,11 +76,20 @@ export function smokeColumns(sources: SmokeSource[], quality: QualityName): Worl
         vDark = puff.w * (1.0 - life * 0.7);`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying float vFade;\nvarying float vDark;")
+      .replace("#include <common>", "#include <common>\nvarying float vFade;\nvarying float vDark;\nuniform vec3 fxSunDir;\nuniform vec3 fxSunColor;\nuniform vec3 fxAmbColor;")
       .replace(
         "#include <map_fragment>",
         /* glsl */ `#include <map_fragment>
         diffuseColor.rgb *= mix(vec3(0.82, 0.8, 0.76), vec3(0.16, 0.15, 0.14), vDark);
+        {
+          // Puff as a lumpy sphere lit by the sun (wrap lighting) + sky.
+          vec2 q = vMapUv * 2.0 - 1.0;
+          float lump = texture2D(map, vMapUv.yx).a - 0.5;
+          vec3 nrm = normalize(vec3(q + lump * 0.8, sqrt(max(0.05, 1.0 - dot(q, q)))));
+          vec3 sv = normalize((viewMatrix * vec4(fxSunDir, 0.0)).xyz);
+          float wrap = clamp((dot(nrm, sv) + 0.5) / 1.5, 0.0, 1.0);
+          diffuseColor.rgb *= fxAmbColor * (0.9 + 0.25 * nrm.y) + fxSunColor * wrap * 0.75;
+        }
         diffuseColor.a *= vFade * 0.9;`,
       );
   };
@@ -107,6 +124,13 @@ export function smokeColumns(sources: SmokeSource[], quality: QualityName): Worl
     mesh.visible = cols > 0;
   };
   setQuality(quality);
+  mesh.onBeforeRender = (_r, scene) => {
+    const l = fxLightingFor(scene as THREE.Scene);
+    l.syncLights();
+    sunDir.value.copy(l.uniforms.fxSunDir.value);
+    sunColor.value.copy(l.uniforms.fxSunColor.value);
+    ambColor.value.copy(l.uniforms.fxAmbColor.value);
+  };
   const start = performance.now();
   return {
     object: mesh,

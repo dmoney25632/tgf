@@ -18,6 +18,11 @@ const SCALE: Record<Exclude<ShellKind, "shotgun">, [number, number]> = {
   magnum: [1.45, 0.72],
 };
 
+/** Calibres usually loaded in lacquered steel cases (the rest are brass). */
+const STEEL: ReadonlySet<ShellKind> = new Set<ShellKind>(["x39"]);
+/** Steel-lacquer tint relative to the brass base colour (instance colour multiplies it). */
+const STEEL_TINT = new THREE.Color(0.55, 0.66, 1.12);
+
 const GRAVITY = 9.8;
 const LIFE = 3.2;
 
@@ -50,6 +55,9 @@ export class ShellPool {
   private readonly hullHead: THREE.InstancedMesh;
   private readonly shells: Shell[] = [];
   private nextBrass = 0;
+  /** Brass ring size in use (quality); slots past it are never spawned. */
+  private brassCap: number;
+  private readonly tint = new THREE.Color();
   private nextHull = 0;
   private readonly geos: THREE.BufferGeometry[] = [];
   private readonly mats: THREE.Material[] = [];
@@ -62,6 +70,7 @@ export class ShellPool {
   onLand: ((at: THREE.Vector3, kind: ShellKind, speed: number) => void) | null = null;
 
   constructor(scene: THREE.Scene, readonly capacity = 40) {
+    this.brassCap = capacity;
     // Bottle-neck rifle casing along Z, base at z = 0, mouth at -0.045.
     const caseGeo = lathe([
       [0, 0.0], [0.0047, 0.0], [0.0048, -0.0012], [0.0039, -0.0018], [0.0039, -0.003], [0.0048, -0.0036],
@@ -70,7 +79,7 @@ export class ShellPool {
     const hullGeo = lathe([[0.0098, -0.012], [0.0102, -0.013], [0.0102, -0.068], [0.0088, -0.07], [0.0035, -0.07], [0.0035, -0.066]]);
     const headGeo = lathe([[0, 0], [0.0107, 0], [0.0107, -0.0015], [0.0103, -0.002], [0.0103, -0.013], [0, -0.013]]);
     this.geos.push(caseGeo, hullGeo, headGeo);
-    const brassMat = new THREE.MeshStandardMaterial({ color: 0xc9a04c, metalness: 1, roughness: 0.28, side: THREE.DoubleSide });
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xc9a04c, metalness: 1, roughness: 0.3, envMapIntensity: 1.2, side: THREE.DoubleSide });
     const hullMat = new THREE.MeshStandardMaterial({ color: 0x8e1f18, metalness: 0.05, roughness: 0.45, side: THREE.DoubleSide });
     this.mats.push(brassMat, hullMat);
     const nHull = Math.max(4, Math.floor(capacity / 4));
@@ -84,6 +93,8 @@ export class ShellPool {
       im.castShadow = false;
       scene.add(im);
     }
+    // Per-casing tint: brass with a little tarnish variation, or steel lacquer.
+    for (let i = 0; i < capacity; i++) this.brass.setColorAt(i, this.tint.setRGB(1, 1, 1));
     for (let i = 0; i < capacity + nHull; i++) {
       this.shells.push({
         active: false, shotgun: i >= capacity, slot: i >= capacity ? i - capacity : i,
@@ -105,7 +116,12 @@ export class ShellPool {
       this.nextHull = (this.nextHull + 1) % this.hull.count;
     } else {
       s = this.shells[this.nextBrass];
-      this.nextBrass = (this.nextBrass + 1) % this.capacity;
+      this.nextBrass = (this.nextBrass + 1) % this.brassCap;
+      const k = 0.82 + Math.random() * 0.2;
+      if (STEEL.has(kind)) this.tint.copy(STEEL_TINT).multiplyScalar(k);
+      else this.tint.setRGB(k, k * (0.97 + Math.random() * 0.05), k * (0.92 + Math.random() * 0.1));
+      this.brass.setColorAt(s.slot, this.tint);
+      if (this.brass.instanceColor) this.brass.instanceColor.needsUpdate = true;
     }
     s.active = true;
     s.kind = kind;
@@ -124,6 +140,27 @@ export class ShellPool {
     s.ground = groundY;
     s.bounces = 0;
     s.resting = false;
+  }
+
+  /** Limit live casings (quality). Casings past the new cap vanish. */
+  setCap(n: number) {
+    this.brassCap = Math.max(4, Math.min(this.capacity, Math.floor(n)));
+    for (let i = this.brassCap; i < this.capacity; i++) {
+      const s = this.shells[i];
+      if (s.active) {
+        s.active = false;
+        this.write(s, true);
+      }
+    }
+    this.brass.instanceMatrix.needsUpdate = true;
+    this.nextBrass %= this.brassCap;
+  }
+
+  /** Casings currently in flight or lying on the floor. */
+  get activeCount() {
+    let n = 0;
+    for (const s of this.shells) if (s.active) n++;
+    return n;
   }
 
   update(dt: number) {

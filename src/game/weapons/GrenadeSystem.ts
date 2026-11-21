@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { FLASHBANG, GRENADE, SMOKE, type GrenadeType } from "./weapons";
 import type { CollisionWorld } from "../world/Collision";
+import { SmokeVolume } from "../effects/SmokeVolume";
 
 const POOL = 8;
 const GRAVITY = 9.81;
@@ -22,7 +23,6 @@ const WINDUP_TIME = 0.34;
 const THROW_TIME = 0.42;
 const ARC_POINTS = 72;
 const ARC_STEP = 1 / 45;
-const SMOKE_PUFFS = 30;
 
 type Live = {
   mesh: THREE.Group;
@@ -41,8 +41,6 @@ type Smoke = {
   age: number;
   life: number;
   radius: number;
-  puffs: THREE.Sprite[];
-  offsets: THREE.Vector3[];
   active: boolean;
 };
 
@@ -144,8 +142,8 @@ export class GrenadeSystem {
   private readonly arc: THREE.Line;
   private readonly arcPos: Float32Array;
   private readonly marker: THREE.Mesh;
-  private readonly smokeTex: THREE.Texture | null;
-  private readonly smokeMat: THREE.SpriteMaterial;
+  /** Visuals for every smoke cloud (one lit, instanced draw call). */
+  readonly smokeVolume: SmokeVolume;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -186,8 +184,7 @@ export class GrenadeSystem {
     this.marker.renderOrder = 5;
     scene.add(this.arc, this.marker);
 
-    this.smokeTex = makeSmokeTexture();
-    this.smokeMat = new THREE.SpriteMaterial({ map: this.smokeTex, color: 0xc9ccc8, transparent: true, depthWrite: false, opacity: 0.9 });
+    this.smokeVolume = new SmokeVolume(scene);
   }
 
   /** Carried count for a type. */
@@ -429,15 +426,7 @@ export class GrenadeSystem {
     if (!s) {
       if (this.smokes.length >= 4) s = this.smokes.reduce((a, b) => (a.age > b.age ? a : b));
       else {
-        s = { pos: new THREE.Vector3(), age: 0, life: 0, radius: SMOKE.radius, puffs: [], offsets: [], active: false };
-        for (let i = 0; i < SMOKE_PUFFS; i++) {
-          const sp = new THREE.Sprite(this.smokeMat.clone());
-          sp.visible = false;
-          sp.renderOrder = 4;
-          this.scene.add(sp);
-          s.puffs.push(sp);
-          s.offsets.push(new THREE.Vector3());
-        }
+        s = { pos: new THREE.Vector3(), age: 0, life: 0, radius: SMOKE.radius, active: false };
         this.smokes.push(s);
       }
     }
@@ -446,39 +435,16 @@ export class GrenadeSystem {
     s.life = SMOKE.duration;
     s.radius = SMOKE.radius;
     s.active = true;
-    for (let i = 0; i < s.puffs.length; i++) {
-      // Dome-shaped spread: denser low, a little drift up.
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.sqrt(Math.random()) * s.radius * 0.85;
-      s.offsets[i].set(Math.cos(a) * rr, 0.4 + Math.random() * s.radius * 0.75, Math.sin(a) * rr);
-      const p = s.puffs[i];
-      p.visible = true;
-      (p.material as THREE.SpriteMaterial).rotation = Math.random() * Math.PI * 2;
-    }
+    this.smokeVolume.spawn(at, s.radius, s.life);
   }
 
   private updateSmokes(dt: number) {
     for (const s of this.smokes) {
       if (!s.active) continue;
       s.age += dt;
-      if (s.age >= s.life) {
-        s.active = false;
-        for (const p of s.puffs) p.visible = false;
-        continue;
-      }
-      const grow = 1 - Math.pow(1 - Math.min(1, s.age / 4), 2);
-      const fade = Math.min(1, (s.life - s.age) / 5);
-      for (let i = 0; i < s.puffs.length; i++) {
-        const p = s.puffs[i];
-        const o = s.offsets[i];
-        p.position.set(s.pos.x + o.x * grow, s.pos.y + o.y * grow + s.age * 0.03, s.pos.z + o.z * grow);
-        const size = (1.6 + (i % 5) * 0.35) * (0.3 + 0.7 * grow) * (1 + s.age * 0.015);
-        p.scale.set(size, size, 1);
-        const m = p.material as THREE.SpriteMaterial;
-        m.opacity = 0.82 * fade * Math.min(1, s.age * 3);
-        m.rotation += dt * 0.05 * (i % 2 ? 1 : -1);
-      }
+      if (s.age >= s.life) s.active = false;
     }
+    this.smokeVolume.update(dt);
   }
 
   /** Does an active smoke cloud block the segment a → b? */
@@ -502,10 +468,8 @@ export class GrenadeSystem {
       g.active = false;
       g.mesh.visible = false;
     }
-    for (const s of this.smokes) {
-      s.active = false;
-      for (const p of s.puffs) p.visible = false;
-    }
+    for (const s of this.smokes) s.active = false;
+    this.smokeVolume.reset();
     this.throwProgress = -1;
     this.holding = false;
     this.cookTime = -1;
@@ -529,9 +493,7 @@ export class GrenadeSystem {
     (this.arc.material as THREE.Material).dispose();
     this.marker.geometry.dispose();
     (this.marker.material as THREE.Material).dispose();
-    for (const s of this.smokes) for (const p of s.puffs) (p.material as THREE.Material).dispose();
-    this.smokeMat.dispose();
-    this.smokeTex?.dispose();
+    this.smokeVolume.dispose();
   }
 }
 
@@ -541,26 +503,4 @@ function segmentDistance(a: THREE.Vector3, b: THREE.Vector3, p: THREE.Vector3) {
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / len2));
   const dx = a.x + abx * t - p.x, dy = a.y + aby * t - p.y, dz = a.z + abz * t - p.z;
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-/** Soft, lumpy smoke puff (canvas radial gradients); null outside the browser. */
-function makeSmokeTexture(): THREE.Texture | null {
-  if (typeof document === "undefined") return null;
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
-  const x = c.getContext("2d");
-  if (!x) return null;
-  for (let i = 0; i < 9; i++) {
-    const cx = 64 + (Math.random() - 0.5) * 40;
-    const cy = 64 + (Math.random() - 0.5) * 40;
-    const r = 26 + Math.random() * 30;
-    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, "rgba(255,255,255,0.5)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    x.fillStyle = g;
-    x.fillRect(0, 0, 128, 128);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
