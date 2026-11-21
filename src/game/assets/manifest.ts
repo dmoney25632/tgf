@@ -118,7 +118,11 @@ export type ModelId =
   | "steel_frame_shelves_01"
   | "metal_office_desk"
   | "plastic_monobloc_chair_01"
-  | "hanging_industrial_lamp";
+  | "hanging_industrial_lamp"
+  | "plastic_crate_02"
+  | "wooden_crate_02"
+  | "Barrel_02"
+  | "utility_box_02";
 
 export type ModelEntry = {
   /** Path under ASSET_BASE. */
@@ -164,6 +168,10 @@ export const MODELS: Record<ModelId, ModelEntry> = {
   metal_office_desk: model("metal_office_desk", 6898, "whole", false),
   plastic_monobloc_chair_01: model("plastic_monobloc_chair_01", 3356, "whole", false),
   hanging_industrial_lamp: model("hanging_industrial_lamp", 9530, "whole", false),
+  plastic_crate_02: model("plastic_crate_02", 5840, "whole", false),
+  wooden_crate_02: model("wooden_crate_02", 5176, "whole"),
+  Barrel_02: model("Barrel_02", 2688, "whole"),
+  utility_box_02: model("utility_box_02", 6268, "whole"),
 };
 
 export const textureUrl = (set: string, kind: TextureMapKind) => `${ASSET_BASE}/textures/${set}/${kind}.jpg`;

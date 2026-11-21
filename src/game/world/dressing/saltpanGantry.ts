@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachGrime, finishGrime, grimeBoxes } from "../architecture/grime";
 import { rng, type BushPlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
 import { clutterGroup, type MeshBuilder } from "../MeshBuilder";
@@ -116,6 +117,7 @@ export const saltpanGantry: Dressing = (kit) => {
   const nearSpawn = (x: number, z: number, m: number) => spawns.some((s) => Math.hypot(s.x - x, s.z - z) < m) || Math.hypot(x - def.spawns[0].x, z - def.spawns[0].z) < m;
   const free = (x: number, z: number, m = 0.3) => clearOf(boxes, x, z, m);
   const extras: WorldExtra[] = [];
+  const grime = attachGrime(B, qualityName(quality), "dry");
 
   // ---- Terrain ---------------------------------------------------------------------
   const flatMask = (x: number, z: number) => {
@@ -306,6 +308,8 @@ export const saltpanGantry: Dressing = (kit) => {
     placed++;
   }
 
+  grimeBoxes(grime, boxes, 61);
+  extras.push(...finishGrime(B));
   return {
     terrain: { height, splat, inner: 64, outer: 700 },
     foliage: { grass: () => 0, grassBounds: 0, trees: [], bushes, tallGrass, tallGrassBounds: 70 },

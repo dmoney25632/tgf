@@ -6,6 +6,7 @@ import type { WorldDetail } from "../quality";
 import { facades, spall } from "../architecture/Building";
 import { Frame, acUnit, blastOutline, cable, dish, downpipe, fbox, railing, rebar, rod, wallDecal, type Blast, type Tint } from "../architecture/kit";
 import { debrisScatter, rubblePile } from "../architecture/debris";
+import { grimeOf, holeRects } from "../architecture/grime";
 import { HOUSES, TOWER, WALL_T, houseOpenings, sideLength, type HouseDef, type HouseOpening, type Side } from "../maps/brennhollow";
 
 /** The builders a Brennhollow structure draws into (one merged mesh per layer and material). */
@@ -365,6 +366,24 @@ export function house(V: Village, h: HouseDef) {
       rebar(V.B, f, b.u, b.y - b.r * 0.5, 4, b.seed);
     }
     if (h.damage > 0.6 && r() < 0.5) wallDecal(V.B, f, "soot", L * (0.3 + r() * 0.4), H - 1.2, 3, 2.6, 0xffffff, 0.035);
+    // Shared grime layer (rain streaks, algae, corner dirt, damp, cracks) when the dressing attached one.
+    const grime = grimeOf(V.B);
+    if (grime) {
+      const facadeOps = okOps.map((o) => ({ ...o, u: o.u + u0 }));
+      let low = Infinity;
+      for (let uu = 0; uu <= L; uu += 0.5) low = Math.min(low, c.crown(uu));
+      grime.facade(f, {
+        length: L,
+        top: c.flat ? H : Math.min(H, low) - (h.ruin ? 0.5 : 0.1),
+        seed: seedOf(h.id) * 5 + side,
+        holes: holeRects(facadeOps, blasts[side]),
+        fromTop: !h.ruin,
+        corners: !h.ruin && h.wall !== "stone",
+        cracks: h.wall === "stone" ? [] : facadeOps.filter((o) => o.kind === "win"),
+        amount: h.wall === "stone" ? 0.6 : 1,
+        d: 0.048,
+      });
+    }
     if (!h.ruin && c.flat && r() < 0.6) downpipe(V.B, f, r() < 0.5 ? 0.3 : L - 0.3, H - 0.1);
     if (!h.ruin && !interior && side !== 3 && r() < 0.25 && h.floors > 1) acUnit(V.B, f, 1.2 + r() * (L - 2.4), h.fh + 0.4, Math.floor(r() * 1e6));
     if (!h.ruin && r() < 0.18 && h.floors > 1) dish(V.B, ...(() => { const p = f.at(L * 0.8, H - 1.2, 0.35); return [p.x, p.y, p.z] as const; })(), f.rotY + Math.PI / 2, 0.4);

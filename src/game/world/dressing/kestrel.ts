@@ -1,5 +1,8 @@
 import { rng, type BushPlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
+import { qualityName } from "../quality";
+import { attachGrime, finishGrime, grimeBoxes } from "../architecture/grime";
+import { skyline } from "../architecture/skyline";
 import { clearOf, concertina, fbm2, poleLine, rubble, scatterTrees, smoothstep, type Dressing, type PoleSpot } from "./common";
 
 const WALL = 40.5;
@@ -9,6 +12,8 @@ export const kestrel: Dressing = (kit) => {
   const { def, builder: B } = kit;
   const r = rng(77);
   const boxes = def.boxes;
+  const q = qualityName(kit.quality);
+  const grime = attachGrime(B, q, "wet");
 
   const height = (x: number, z: number) => {
     const d = Math.max(Math.abs(x), Math.abs(z));
@@ -71,7 +76,27 @@ export const kestrel: Dressing = (kit) => {
     const [x, z] = side === 0 ? [a, -off] : side === 1 ? [a, off] : side === 2 ? [-off, a] : [off, a];
     if (clearOf(boxes, x, z, 1) && !(z > 20 && Math.abs(x) < 20)) bushes.push({ x, z, scale: 0.7 + r() * 0.4, dry: r() < 0.4 });
   }
+  // ---- Weathering, and farmland to the horizon: farmsteads, silos, hedgerows, a ridge -----------
+  grimeBoxes(grime, boxes, 17);
+  skyline(B, {
+    height,
+    seed: 7711,
+    quality: q,
+    rMin: 200,
+    rMax: 310,
+    keepOut: (x, z) => Math.abs(z + 58) < 14, // the near power line track
+    ridge: { r: 350, depth: 80, h: [16, 44], tint: 0x66704f, far: { r: 430, h: [34, 70], tint: 0x6f7a72 } },
+    farms: 7,
+    silos: 3,
+    waterTowers: 1,
+    masts: 1,
+    trees: 90,
+    treeTint: 0x48532f,
+    pylons: { angle: -0.35, offset: 245 },
+  });
+
   return {
+    extras: finishGrime(B),
     terrain: { height, splat, inner: 60, outer: 700 },
     foliage: { grass, grassBounds: 75, trees, bushes, tallGrass, tallGrassBounds: 85 },
   };

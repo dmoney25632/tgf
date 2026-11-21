@@ -11,6 +11,7 @@ import { burntCar, debrisScatter, litter, rubblePile } from "../architecture/deb
 import { HOUSES, LAMPS, MANOR_YARD, ORCHARD, PICKUP, POLES, SQUARE, STATUE, TANK, TOWER, houseById } from "../maps/brennhollow";
 import { villageMaterial } from "./brennhollowTextures";
 import { applyWeathering } from "../../render/Materials";
+import { attachGrime, finishGrime } from "../architecture/grime";
 import { churchInterior, churchTower, house, manorDetail, pickup, rnd, statue, tankHulk, type Village } from "./brennhollowHouses";
 import { band, clearOf, fbm2, fence, pallets, smoothstep, tyre, wireSpan, type Dressing, type WorldExtra } from "./common";
 
@@ -121,6 +122,7 @@ export const brennhollow: Dressing = (kit) => {
   const free = (x: number, z: number, m = 0.3) => clearOf(boxes, x, z, m);
   const extras: WorldExtra[] = [];
   const height = bhSurface;
+  attachGrime(B, qn, "wet");
 
   // ---- Custom texture layers (one merged mesh + material each) -----------------------
   const texSize = high ? 1024 : quality.proceduralTextureSize >= 512 ? 512 : 256;
@@ -581,6 +583,7 @@ export const brennhollow: Dressing = (kit) => {
   extras.push(layer(layerBuilders.stone, stone, true));
   extras.push(layer(layerBuilders.timber, timber, true));
   extras.push(layer(layerBuilders.setts, setts, false));
+  extras.push(...finishGrime(B));
 
   return {
     terrain: { height, splat, inner: 52, outer: 53 },

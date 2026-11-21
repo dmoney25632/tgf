@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { attachGrime, finishGrime } from "../architecture/grime";
+import { skyline } from "../architecture/skyline";
 import { rng, type BushPlacement, type TreePlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
 import type { MeshBuilder } from "../MeshBuilder";
@@ -57,6 +59,7 @@ export const ironCrossing: Dressing = (kit) => {
   const name = qualityName(quality);
   const detail = worldDetail(name);
   const extras: WorldExtra[] = [];
+  attachGrime(B, qualityName(quality), "wet");
   const { south, north, deck, core, deckHalf, catOut, pad, piers } = BRIDGE;
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -344,7 +347,7 @@ export const ironCrossing: Dressing = (kit) => {
   }
 
   // ---- Customs yard, water tower ---------------------------------------------------------------------------
-  building(B, props, { x: (CUSTOMS.x0 + CUSTOMS.x1) / 2, z: (CUSTOMS.z0 + CUSTOMS.z1) / 2, w: CUSTOMS.x1 - CUSTOMS.x0, d: CUSTOMS.z1 - CUSTOMS.z0, floors: 2, floorH: 3.2, seed: 91, tint: 0xd8d2c0, damage: 0.3, front: 1, detail: true });
+  building(B, props, { x: (CUSTOMS.x0 + CUSTOMS.x1) / 2, z: (CUSTOMS.z0 + CUSTOMS.z1) / 2, w: CUSTOMS.x1 - CUSTOMS.x0, d: CUSTOMS.z1 - CUSTOMS.z0, floors: 2, floorH: 3.2, seed: 91, tint: 0xd8d2c0, damage: 0.3, front: 1, detail: true, glazed: true });
   {
     const t = TOWER;
     for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) beam(B, [t.x + sx * 1.7, 0, t.z + sz * 1.7], [t.x + sx * 1.3, t.perch, t.z + sz * 1.3], 0.2, 0.2, "metal_painted", 0x7a6a5a, "decor");
@@ -372,7 +375,7 @@ export const ironCrossing: Dressing = (kit) => {
 
   // ---- Brask -----------------------------------------------------------------------------------------------
   for (const b of BLOCKS) {
-    building(B, props, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, w: b.x1 - b.x0, d: b.z1 - b.z0, floors: b.floors, floorH: 3.3, seed: b.seed, tint: b.tint, damage: b.damage ?? 0.1, front: b.front, detail: true });
+    building(B, props, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, w: b.x1 - b.x0, d: b.z1 - b.z0, floors: b.floors, floorH: 3.3, seed: b.seed, tint: b.tint, damage: b.damage ?? 0.1, front: b.front, detail: true, glazed: true });
   }
   church(B, r);
   // Fountain.
@@ -459,6 +462,23 @@ export const ironCrossing: Dressing = (kit) => {
     building(B, null, { x, z, w, d, floors: f, floorH: 3.2, seed: Math.round(x * 7 + z), groundY: height(x, z), group: "far", detail: false, hollow: true });
   }
 
+  // Skyline beyond the hills: pylons striding across, masts on the crests, farms and copses.
+  skyline(B, {
+    height,
+    seed: 3301,
+    quality: name,
+    rMin: 230,
+    rMax: 330,
+    // Not in the gorge (it runs east-west through z = 0) nor over the play strip.
+    keepOut: (x, z) => Math.abs(z - gorgeShift(x)) < 40 || (Math.abs(x) < BOUNDS.x1 + 60 && z > BOUNDS.z0 - 60 && z < BOUNDS.z1 + 60),
+    masts: 3,
+    farms: 4,
+    blocks: 5,
+    trees: 70,
+    treeTint: 0x3e4a2e,
+    pylons: { angle: 1.25, offset: 260 },
+  });
+
   // ---- Smoke ----------------------------------------------------------------------------------------------
   extras.push(
     smokeColumns(
@@ -472,6 +492,7 @@ export const ironCrossing: Dressing = (kit) => {
     ),
   );
 
+  extras.push(...finishGrime(B));
   return {
     terrain: { height, splat, inner: 110, outer: 480 },
     foliage: { grass, grassBounds: 175, trees, bushes, tallGrass, tallGrassBounds: 175 },

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachGrime, finishGrime, grimeOf, holeRects } from "../architecture/grime";
 import type { Dressing, WorldExtra } from "./common";
 import { fbm2, smoothstep, poleLine, type PoleSpot } from "./common";
 import type { MeshBuilder } from "../MeshBuilder";
@@ -360,6 +361,16 @@ function house(ctx: Ctx, l: Lot) {
     // Plinth / grime band.
     wallDecal(B, f, "baseDirt", L / 2, 0.7, L, 1.4, 0xffffff, 0.02);
     if (r() < 0.6) wallDecal(B, f, "leak", 0.6 + r() * (L - 1.2), H - 0.8, 0.9, 1.8, 0xffffff, 0.015);
+    // Shared grime layer: streaks off the parapet, corner dirt, damp, cracks at window heads.
+    grimeOf(B)?.facade(f, {
+      length: L,
+      top: l.laje ? H : H + 1.0,
+      seed: (l.seed ^ 0x2c1b) * 4 + s,
+      holes: holeRects(sideOps),
+      cracks: wins.filter((k) => k.side === s),
+      amount: l.blank.includes(s) ? 0.6 : 1,
+      d: 0.025,
+    });
 
     // Windows.
     for (const w of wins.filter((k) => k.side === s)) {
@@ -564,6 +575,7 @@ export const morroAzul: Dressing = (kit) => {
   const atlasData = makeAtlas();
   const quads: Quad[] = [];
   const ctx: Ctx = { B, quads, atlas: atlasData.rects, high };
+  attachGrime(B, q, "dry");
   const flat = () => 0;
 
   // ---- Streets ------------------------------------------------------------------
@@ -758,6 +770,7 @@ export const morroAzul: Dressing = (kit) => {
   const extras: WorldExtra[] = [];
   extras.push(palms(palmList, kit.materials, kit.windTime));
   extras.push(atlasExtra(quads, atlasData.canvas, high ? 8 : 4));
+  extras.push(...finishGrime(B));
 
   return {
     terrain: {

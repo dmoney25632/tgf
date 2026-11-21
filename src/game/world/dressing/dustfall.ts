@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachGrime, finishGrime, grimeBoxes } from "../architecture/grime";
 import { rng, type BushPlacement, type TreePlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
 import { poleWirePoints } from "../BoxStyles";
@@ -46,6 +47,7 @@ export const dustfall: Dressing = (kit) => {
   const nearSpawn = (x: number, z: number, m: number) => spawns.some((s) => Math.hypot(s.x - x, s.z - z) < m);
   const free = (x: number, z: number, m = 0.3) => clearOf(boxes, x, z, m);
   const extras: WorldExtra[] = [];
+  const grime = attachGrime(B, qualityName(quality), "dry");
 
   // ---- Terrain ---------------------------------------------------------------------
   const height = (x: number, z: number) => {
@@ -710,6 +712,8 @@ export const dustfall: Dressing = (kit) => {
   ].map((s) => ({ ...s, y: height(s.x, s.z) }));
   extras.push(smokeColumns(smoke, qualityName(quality)));
 
+  grimeBoxes(grime, boxes, 23);
+  extras.push(...finishGrime(B));
   return {
     terrain: { height, splat, inner: 70, outer: 700 },
     foliage: { grass, grassBounds: 50, trees, bushes, tallGrass, tallGrassBounds: 66 },

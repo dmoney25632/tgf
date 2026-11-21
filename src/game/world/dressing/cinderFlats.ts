@@ -4,6 +4,9 @@ import type { Splat } from "../Terrain";
 import type { WorldMat as MaterialName } from "../WorldMaterials";
 import type { MeshBuilder } from "../MeshBuilder";
 import { LIGHTS, PUMPJACKS, RACK, TANKS } from "../maps/cinderFlats";
+import { qualityName } from "../quality";
+import { attachGrime, finishGrime, grimeBoxes } from "../architecture/grime";
+import { skyline } from "../architecture/skyline";
 import { band, clearOf, concertina, fbm2, pallets, poleLine, rubble, smoothstep, tyre, type Dressing, type PoleSpot } from "./common";
 
 const BERM = 48;
@@ -192,6 +195,8 @@ export const cinderFlats: Dressing = (kit) => {
   const { def, builder: B } = kit;
   const r = rng(4417);
   const boxes = def.boxes;
+  const q = qualityName(kit.quality);
+  const grime = attachGrime(B, q, "dry");
 
   // ---- Terrain -------------------------------------------------------------------------
   const height = (x: number, z: number) => {
@@ -287,8 +292,28 @@ export const cinderFlats: Dressing = (kit) => {
     if (clearOf(boxes, x, z, 1.2)) bushes.push({ x, z, scale: 0.45 + r() * 0.3, dry: true });
   }
 
+  // ---- Weathering and the far skyline: refinery stacks, tank farms, pylons, mesas --------------
+  grimeBoxes(grime, boxes, 41);
+  skyline(B, {
+    height,
+    seed: 5150,
+    quality: q,
+    rMin: 160,
+    rMax: 300,
+    // Keep the near power line and flare stack on the east side uncluttered.
+    keepOut: (x, z) => Math.abs(x - 64) < 30 || Math.hypot(x - 66, z + 60) < 40,
+    ridge: { r: 360, depth: 70, h: [14, 52], tint: 0xb39272, mesa: true, far: { r: 430, h: [30, 78], tint: 0xa8968a } },
+    stacks: 5,
+    tanks: 5,
+    waterTowers: 1,
+    masts: 2,
+    blocks: 6,
+    pylons: { angle: 0.45, offset: 230 },
+  });
+
   return {
     terrain: { height, splat, inner: 60, outer: 700 },
     foliage: { grass: () => 0, grassBounds: 0, trees: [], bushes },
+    extras: finishGrime(B),
   };
 };
