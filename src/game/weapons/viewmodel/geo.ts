@@ -180,6 +180,12 @@ export class GeoBuilder {
   private cur!: Bucket;
   triangles = 0;
   meshes = 0;
+  /** Arm surfaces (gloves, sleeves, watch): everything else is "gun". */
+  isArm: (s: Surf) => boolean = (s) => s.tint >= 0;
+  /** Build only the arms; the gun is just measured (a real model replaces it). */
+  armsOnly = false;
+  /** Bounds of the non-arm (gun) surfaces per target, in the target's space. */
+  readonly gunBounds = new Map<THREE.Object3D, THREE.Box3>();
 
   constructor(private readonly materials: Record<RenderKind, THREE.Material>) {}
 
@@ -204,6 +210,16 @@ export class GeoBuilder {
     if (m) {
       g.applyMatrix4(m);
       if (m.determinant() < 0) flipWinding(g);
+    }
+    const arm = this.isArm(s);
+    if (!arm && s.render !== "glow") {
+      g.computeBoundingBox();
+      const box = this.gunBounds.get(this.cur.obj) ?? new THREE.Box3();
+      this.gunBounds.set(this.cur.obj, box.union(g.boundingBox!));
+    }
+    if (this.armsOnly && !arm) {
+      g.dispose();
+      return this;
     }
     // Bake the surface: colour = albedo, pbr = (metal, rough, wear | alpha, nScale), surf = (layer, tint).
     const c = g.attributes.color as THREE.BufferAttribute;

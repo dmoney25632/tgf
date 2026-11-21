@@ -19,6 +19,17 @@ Unlike the table above, these assets are **not** CC0. Their licence requires att
 |---|---|---|---|
 | `characters/head/` (`LeePerrySmith.glb`, `Map-COL.jpg`, `Map-SPEC.jpg`, `Infinite-Level_02_Tangent_SmoothUV.jpg`) | "Infinite, 3D Head Scan" of Lee Perry-Smith | [Infinite-Realities](http://www.ir-ltd.net/) (based on a work at triplegangers.com) | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
 
+Gun models (first-person viewmodels):
+
+| Folder | Work | Author | License |
+|---|---|---|---|
+| `weapons/m4a1/` (`model.gltf`, `model.bin`, textures) | "M4A1" | [TORI106](https://sketchfab.com/3d-models/m4a1-33107f38b23c45cc8103768c0e961cdf) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/akm/` (`model.gltf`, `model.bin`, textures) | "Ak47" | [wburton](https://sketchfab.com/3d-models/ak47-831519a097d84e079fd8bc4b15e5b57d) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/mp5/` (`model.gltf`, `model.bin`, textures) | "MP5 | PBR | High Poly" | [Stein Games](https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/m1911/` (`model.gltf`, `model.bin`, textures) | "M1911 Handgun" | [SINNIK](https://sketchfab.com/3d-models/m1911-handgun-1f2209650c1d47cfb8d686ab99258409) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+
+The gun models were obtained via the [FirstWave](https://github.com/moyzyy/FirstWave) project (commit `b4a5a01`); each folder keeps a `LICENSE.txt`. Changes: textures re-encoded from 2048 px PNG to 1024 px JPG; `m1911` effect meshes (muzzle fire, blend planes) removed. At runtime the models are re-oriented and scaled onto the procedural gun, the `akm` rig is baked to a static pose and its loose spare magazine dropped.
+
 Obtained from the three.js repository (`examples/models/gltf/LeePerrySmith/`); the original licence text is kept as `characters/head/LeePerrySmith_License.txt`. Changes: the specular map was downscaled to 512 px; at runtime the bust is trimmed to head and neck, the albedo is re-tinted (skin tone, facial hair, painted eyes) and the head is fitted with procedurally modelled headgear.
 
 ## Environment additions (CC0)

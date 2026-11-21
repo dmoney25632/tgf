@@ -1,0 +1,11 @@
+Model Information:
+* title:	MP5 | PBR | High Poly
+* source:	https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529
+* author:	Stein Games (https://sketchfab.com/jvitor17)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "MP5 | PBR | High Poly" (https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529) by Stein Games (https://sketchfab.com/jvitor17) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

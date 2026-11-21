@@ -7,6 +7,8 @@ import { GeoBuilder } from "./viewmodel/geo";
 import { createViewmodelMaterials, type ViewmodelMaterials } from "./viewmodel/materials";
 import { GUN_BUILDERS, buildGrenade, buildKnife, type GrenadeModel, type GunSpec } from "./viewmodel/guns";
 import { buildFlash, createFlashKit, type FlashKit } from "./viewmodel/flash";
+import { REAL_GUNS, fitRealGun, loadRealGun, type RealTemplate } from "./viewmodel/realGuns";
+import type { Surf } from "./viewmodel/materials";
 
 type ModelKind = WeaponDef["model"];
 
@@ -119,6 +121,10 @@ export class WeaponViewmodel {
 
   private readonly models = new Map<ModelKind, Model>();
   private pinned = new Set<ModelKind>();
+  /** Loaded photo-textured gun models (see viewmodel/realGuns.ts). */
+  private readonly real = new Map<ModelKind, RealTemplate>();
+  private readonly realRequested = new Set<ModelKind>();
+  private disposed = false;
   private active!: Model;
   private def: WeaponDef | null = null;
   private readonly knife = new THREE.Group();
@@ -277,9 +283,23 @@ export class WeaponViewmodel {
     let m = this.models.get(kind);
     if (!m) {
       const b = new GeoBuilder(this.mats.render);
+      const mt = this.mats;
+      const arms = new Set<Surf>([mt.glove, mt.gloveAccent, mt.gloveSeam, mt.sleeve, mt.sleeveDark, mt.watchCase, mt.watchFace]);
+      b.isArm = (s) => arms.has(s);
+      const real = this.real.get(kind);
+      // A real model replaces the built gun: build only the hands, keep every anchor.
+      b.armsOnly = !!real;
       const owned: { dispose(): void }[] = [];
       const spec = (GUN_BUILDERS[kind] ?? GUN_BUILDERS.m4a1)({ b, m: this.mats });
       b.finish(owned);
+      if (real) {
+        spec.root.updateMatrixWorld(true);
+        const inv = spec.root.matrixWorld.clone().invert();
+        const gun = new THREE.Box3();
+        const rel = new THREE.Matrix4();
+        for (const [obj, box] of b.gunBounds) gun.union(box.clone().applyMatrix4(rel.multiplyMatrices(inv, obj.matrixWorld)));
+        spec.root.add(fitRealGun(kind, real, gun, spec.muzzle.position));
+      } else this.requestReal(kind);
       const flash = buildFlash(this.flashKit, spec.flash, spec.flashScale, owned);
       spec.muzzle.add(flash.group);
       m = {
@@ -301,6 +321,27 @@ export class WeaponViewmodel {
     }
     m.lastUsed = ++this.useClock;
     return m;
+  }
+
+  /** Fetch the real model for `kind`; once it arrives the cached built gun is rebuilt around it. */
+  private requestReal(kind: ModelKind) {
+    if (!REAL_GUNS[kind] || this.realRequested.has(kind)) return;
+    this.realRequested.add(kind);
+    void loadRealGun(kind).then((t) => {
+      if (!t || this.disposed) return;
+      this.real.set(kind, t);
+      const old = this.models.get(kind);
+      if (!old) return;
+      this.models.delete(kind);
+      const next = this.getModel(kind);
+      if (old === this.active) {
+        this.pivot.remove(old.spec.root);
+        this.active = next;
+        this.pivot.add(next.spec.root);
+      }
+      old.spec.root.removeFromParent();
+      for (const d of old.owned) d.dispose();
+    });
   }
 
   private evict() {
@@ -909,6 +950,7 @@ export class WeaponViewmodel {
   }
 
   dispose() {
+    this.disposed = true;
     for (const d of this.disposables) d.dispose();
     for (const m of this.models.values()) for (const d of m.owned) d.dispose();
     this.models.clear();

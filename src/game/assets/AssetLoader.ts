@@ -301,3 +301,29 @@ export function clearAssetCaches() {
   if (hdriCache) void hdriCache.then((t) => t?.dispose());
   hdriCache = null;
 }
+
+const sceneCache = new Map<string, Promise<THREE.Group | null>>();
+
+/**
+ * Loads a glTF scene as-is (materials and textures kept), cached by URL.
+ * Callers clone the result. Used for the first-person gun models in
+ * /assets/weapons (see public/assets/CREDITS.md).
+ */
+export function loadScene(path: string): Promise<THREE.Group | null> {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  let p = sceneCache.get(path);
+  if (!p) {
+    const url = versionedUrl(path);
+    p = loadGltf(url)
+      .then((gltf) => {
+        gltf.scene.updateMatrixWorld(true);
+        return gltf.scene;
+      })
+      .catch((err) => {
+        warnOnce(url, err);
+        return null;
+      });
+    sceneCache.set(path, p);
+  }
+  return p;
+}

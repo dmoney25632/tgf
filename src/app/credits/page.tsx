@@ -16,6 +16,42 @@ const ATTRIBUTED = [
     notes:
       "Based on a work at triplegangers.com, obtained via the three.js examples. Modified: trimmed to head and neck, re-tinted for skin tone and facial hair, painted eyes, specular map downscaled.",
   },
+  {
+    title: "M4A1",
+    use: "First-person M4A1 carbine in Iron Horizon",
+    author: "TORI106",
+    authorUrl: "https://sketchfab.com/3d-models/m4a1-33107f38b23c45cc8103768c0e961cdf",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "Ak47",
+    use: "First-person AKM rifle in Iron Horizon",
+    author: "wburton",
+    authorUrl: "https://sketchfab.com/3d-models/ak47-831519a097d84e079fd8bc4b15e5b57d",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px, loose spare magazine removed, rig baked to a static pose; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "MP5 | PBR | High Poly",
+    use: "First-person MP5 submachine gun in Iron Horizon",
+    author: "Stein Games",
+    authorUrl: "https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "M1911 Handgun",
+    use: "First-person M1911 pistol in Iron Horizon",
+    author: "SINNIK",
+    authorUrl: "https://sketchfab.com/3d-models/m1911-handgun-1f2209650c1d47cfb8d686ab99258409",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px, effect meshes removed; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
 ];
 
 const CC0 = [
@@ -29,7 +65,7 @@ export default function CreditsPage() {
       <div className="flex flex-col gap-2">
         <p className="font-mono text-xs tracking-[0.3em] text-white/80 uppercase">Credits</p>
         <h1 className="text-2xl font-bold">Third-party assets</h1>
-        <p className="text-sm text-muted-foreground">Everything not listed here (weapons, soldier gear, animation, sound) is original work.</p>
+        <p className="text-sm text-muted-foreground">Everything not listed here (other weapons, soldier gear, animation, sound) is original work.</p>
       </div>
 
       <section className="flex flex-col gap-3">
