@@ -17,6 +17,9 @@ import {
   type NetTransport, type PeerMeta, type RoomSettings, type RosterEntry,
 } from "@/game/net/transport";
 import { CoopGame, type CoopLaunch, type CoopLoadout } from "./coop-game";
+import { LobbyView, type LobbyPrimary } from "@/components/game/lobby-view";
+import type { PlayMode } from "@/components/game/mode-picker";
+import { defaultCharacter } from "@/game/character";
 import { WORLD_CHANNEL, WORLD_COUNTDOWN_MS, WORLD_SCAN_MS, listingMeta, pickWorldRoom, readListings } from "@/game/net/world";
 
 const LOADOUT_KEY = "tgf.iron-horizon.coop";
@@ -87,7 +90,13 @@ export function CoopApp({
   const [error, setError] = useState<string | null>(null);
   const [loadout, setLoadout] = useState<CoopLoadout>(DEFAULT_LOADOUT);
   const [ready, setReady] = useState(false);
-  const [settings, setSettings] = useState<RoomSettings>(() => ({ ...DEFAULT_SETTINGS, ...initialRoom, mapId: DEFAULT_SETTINGS.mapId }));
+  const [settings, setSettings] = useState<RoomSettings>(() => ({
+    ...DEFAULT_SETTINGS,
+    ...initialRoom,
+    // Solo-only maps (and missions) fall back to what a squad can play together.
+    mapId: COOP_MAPS.some((m) => m.id === initialRoom?.mapId) ? initialRoom!.mapId! : DEFAULT_SETTINGS.mapId,
+    missionId: coopMission(initialRoom?.missionId)?.id,
+  }));
   const [matchStatus, setMatchStatus] = useState<MatchStatus>({ status: "lobby" });
   const [launch, setLaunch] = useState<CoopLaunch | null>(null);
   const [played, setPlayed] = useState<string[]>([]);
@@ -239,8 +248,8 @@ export function CoopApp({
       setIsPublic(publicRoom);
       setOpenedAt(joined);
       setCode(roomCode);
-      // Joiners are ready as soon as they arrive: the host just hits Launch.
-      setReady(!host);
+      // Private parties: joiners ready up themselves. Main World squads deploy on a timer.
+      setReady(!host && (publicRoom || !!auto));
       setStage("lobby");
       if (!host) {
         window.setTimeout(() => {
@@ -401,7 +410,7 @@ export function CoopApp({
 
   const backToLobby = () => {
     setLaunch(null);
-    setReady(!isHost);
+    setReady(!isHost && (isPublic || !!auto));
     if (isHost) setMatchStatus({ status: "lobby" });
     // A public squad reopens for new players with a fresh countdown.
     setOpenedAt(Date.now());
@@ -423,6 +432,72 @@ export function CoopApp({
   const shareUrl = typeof window !== "undefined" && code ? `${window.location.origin}/play/iron-horizon?room=${code}${useLocal ? "&transport=local" : ""}` : "";
   const mapName = COOP_MAPS.find((m) => m.id === roomSettings.mapId)?.name ?? roomSettings.mapId;
   const title = isPublic ? "Main World" : "Private lobby";
+
+  if (start && stage === "lobby" && identity) {
+    const inProgress = matchStatus.status === "playing" || hostRoom?.status === "playing";
+    const waiting = others.filter((p) => !p.ready).length;
+    const mode: PlayMode = coopMission(roomSettings.missionId)
+      ? { kind: "mission", missionId: roomSettings.missionId!, difficulty: roomSettings.difficulty, squad: 0 }
+      : { kind: "survival", map: roomSettings.mapId, difficulty: roomSettings.difficulty, waveTarget: roomSettings.waveTarget, squad: 0 };
+    const primary: LobbyPrimary = isHost
+      ? isPublic
+        ? { label: "Deploy now", onClick: startMatch }
+        : { label: "Start", disabled: !everyoneReady, onClick: startMatch }
+      : rejoinable
+        ? { label: "Rejoin", onClick: rejoin }
+        : ready
+          ? { label: "Not ready", muted: true, onClick: () => setReady(false) }
+          : { label: "Ready", onClick: () => setReady(true) };
+    const status = isPublic
+      ? inProgress
+        ? "Match in progress."
+        : isHost
+          ? `Deploying in ${Math.ceil(launchIn / 1000)}s. Players from the world can drop in until then.`
+          : "Deploying when the squad fills or the timer runs out."
+      : isHost
+        ? waiting
+          ? `Waiting for ${waiting} to ready up`
+          : others.length
+            ? "Everyone's ready."
+            : "Invite friends with the code, or start now."
+        : inProgress && !rejoinable
+          ? "A match is in progress. You can join the next one."
+          : ready
+            ? "Waiting for the leader to start."
+            : "Ready up when you're set.";
+    return (
+      <LobbyView
+        callsign={identity.name}
+        look={loadout.look ?? defaultCharacter(loadout.operator).look}
+        roleLine={OPERATORS[loadout.operator]?.role ?? loadout.operator}
+        members={[...others]
+          .sort((a, b) => Number(b.host) - Number(a.host) || a.joinedAt - b.joinedAt)
+          .map((p) => ({ id: p.id, name: p.name, role: OPERATORS[p.operator]?.role ?? p.operator, host: p.host, ready: p.ready }))}
+        maxPlayers={NET.MAX_PLAYERS}
+        party={{ label: isPublic ? "Main World" : "Party code", code: isPublic ? null : code, inviteUrl: isPublic ? undefined : shareUrl, onLeave: () => leaveRoom() }}
+        mode={mode}
+        modeContext="party"
+        modeLockedReason={isPublic ? "Main World squads play endless Survival on a random map." : !isHost ? "The party leader picks the mode." : null}
+        onModeChange={
+          isHost && !isPublic
+            ? (m) =>
+                setSettings((s) =>
+                  m.kind === "mission"
+                    ? { ...s, missionId: m.missionId, difficulty: m.difficulty }
+                    : m.kind === "survival"
+                      ? { ...s, missionId: undefined, mapId: m.map, difficulty: m.difficulty, waveTarget: m.waveTarget }
+                      : s,
+                )
+            : undefined
+        }
+        primary={primary}
+        status={status}
+        notice={error}
+        loadout={{ primary: loadout.primary, secondary: loadout.secondary }}
+        onLoadout={(p) => setLoadout((l) => ({ ...l, ...p }))}
+      />
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-black px-4 py-6 text-neutral-100 md:px-8">

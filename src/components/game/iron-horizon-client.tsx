@@ -119,7 +119,7 @@ export function IronHorizonClient({
         transport={partyTransport}
         start={{ code: party.code, host: party.host, world: party.world }}
         initialLoadout={{ operator: choice.operator, primary: choice.primary, secondary: choice.secondary, look: choice.look }}
-        initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave, missionId: choice.mission }}
+        initialRoom={{ difficulty: choice.difficulty, waveTarget: choice.waveTarget, startWave: choice.startWave, missionId: choice.mission, mapId: choice.map }}
         onLeave={leaveParty}
       />
     );
@@ -164,8 +164,13 @@ export function IronHorizonClient({
         initial={choice}
         party={partyActions}
         notice={partyNotice}
-        onMissions={() => setMissions(true)}
-        onDeploy={(c) => launch({ ...c, mission: undefined })}
+        onChange={saveLobby}
+        onBriefing={(c, id) => {
+          saveLobby(c);
+          setChoice({ ...c, mission: id });
+          setMissions(true);
+        }}
+        onDeploy={launch}
       />
     );
   }
