@@ -24,7 +24,7 @@ export function navFor(map: MapDef) {
 }
 
 test("map registry lists every survival map with a layout", () => {
-  assert.deepEqual(SURVIVAL_MAPS.map((m) => m.id), ["dustfall-outpost", "cinder-flats", "saltpan-gantry", "brennhollow"]);
+  assert.deepEqual(SURVIVAL_MAPS.map((m) => m.id), ["dustfall-outpost", "cinder-flats", "saltpan-gantry", "brennhollow", "morro-azul"]);
   for (const m of SURVIVAL_MAPS) assert.ok(m.def.survival, `${m.id} has a survival layout`);
   assert.equal(new Set(MAPS.map((m) => m.id)).size, MAPS.length, "ids are unique");
 });

@@ -138,7 +138,9 @@ export class MissionGameMode implements GameMode {
     };
 
     // ---- AI / air ------------------------------------------------------------------
-    this.nav = new NavGrid(ctx.map.collision, -50, -50, 100, 100);
+    // Nav covers the whole map (at least the classic 100 m square).
+    const navSize = Math.max(100, ctx.map.def.size);
+    this.nav = new NavGrid(ctx.map.collision, -navSize / 2, -navSize / 2, navSize, navSize);
     this.agents = new AgentManager(ctx.scene, ctx.map.collision, this.nav, ctx.effects, ctx.sfx, this.combatant, ctx.camera.position, {
       onEnemyKilled: (k) => this.onEnemyKilled(k),
       onAgentDamaged: (agent, amount, _part, killed, source) => {
