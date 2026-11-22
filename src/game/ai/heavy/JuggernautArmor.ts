@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Humanoid } from "../Humanoid";
+import type { BoneName } from "../humanoid/rig";
 import { PartGeometry } from "../../content/PartGeometry";
 
 /**
@@ -15,17 +16,16 @@ import { PartGeometry } from "../../content/PartGeometry";
  */
 
 type Slot = "head" | "spine" | "pelvis" | "uArm" | "thigh" | "shin";
-/** Hitbox order in Humanoid: head, spine, pelvis, uArmR, uArmL, fArmR, fArmL, handR, handL, thighR, thighL, shinR, shinL, footR, footL. */
-const SLOTS: [number, Slot, boolean][] = [
-  [0, "head", false],
-  [1, "spine", false],
-  [2, "pelvis", false],
-  [3, "uArm", false],
-  [4, "uArm", true],
-  [9, "thigh", false],
-  [10, "thigh", true],
-  [11, "shin", false],
-  [12, "shin", true],
+const SLOTS: [BoneName, Slot, boolean][] = [
+  ["head", "head", false],
+  ["spine", "spine", false],
+  ["pelvis", "pelvis", false],
+  ["uArmR", "uArm", false],
+  ["uArmL", "uArm", true],
+  ["thighR", "thigh", false],
+  ["thighL", "thigh", true],
+  ["shinR", "shin", false],
+  ["shinL", "shin", true],
 ];
 
 const STEEL = 0x45494c;
@@ -117,19 +117,18 @@ export function attachJuggernautArmor(model: Humanoid) {
   const c = cache;
   const hb = model.hitboxes;
   if (hb.length < 13) return; // Unknown rig layout: skip the extras rather than float them.
-  for (const [i, slot, left] of SLOTS) {
-    const bone = hb[i]?.parent;
-    if (!bone) continue;
+  for (const [bone, slot, left] of SLOTS) {
     const m = new THREE.Mesh(left ? c.geoL[slot] : c.geo[slot], c.mat);
     m.castShadow = slot === "spine" || slot === "head";
     m.receiveShadow = true;
     m.name = "jugArmor";
-    bone.add(m);
     if (slot === "head") {
       const v = new THREE.Mesh(c.visor, c.glow);
       v.name = "jugVisor";
-      bone.add(v);
+      m.add(v);
     }
+    // Rides on the procedural bone and (once loaded) the motion-captured body's matching bone.
+    model.attachToBone(bone, m);
   }
   // Everything is plated: hits spark like armour instead of bleeding.
   for (const h of hb) if (h.userData.part !== "head") h.userData.surface = "armor";

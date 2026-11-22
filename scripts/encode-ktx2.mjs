@@ -19,7 +19,8 @@
 //      so a KTX2 texture (always flipY = false) samples like the JPEG with
 //      flipY = true. The JPEGs stay as the fallback (no compressed-texture
 //      support, KTX2 failure, other presets).
-//   3. glTF (public/assets/models/<id>/<id>_1k.gltf, public/assets/weapons/<id>/model.gltf):
+//   3. Soldier characters (see characters() below).
+//   4. glTF (public/assets/models/<id>/<id>_1k.gltf, public/assets/weapons/<id>/model.gltf):
 //      gltfpack -cc (meshopt) in place, file names kept so manifests stay
 //      valid; models are quantized (AssetLoader dequantizes when baking),
 //      weapons are not (-noq: realGuns.ts edits vertices in mesh space).
@@ -92,6 +93,14 @@ function options(role, flipY, maxSize) {
       isPerceptual: false,
       isSetKTX2SRGBTransferFunc: false,
     };
+  }
+  if (role === "mask") {
+    // Independent data channels (soldier team-tint / roughness / skin masks): UASTC keeps them apart.
+    return { ...common, isUASTC: true, uastcLDRQualityLevel: 2, enableRDO: true, rdoQualityLevel: 4, needSupercompression: true, isPerceptual: false, isSetKTX2SRGBTransferFunc: false };
+  }
+  if (role === "skinNormal") {
+    // Soldier normal maps: fabric folds and pouch seams survive a stronger RDO pass (half the size of the world normals).
+    return { ...common, isUASTC: true, uastcLDRQualityLevel: 1, enableRDO: true, rdoQualityLevel: 3.5, needSupercompression: true, isNormalMap: true, isPerceptual: false, isSetKTX2SRGBTransferFunc: false };
   }
   const srgb = role === "color";
   return {
@@ -171,7 +180,7 @@ function bufferFiles(json) {
   return (json.buffers ?? []).map((b) => b.uri).filter((u) => u && !u.startsWith("data:"));
 }
 
-function pack(file, quantize) {
+function pack(file, quantize, extra = []) {
   const dir = dirname(file);
   const before = JSON.parse(readFileSync(file, "utf8"));
   const oldBins = bufferFiles(before);
@@ -190,7 +199,7 @@ function pack(file, quantize) {
     const out = join(tmp, basename(file));
     // -cc: meshopt compression (higher ratio). -tr: keep the texture URIs.
     // -kn / -km: keep named nodes and materials (variants are top-level nodes).
-    const flags = ["-cc", "-tr", "-kn", "-km", ...(quantize ? [] : ["-noq"])];
+    const flags = ["-cc", "-tr", "-kn", "-km", ...(quantize ? [] : ["-noq"]), ...extra];
     execFileSync(process.execPath, [join(ROOT, "node_modules", "gltfpack", "cli.js"), "-i", file, "-o", out, ...flags], { stdio: "pipe" });
     const after = JSON.parse(readFileSync(out, "utf8"));
     if (structure(after) !== structure(before)) throw new Error(`gltfpack changed the top-level nodes of ${rel(file)}`);
@@ -279,10 +288,53 @@ function gltfFiles() {
   return out;
 }
 
+/**
+ * Soldier characters (public/assets/characters/soldiers/soldier_<id>.gltf,
+ * written by scripts/soldiers/build.mjs): meshopt-packed in place without
+ * quantization (skinned; the runtime merges part geometries) and keeping
+ * every vertex attribute (-kv: the head's uv1 masks). Each gets a
+ * soldier_<id>_1k.gltf twin that shares the .bin but samples the 1024 px
+ * colour atlas (Medium quality); then both get KTX2 copies of their
+ * textures.
+ */
+async function characters() {
+  const dir = join(ASSETS, "characters", "soldiers");
+  if (!existsSync(dir)) return;
+  for (const f of readdirSync(dir).sort()) {
+    if (!/^soldier_[a-z]+\.gltf$/.test(f)) continue;
+    const file = join(dir, f);
+    pack(file, false, ["-kv"]);
+    const orm = file.replace(/\.gltf$/, "_orm.jpg");
+    if (existsSync(orm)) await encode(orm, orm.replace(/\.jpg$/, ".ktx2"), "mask", false);
+    const nrm = file.replace(/\.gltf$/, "_normal.jpg");
+    if (existsSync(nrm)) await encode(nrm, nrm.replace(/\.jpg$/, ".ktx2"), "skinNormal", false);
+    const twin = file.replace(/\.gltf$/, "_1k.gltf");
+    if (WRITE) {
+      const json = JSON.parse(readFileSync(file, "utf8"));
+      // From the packed geometry state: JPEG sources only, the colour atlas swapped for its 1k copy.
+      const images = [];
+      const remap = (json.images ?? []).map((im) => (/\.ktx2$/.test(im.uri ?? "") ? -1 : images.push({ ...im, uri: im.uri.replace(/_color\.jpg$/, "_color_1k.jpg") }) - 1));
+      json.images = images;
+      for (const t of json.textures ?? []) {
+        if (t.extensions) delete t.extensions.KHR_texture_basisu;
+        if (t.extensions && !Object.keys(t.extensions).length) delete t.extensions;
+        t.source = remap[t.source];
+      }
+      json.extensionsUsed = (json.extensionsUsed ?? []).filter((e) => e !== "KHR_texture_basisu");
+      // Medium quality (phones): no normal map, saves ~0.7 MB per avatar; the 2k High variant keeps it.
+      for (const m of json.materials ?? []) delete m.normalTexture;
+      writeFileSync(twin, JSON.stringify(json));
+    }
+    await attachKtx2(file);
+    if (existsSync(twin)) await attachKtx2(twin);
+  }
+}
+
 copyTranscoder();
 await textureSets();
 const setJpg = totals.jpg;
 const setKtx = totals.ktx2;
+await characters();
 for (const [file, quantize] of gltfFiles()) {
   pack(file, quantize);
   await attachKtx2(file);

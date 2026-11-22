@@ -1,13 +1,35 @@
-// Rocketbox avatar -> clean, metre-scaled, atlased skinned soldier (in memory).
+// Rocketbox avatar -> clean, metre-scaled, atlased skinned soldier split
+// into swappable parts (body, head, helmet, equipment), in memory.
 import { THREE, loadFBX, loadTGA } from "./lib.mjs";
 const { mergeVertices } = await import("/Users/dayton/dev/tgf/node_modules/three/examples/jsm/utils/BufferGeometryUtils.js");
 
 export const SCALE = 0.0096; // cm -> m, and 1.84 m (helmet top) -> 1.77 m like the procedural rig
-const MAT = { body: 0, head: 1, helmet: 2, equipment: 3 };
+export const PARTS = ["body", "head", "helmet", "equipment"];
 // Atlas quadrants (image space, top-left origin): [qx, qy]
 export const QUAD = { body: [0, 0], head: [1, 0], helmet: [0, 1], equipment: [1, 1] };
 
-const keepBone = (n) => /^Bip01(_Pelvis|_Spine\d?|_Neck|_Head|_[LR]_(Clavicle|UpperArm|Forearm|Hand|Finger\d+|Thigh|Calf|Foot|Toe0))?$/.test(n);
+/**
+ * Canonical bone order shared by every avatar (male and female rigs have the
+ * same names): joint indices are identical across avatars, so any part can
+ * be bound to any same-sex skeleton.
+ */
+const FINGERS = [0, 1, 2, 3, 4].flatMap((f) => [`Finger${f}`, `Finger${f}1`, `Finger${f}2`]);
+export const CANON = [
+  "Bip01", "Bip01_Pelvis", "Bip01_Spine", "Bip01_Spine1", "Bip01_Spine2", "Bip01_Neck", "Bip01_Head",
+  ...["L", "R"].flatMap((s) => [`Bip01_${s}_Clavicle`, `Bip01_${s}_UpperArm`, `Bip01_${s}_Forearm`, `Bip01_${s}_Hand`, ...FINGERS.map((f) => `Bip01_${s}_${f}`)]),
+  ...["L", "R"].flatMap((s) => [`Bip01_${s}_Thigh`, `Bip01_${s}_Calf`, `Bip01_${s}_Foot`, `Bip01_${s}_Toe0`]),
+];
+const KEEP = new Set(CANON);
+
+/** Union-find connected components over an indexed geometry: component id per triangle. */
+function triComponents(index, count) {
+  const parent = new Int32Array(count).map((_, i) => i);
+  const f = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+  for (let i = 0; i < index.length; i += 3) { const a = f(index[i]); parent[f(index[i + 1])] = a; parent[f(index[i + 2])] = a; }
+  const out = new Int32Array(index.length / 3);
+  for (let t = 0; t < out.length; t++) out[t] = f(index[t * 3]);
+  return out;
+}
 
 export function loadAvatar(dir, fbxName, prefix) {
   const root = loadFBX(`${dir}/${fbxName}`);
@@ -16,104 +38,93 @@ export function loadAvatar(dir, fbxName, prefix) {
   root.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
   const mats = [].concat(mesh.material).map((m) => m.name.replace(prefix + "_", ""));
   const src = mesh.skeleton.bones;
-
-  // Bind pose == current pose?
   const g = mesh.geometry;
   const v = new THREE.Vector3(), raw = new THREE.Vector3();
-  let maxErr = 0;
-  for (let i = 0; i < g.attributes.position.count; i += 37) {
-    mesh.getVertexPosition(i, v);
-    raw.fromBufferAttribute(g.attributes.position, i);
-    maxErr = Math.max(maxErr, v.distanceTo(raw));
-  }
-  if (maxErr > 0.05) console.warn("bind pose differs from current pose by", maxErr);
-  if (!mesh.matrixWorld.equals(new THREE.Matrix4()) || !mesh.bindMatrix.equals(new THREE.Matrix4())) console.warn("non-identity mesh/bind matrix");
 
-  // New bone tree (kept bones only).
-  const bones = [];
-  const map = new Map(); // src bone -> new index
+  // Face landmarks (metres, bind pose) before the facial bones are folded away.
+  const srcByName = new Map();
+  root.traverse((o) => { if (o.isBone && !srcByName.has(o.name)) srcByName.set(o.name, o); });
+  const at = (n) => (srcByName.has(n) ? srcByName.get(n).getWorldPosition(new THREE.Vector3()).multiplyScalar(SCALE) : null);
+  const face = { eyeL: at("Bip01_LEye"), eyeR: at("Bip01_REye"), jaw: at("Bip01_MJaw"), nose: at("Bip01_MNose"), lipT: at("Bip01_MUpperLip"), lipB: at("Bip01_MBottomLip"), head: at("Bip01_Head"), neck: at("Bip01_Neck") };
+
+  // New bone tree (kept bones only), canonical order.
+  const made = new Map();
   const mk = (s, parent) => {
     let b = parent;
-    if (s.isBone && keepBone(s.name)) {
+    if (s.isBone && KEEP.has(s.name) && !made.has(s.name)) {
       b = new THREE.Bone();
       b.name = s.name;
       b.position.copy(s.position).multiplyScalar(SCALE);
       b.quaternion.copy(s.quaternion);
       if (parent) parent.add(b);
-      map.set(s, bones.length);
-      bones.push(b);
+      made.set(s.name, b);
     }
     for (const c of s.children) if (c.isBone) mk(c, b);
   };
-  let rootBone = null;
-  root.traverse((o) => { if (o.isBone && o.name === "Bip01" && !rootBone) rootBone = o; });
-  console.log("mw", mesh.matrixWorld.elements.map((x) => +x.toFixed(3)).join(","), "bind", mesh.bindMatrix.elements.map((x) => +x.toFixed(3)).join(","));
+  const rootBone = srcByName.get("Bip01");
   mk(rootBone, null);
-  // Bip01's parent in the FBX is the identity group; its local transform is its world transform.
+  const bones = CANON.map((n) => {
+    const b = made.get(n);
+    if (!b) throw new Error(`${fbxName}: missing ${n}`);
+    return b;
+  });
   rootBone.updateWorldMatrix(true, false);
   rootBone.matrixWorld.decompose(bones[0].position, bones[0].quaternion, v);
   bones[0].position.multiplyScalar(SCALE);
+  const idxOf = new Map(CANON.map((n, i) => [n, i]));
   // Unkept bones (face, eyes, footsteps) inherit their nearest kept ancestor.
   const remap = src.map((b) => {
     let p = b;
-    while (p && !map.has(p)) p = p.parent;
-    return p ? map.get(p) : 0;
+    while (p && !idxOf.has(p.name)) p = p.parent;
+    return p ? idxOf.get(p.name) : 0;
   });
 
-  // Geometry: drop the knife, atlas the UVs, remap skin indices.
-  const keepTri = [], idx = g.index ? g.index.array : null;
-  const uvQuad = new Int8Array(g.attributes.position.count).fill(-1);
-  for (const grp of g.groups) {
-    const name = mats[grp.materialIndex];
-    if (!(name in MAT)) continue;
-    for (let i = grp.start; i < grp.start + grp.count; i++) {
-      const vi = idx ? idx[i] : i;
-      keepTri.push(vi);
-      uvQuad[vi] = MAT[name];
-    }
-  }
-  const used = new Map();
-  const order = [];
-  for (const vi of keepTri) if (!used.has(vi)) { used.set(vi, order.length); order.push(vi); }
-  const n = order.length;
-  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), UV = new Float32Array(n * 2), SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
-  const names = Object.keys(MAT);
   const nm = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
-  order.forEach((vi, i) => {
-    raw.fromBufferAttribute(g.attributes.position, vi).applyMatrix4(mesh.matrixWorld).multiplyScalar(SCALE);
-    P[i * 3] = raw.x; P[i * 3 + 1] = raw.y; P[i * 3 + 2] = raw.z;
-    raw.fromBufferAttribute(g.attributes.normal, vi).applyNormalMatrix(nm).normalize();
-    N[i * 3] = raw.x; N[i * 3 + 1] = raw.y; N[i * 3 + 2] = raw.z;
-    const [qx, qy] = QUAD[names[uvQuad[vi]]];
-    const u = THREE.MathUtils.clamp(g.attributes.uv.getX(vi), 0.001, 0.999), w = THREE.MathUtils.clamp(g.attributes.uv.getY(vi), 0.001, 0.999);
-    UV[i * 2] = (u + qx) / 2;
-    UV[i * 2 + 1] = (w + (1 - qy)) / 2;
-    // Merge weights that now land on the same bone, keep the top 4.
-    const acc = new Map();
-    for (let k = 0; k < 4; k++) {
-      const wt = g.attributes.skinWeight.getComponent(vi, k);
-      if (wt <= 0) continue;
-      const b = remap[g.attributes.skinIndex.getComponent(vi, k)];
-      acc.set(b, (acc.get(b) ?? 0) + wt);
-    }
-    const list = [...acc.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
-    const tot = list.reduce((s, e) => s + e[1], 0) || 1;
-    list.forEach(([b, wt], k) => { SI[i * 4 + k] = b; SW[i * 4 + k] = wt / tot; });
-    if (!list.length) SW[i * 4] = 1;
-  });
-  const index = new Uint32Array(keepTri.map((vi) => used.get(vi)));
-  let geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(P, 3));
-  geo.setAttribute("normal", new THREE.BufferAttribute(N, 3));
-  geo.setAttribute("uv", new THREE.BufferAttribute(UV, 2));
-  geo.setAttribute("skinIndex", new THREE.BufferAttribute(SI, 4));
-  geo.setAttribute("skinWeight", new THREE.BufferAttribute(SW, 4));
-  geo.setIndex(new THREE.BufferAttribute(index, 1));
-  // The FBX is triangle soup: weld identical vertices.
-  geo = mergeVertices(geo, 1e-5);
-  const ia = geo.index.array;
-  if (geo.attributes.position.count < 65536) geo.setIndex(new THREE.BufferAttribute(new Uint16Array(ia), 1));
-  console.log("verts", n, "->", geo.attributes.position.count);
+  const idx = g.index ? g.index.array : null;
+  const parts = {};
+  for (const [pi, part] of PARTS.entries()) {
+    const tris = [];
+    for (const grp of g.groups) if (mats[grp.materialIndex] === part) for (let i = grp.start; i < grp.start + grp.count; i++) tris.push(idx ? idx[i] : i);
+    if (!tris.length) continue;
+    const used = new Map(), order = [];
+    for (const vi of tris) if (!used.has(vi)) { used.set(vi, order.length); order.push(vi); }
+    const n = order.length;
+    const P = new Float32Array(n * 3), N = new Float32Array(n * 3), UV = new Float32Array(n * 2), SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+    const [qx, qy] = QUAD[part];
+    order.forEach((vi, i) => {
+      raw.fromBufferAttribute(g.attributes.position, vi).applyMatrix4(mesh.matrixWorld).multiplyScalar(SCALE);
+      P.set([raw.x, raw.y, raw.z], i * 3);
+      raw.fromBufferAttribute(g.attributes.normal, vi).applyNormalMatrix(nm).normalize();
+      N.set([raw.x, raw.y, raw.z], i * 3);
+      const u = THREE.MathUtils.clamp(g.attributes.uv.getX(vi), 0.001, 0.999), w = THREE.MathUtils.clamp(g.attributes.uv.getY(vi), 0.001, 0.999);
+      // glTF convention: v down (image row 0 at v = 0).
+      UV[i * 2] = (u + qx) / 2;
+      UV[i * 2 + 1] = (1 - w + qy) / 2;
+      const acc = new Map();
+      for (let k = 0; k < 4; k++) {
+        const wt = g.attributes.skinWeight.getComponent(vi, k);
+        if (wt <= 0) continue;
+        const b = remap[g.attributes.skinIndex.getComponent(vi, k)];
+        acc.set(b, (acc.get(b) ?? 0) + wt);
+      }
+      const list = [...acc.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const tot = list.reduce((s, e) => s + e[1], 0) || 1;
+      list.forEach(([b, wt], k) => { SI[i * 4 + k] = b; SW[i * 4 + k] = wt / tot; });
+      if (!list.length) SW[i * 4] = 1;
+    });
+    let geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(N, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(UV, 2));
+    geo.setAttribute("skinIndex", new THREE.BufferAttribute(SI, 4));
+    geo.setAttribute("skinWeight", new THREE.BufferAttribute(SW, 4));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(tris.map((vi) => used.get(vi))), 1));
+    geo = mergeVertices(geo, 1e-5); // the FBX is triangle soup: weld identical vertices
+    geo.setIndex(new THREE.BufferAttribute(new Uint16Array(geo.index.array), 1));
+    geo.userData.part = part;
+    geo.userData.partIndex = pi;
+    parts[part] = geo;
+  }
 
   const group = new THREE.Group();
   group.name = "soldier";
@@ -121,11 +132,37 @@ export function loadAvatar(dir, fbxName, prefix) {
   group.updateMatrixWorld(true);
   const skeleton = new THREE.Skeleton(bones);
   skeleton.calculateInverses();
-  const sm = new THREE.SkinnedMesh(geo, new THREE.MeshStandardMaterial({ name: "soldier" }));
-  sm.name = "lod0";
-  group.add(sm);
-  sm.bind(skeleton, new THREE.Matrix4());
-  return { group, mesh: sm, skeleton, bones, tris: index.length / 3 };
+  return { group, skeleton, bones, parts, face };
+}
+
+/**
+ * Per-vertex head masks in uv1: x = beard / stubble weight (jaw, chin,
+ * upper lip, cheeks below the cheekbones), y = 1 on the eye band a
+ * balaclava leaves open. From the face bones of the original rig.
+ */
+export function headMasks(geo, face) {
+  const pos = geo.attributes.position, n = pos.count;
+  const M = new Float32Array(n * 2);
+  const eye = face.eyeL.clone().add(face.eyeR).multiplyScalar(0.5);
+  const eyeW = face.eyeL.distanceTo(face.eyeR);
+  const mouth = face.lipT.clone().add(face.lipB).multiplyScalar(0.5);
+  const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const p = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    p.fromBufferAttribute(pos, i);
+    const dx = p.x - eye.x, dz = p.z - eye.z;
+    const front = sm(-0.06, -0.02, dz); // in front of the ears
+    // Beard: below the cheekbones down to under the jaw, fading at the throat; not on the lips.
+    const below = sm(eye.y - 0.035, eye.y - 0.06, p.y) * sm(mouth.y - 0.105, mouth.y - 0.075, p.y);
+    const side = 1 - sm(eyeW * 1.15, eyeW * 1.45, Math.abs(dx));
+    const lips = sm(0.012, 0.024, Math.hypot((p.x - mouth.x) * 0.75, p.y - mouth.y));
+    const nose = sm(0.012, 0.02, Math.hypot(p.x - mouth.x, p.y - (face.nose?.y ?? mouth.y + 0.03) + 0.005));
+    M[i * 2] = below * side * front * lips * Math.max(nose, sm(mouth.y + 0.004, mouth.y - 0.004, p.y));
+    // Eye band: an ellipse round both eyes and brows, front only.
+    const band = 1 - sm(0.85, 1.0, Math.hypot(dx / (eyeW * 1.05), (p.y - eye.y - 0.006) / 0.03));
+    M[i * 2 + 1] = band * sm(-0.035, -0.015, dz);
+  }
+  geo.setAttribute("uv1", new THREE.BufferAttribute(M, 2));
 }
 
 /** RGBA atlas (2 x 2 quadrants of `size` px) from per-material images. */
@@ -150,3 +187,30 @@ export function buildAtlas(dir, prefix, kind, size, fallback = [128, 128, 255, 2
   }
   return { data: out, width: S, height: S };
 }
+
+/**
+ * Rasterises triangles of `geo` (selected by `pick(tri)`) into a W x W
+ * single-channel mask in atlas UV space (glTF convention), value 255.
+ */
+export function rasterUV(mask, W, geo, pick, grow = 1) {
+  const uv = geo.attributes.uv, idx = geo.index.array;
+  for (let t = 0; t < idx.length / 3; t++) {
+    if (!pick(t)) continue;
+    const P = [0, 1, 2].map((k) => [uv.getX(idx[t * 3 + k]) * W, uv.getY(idx[t * 3 + k]) * W]);
+    const minX = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])) - grow), maxX = Math.min(W - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])) + grow);
+    const minY = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])) - grow), maxY = Math.min(W - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])) + grow);
+    const area = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[1][1] - P[0][1]) * (P[2][0] - P[0][0]);
+    if (Math.abs(area) < 1e-9) continue;
+    const e = grow / Math.sqrt(Math.abs(area)) + 1e-3;
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      const px = x + 0.5, py = y + 0.5;
+      const w0 = ((P[1][0] - px) * (P[2][1] - py) - (P[1][1] - py) * (P[2][0] - px)) / area;
+      const w1 = ((P[2][0] - px) * (P[0][1] - py) - (P[2][1] - py) * (P[0][0] - px)) / area;
+      const w2 = 1 - w0 - w1;
+      if (w0 < -e || w1 < -e || w2 < -e) continue;
+      mask[y * W + x] = 255;
+    }
+  }
+}
+
+export { triComponents };

@@ -53,14 +53,14 @@ const ATTRIBUTED = [
     notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px, effect meshes removed; re-oriented and scaled at runtime to fit the in-game hands.",
   },
   {
-    title: "Microsoft Rocketbox avatars (Military_Male_01, 03, 04)",
-    use: "Motion-captured enemy and squadmate soldiers in Iron Horizon",
+    title: "Microsoft Rocketbox avatars (Military_Male_01 to 06, Military_Female_01, 02)",
+    use: "Motion-captured soldiers, squadmates and player characters in Iron Horizon",
     author: "Microsoft",
     authorUrl: "https://github.com/microsoft/Microsoft-Rocketbox",
     license: "MIT License (Copyright (c) 2020 Microsoft)",
     licenseUrl: "https://github.com/microsoft/Microsoft-Rocketbox/blob/master/LICENSE.md",
     notes:
-      "Modified: converted to glTF, facial bones folded into the head, knife removed, textures packed into one atlas per avatar and downscaled, team-tint mask and simplified LOD added. Camouflage is re-tinted per team at runtime.",
+      "Modified: converted to glTF, facial bones folded into the head, knife removed, split into swappable parts with simplified LODs, textures packed into one atlas per avatar and downscaled, team-tint, skin and face masks added. Parts are mixed per soldier and camouflage and skin are re-tinted at runtime.",
   },
   {
     title: "M24 Bounty Hunter Sniper Rifle",

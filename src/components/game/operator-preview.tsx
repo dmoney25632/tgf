@@ -53,12 +53,14 @@ export function OperatorPreview({ look, className }: { look: CharacterLook; clas
 
         const dummy = { name: "preview", applyDamage: () => ({ damage: 0, killed: false, counts: false }) };
         let model: InstanceType<typeof Humanoid> | null = null;
-        let yaw = 0.5;
+        // The turntable spins, not the soldier: his planted feet stay planted.
+        const turntable = new THREE.Group();
+        turntable.rotation.y = 0.5;
+        scene.add(turntable);
         const setLook = (l: CharacterLook) => {
-          if (model) scene.remove(model.root);
+          if (model) turntable.remove(model.root);
           model = new Humanoid(dummy, humanoidLook(l));
-          model.root.rotation.y = yaw;
-          scene.add(model.root);
+          turntable.add(model.root);
         };
         setLook(lookRef.current);
 
@@ -68,11 +70,8 @@ export function OperatorPreview({ look, className }: { look: CharacterLook; clas
           raf = requestAnimationFrame(loop);
           const dt = Math.min(0.05, (now - last) / 1000);
           last = now;
-          yaw += dt * 0.5;
-          if (model) {
-            model.root.rotation.y = yaw;
-            model.update(dt, 0, false, 0.05, true);
-          }
+          turntable.rotation.y += dt * 0.5;
+          if (model) model.update(dt, 0, false, 0.05, true);
           renderer.render(scene, camera);
         };
         raf = requestAnimationFrame(loop);

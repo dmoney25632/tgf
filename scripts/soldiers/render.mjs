@@ -6,9 +6,9 @@ import { THREE, writePNG } from "./lib.mjs";
  * views: array of { yaw } (radians, camera orbit about Y). Each view is W x H,
  * placed side by side. extra: [{ a, b, color }] world-space line segments.
  */
-export function render(path, meshes, { W = 320, H = 400, views = [{ yaw: 0 }, { yaw: Math.PI / 2 }], tex = null, center = new THREE.Vector3(0, 0.9, 0), span = 2.1, lines = [] } = {}) {
+export function render(path, meshes, { W = 320, H = 400, views = [{ yaw: 0 }, { yaw: Math.PI / 2 }], tex = null, center = new THREE.Vector3(0, 0.9, 0), span = 2.1, lines = [], gltfUV = false, bg = 235 } = {}) {
   const TW = W * views.length;
-  const img = new Uint8Array(TW * H * 3).fill(235);
+  const img = new Uint8Array(TW * H * 3).fill(bg);
   const zb = new Float32Array(TW * H).fill(-1e9);
   const v = new THREE.Vector3();
   const tris = [];
@@ -22,9 +22,11 @@ export function render(path, meshes, { W = 320, H = 400, views = [{ yaw: 0 }, { 
       v.applyMatrix4(m.matrixWorld);
       P[i * 3] = v.x; P[i * 3 + 1] = v.y; P[i * 3 + 2] = v.z;
     }
-    const idx = g.index.array;
+    const idx = g.index ? g.index.array : Uint32Array.from({ length: pos.count }, (_, i) => i);
     const tint = m.userData.color ?? [180, 180, 180];
-    for (let t = 0; t < idx.length; t += 3) tris.push([P, idx[t], idx[t + 1], idx[t + 2], uv, tint, m.userData.tex ?? tex]);
+    const shadeFn = m.userData.shade ?? null;
+    const flip = m.userData.gltfUV ?? gltfUV;
+    for (let t = 0; t < idx.length; t += 3) tris.push([P, idx[t], idx[t + 1], idx[t + 2], uv, tint, m.userData.tex ?? tex, shadeFn, flip, g]);
   }
   const L = new THREE.Vector3(0.4, 0.8, 0.6).normalize();
   views.forEach(({ yaw }, vi) => {
@@ -35,7 +37,7 @@ export function render(path, meshes, { W = 320, H = 400, views = [{ yaw: 0 }, { 
       const rx = dx * c - dz * s, rz = dx * s + dz * c; // camera looks along -Z rotated
       return [vi * W + W / 2 + rx * sc, H / 2 - (y - center.y) * sc, rz];
     };
-    for (const [P, a, b, d, uv, tint, tx] of tris) {
+    for (const [P, a, b, d, uv, tint, tx, shadeFn, flip, geo] of tris) {
       const A = proj(P[a * 3], P[a * 3 + 1], P[a * 3 + 2]), B = proj(P[b * 3], P[b * 3 + 1], P[b * 3 + 2]), C = proj(P[d * 3], P[d * 3 + 1], P[d * 3 + 2]);
       // World normal for shading.
       const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]];
@@ -61,9 +63,10 @@ export function render(path, meshes, { W = 320, H = 400, views = [{ yaw: 0 }, { 
           const u = w0 * uv.getX(a) + w1 * uv.getX(b) + w2 * uv.getX(d);
           const vv = w0 * uv.getY(a) + w1 * uv.getY(b) + w2 * uv.getY(d);
           const ix = Math.min(tx.width - 1, Math.max(0, Math.floor(u * tx.width)));
-          const iy = Math.min(tx.height - 1, Math.max(0, Math.floor((1 - vv) * tx.height)));
+          const iy = Math.min(tx.height - 1, Math.max(0, Math.floor((flip ? vv : 1 - vv) * tx.height)));
           const o = (iy * tx.width + ix) * 4;
           col = [tx.data[o], tx.data[o + 1], tx.data[o + 2]];
+          if (shadeFn) col = shadeFn(col, u, vv, geo, a, b, d, w0, w1, w2);
         }
         img[k * 3] = col[0] * sh; img[k * 3 + 1] = col[1] * sh; img[k * 3 + 2] = col[2] * sh;
       }

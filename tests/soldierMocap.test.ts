@@ -10,7 +10,7 @@ import { solveTwoBone, wpos, wquat } from "../src/game/ai/soldier/ik";
 
 const DIR = new URL("../public/assets/characters/soldiers/", import.meta.url);
 const meta = JSON.parse(fs.readFileSync(new URL("soldiers.json", DIR), "utf8")) as {
-  avatars: Record<string, { tris: [number, number]; gains: number[] }>;
+  avatars: Record<string, { sex: string; cap: boolean; parts: string[]; tris: Record<string, [number, number]>; gains: number[] }>;
   clips: Record<LocoClip | "hitChest" | "hitHead" | "death", ClipInfo>;
 };
 
@@ -110,15 +110,32 @@ test("two-bone IK reaches the target, bends toward the pole, sets the end rotati
   assert.ok(tip.z > 0.5 && Math.abs(tip.y - 1.4) < 0.01);
 });
 
-test("soldier bundle: three avatars within the triangle budget, all clips present", () => {
+test("soldier bundle: eight avatars of swappable parts within the triangle budget, all clips present", () => {
   const ids = Object.keys(meta.avatars);
-  assert.deepEqual(ids.sort(), ["a", "b", "c"]);
+  assert.deepEqual(ids.sort(), ["a", "b", "c", "d", "e", "f", "g", "h"]);
+  let firstJoints: string | null = null;
   for (const id of ids) {
-    const [lod0, lod1] = meta.avatars[id].tris;
-    assert.ok(lod0 <= 16000 && lod1 <= 5000 && lod1 < lod0 / 2, `${id} tris ${lod0}/${lod1}`);
-    for (const f of [`soldier_${id}.glb`, `soldier_${id}_color.jpg`, `soldier_${id}_color_1k.jpg`, `soldier_${id}_normal.jpg`, `soldier_${id}_orm.jpg`]) {
+    const a = meta.avatars[id];
+    assert.ok(a.parts.includes("body") && a.parts.includes("head"), id);
+    let t0 = 0, t1 = 0;
+    for (const p of a.parts) {
+      const [lod0, lod1] = a.tris[p];
+      assert.ok(lod1 < lod0 * 0.6, `${id}/${p} tris ${lod0}/${lod1}`);
+      t0 += lod0;
+      t1 += lod1;
+    }
+    assert.ok(t0 <= 16000 && t1 <= 5500, `${id} tris ${t0}/${t1}`);
+    for (const f of [`soldier_${id}.gltf`, `soldier_${id}_1k.gltf`, `soldier_${id}.bin`, `soldier_${id}_color.jpg`, `soldier_${id}_color_1k.jpg`, `soldier_${id}_normal.jpg`, `soldier_${id}_orm.jpg`, `soldier_${id}_color.ktx2`, `soldier_${id}_color_1k.ktx2`, `soldier_${id}_normal.ktx2`, `soldier_${id}_orm.ktx2`]) {
       assert.ok(fs.existsSync(new URL(f, DIR)), f);
     }
+    // Every part mesh (and its LOD) by name, one joint order for all avatars.
+    const g = JSON.parse(fs.readFileSync(new URL(`soldier_${id}.gltf`, DIR), "utf8")) as { nodes: { name: string; mesh?: number }[]; skins: { joints: number[] }[] };
+    const names = g.nodes.filter((n) => n.mesh !== undefined).map((n) => n.name);
+    for (const p of a.parts) assert.ok(names.includes(p) && names.includes(`${p}_lod1`), `${id}: ${p}`);
+    const joints = g.skins[0].joints.map((j) => g.nodes[j].name).join(",");
+    for (const s of g.skins) assert.equal(s.joints.map((j) => g.nodes[j].name).join(","), joints);
+    firstJoints ??= joints;
+    assert.equal(joints, firstJoints, `${id}: joint order`);
   }
   for (const c of ["idle", "walk", "jog", "sprint", "crouchIdle", "crouchWalk", "hitChest", "hitHead", "death"] as const) {
     assert.ok(meta.clips[c].duration > 0, c);
