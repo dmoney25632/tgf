@@ -165,7 +165,11 @@ export function rodGeo(a: THREE.Vector3, b: THREE.Vector3, r: number, seg = 8, c
   return g;
 }
 
-type Bucket = { obj: THREE.Object3D; parts: Map<RenderKind, THREE.BufferGeometry[]> };
+/** Per target: gun parts and (separately, so they can be hidden) procedural arm parts. */
+type Bucket = { obj: THREE.Object3D; parts: Map<RenderKind, THREE.BufferGeometry[]>; arm: Map<RenderKind, THREE.BufferGeometry[]> };
+
+/** Marks the meshes holding procedural arm geometry (hidden once the skinned arms are in). */
+export const PROC_ARM = "procArm";
 
 const RENDER_ORDER: Record<RenderKind, number> = { uber: 0, glass: 1, glow: 2 };
 
@@ -191,6 +195,8 @@ export class GeoBuilder {
   armMode = false;
   /** Build gun parts even in armsOnly mode, left out of gunBounds (add-ons kept over a real model, e.g. a suppressor). */
   keep = false;
+  /** Build the procedural arm geometry (false: only record arms + hand anchors for the skinned arms). */
+  armGeometry = true;
   /** Every arm built (see hands.ts buildArm), so it can be rebuilt onto a real model. */
   readonly arms: { target: THREE.Object3D; p: ArmPlacement; pose: HandPose }[] = [];
 
@@ -200,7 +206,7 @@ export class GeoBuilder {
   into(obj: THREE.Object3D) {
     let b = this.buckets.find((x) => x.obj === obj);
     if (!b) {
-      b = { obj, parts: new Map() };
+      b = { obj, parts: new Map(), arm: new Map() };
       this.buckets.push(b);
     }
     this.cur = b;
@@ -251,8 +257,9 @@ export class GeoBuilder {
     }
     g.setAttribute("pbr", new THREE.BufferAttribute(pbr, 4));
     g.setAttribute("surf", new THREE.BufferAttribute(sf, 2));
-    let list = this.cur.parts.get(s.render);
-    if (!list) this.cur.parts.set(s.render, (list = []));
+    const parts = this.armMode ? this.cur.arm : this.cur.parts;
+    let list = parts.get(s.render);
+    if (!list) parts.set(s.render, (list = []));
     list.push(g);
     return this;
   }
@@ -303,24 +310,34 @@ export class GeoBuilder {
   /** Merge every bucket into meshes. Created geometries are pushed for disposal. */
   finish(disposables: { dispose(): void }[]) {
     for (const b of this.buckets) {
-      for (const [kind, list] of b.parts) {
-        const merged = list.length === 1 ? list[0] : mergeGeometries(list, false);
-        if (!merged) throw new Error("viewmodel: merge failed");
-        if (list.length > 1) for (const g of list) g.dispose();
-        if (kind === "uber") boxUV(merged);
-        merged.computeBoundingSphere();
-        const mesh = new THREE.Mesh(merged, this.materials[kind]);
-        mesh.renderOrder = RENDER_ORDER[kind];
-        // The viewmodel is always on screen; skip per-part frustum tests.
-        mesh.frustumCulled = false;
-        b.obj.add(mesh);
-        disposables.push(merged);
-        this.triangles += merged.attributes.position.count / 3;
-        this.meshes++;
+      for (const [parts, arm] of [[b.parts, false], [b.arm, true]] as const) {
+        for (const [kind, list] of parts) {
+          const merged = list.length === 1 ? list[0] : mergeGeometries(list, false);
+          if (!merged) throw new Error("viewmodel: merge failed");
+          if (list.length > 1) for (const g of list) g.dispose();
+          if (kind === "uber") boxUV(merged);
+          merged.computeBoundingSphere();
+          const mesh = new THREE.Mesh(merged, this.materials[kind]);
+          mesh.renderOrder = RENDER_ORDER[kind];
+          // The viewmodel is always on screen; skip per-part frustum tests.
+          mesh.frustumCulled = false;
+          if (arm) mesh.userData[PROC_ARM] = true;
+          b.obj.add(mesh);
+          disposables.push(merged);
+          this.triangles += merged.attributes.position.count / 3;
+          this.meshes++;
+        }
       }
     }
     this.buckets.length = 0;
   }
+}
+
+/** Shows / hides the procedural arm meshes under `root`. */
+export function setProcArmsVisible(root: THREE.Object3D, visible: boolean) {
+  root.traverse((o) => {
+    if (o.userData[PROC_ARM]) o.visible = visible;
+  });
 }
 
 function flipWinding(g: THREE.BufferGeometry) {

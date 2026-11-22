@@ -3,7 +3,8 @@ import { CAMERA } from "../config";
 import { Spring, damp } from "../core/Spring";
 import type { GrenadeType, WeaponDef } from "./weapons";
 import type { ShellKind } from "../effects/Shells";
-import { GeoBuilder } from "./viewmodel/geo";
+import { GeoBuilder, setProcArmsVisible } from "./viewmodel/geo";
+import { FpArms } from "./viewmodel/arms/FpArms";
 import { createViewmodelMaterials, type ViewmodelMaterials } from "./viewmodel/materials";
 import { GUN_BUILDERS, buildGrenade, buildKnife, type GrenadeModel, type GunSpec } from "./viewmodel/guns";
 import { buildFlash, createFlashKit, type FlashKit } from "./viewmodel/flash";
@@ -140,6 +141,8 @@ export class WeaponViewmodel {
   private readonly mats: ViewmodelMaterials;
   private readonly flashKit: FlashKit;
   private readonly flashLight = new THREE.PointLight(0xffb060, 0, 3, 2);
+  /** Skinned arms posed onto the hand anchors (procedural arms until they load). */
+  readonly arms: FpArms;
 
   // Recoil springs.
   private readonly kickBack = new Spring(280, 21);
@@ -198,6 +201,7 @@ export class WeaponViewmodel {
 
     this.mats = createViewmodelMaterials();
     this.flashKit = createFlashKit();
+    this.arms = new FpArms(this.scene, this.mats.tints);
 
     // Guns are built on demand (one shared material set, so no shader
     // compiles on swap) and cached; only the equipped one is in the graph.
@@ -220,6 +224,19 @@ export class WeaponViewmodel {
     for (let i = 0; i < MAX_EJECT; i++) {
       this.ejections.push({ pos: new THREE.Vector3(), dir: new THREE.Vector3(), kind: "rifle", pending: false, ready: false, quat: new THREE.Quaternion() });
     }
+    void this.arms.load().then((ok) => {
+      if (ok && !this.disposed) this.useSkinnedArms();
+    });
+  }
+
+  /**
+   * The skinned arms are in: hide the procedural ones already built (new
+   * models skip their geometry). Also called by offline tooling after
+   * `arms.setTemplate`.
+   */
+  useSkinnedArms() {
+    for (const m of this.models.values()) setProcArmsVisible(m.spec.root, false);
+    setProcArmsVisible(this.pivot, false);
   }
 
   /** Operator-specific glove / sleeve colours (shader uniforms; no rebuild). */
@@ -287,6 +304,7 @@ export class WeaponViewmodel {
       const mt = this.mats;
       const arms = new Set<Surf>([mt.glove, mt.gloveAccent, mt.gloveSeam, mt.sleeve, mt.sleeveDark, mt.watchCase, mt.watchFace]);
       b.isArm = (s) => arms.has(s);
+      b.armGeometry = !this.arms.ready;
       const real = this.real.get(kind);
       // A real model replaces the built gun: build only the hands, keep every anchor.
       b.armsOnly = !!real;
@@ -634,6 +652,7 @@ export class WeaponViewmodel {
     const fl = this.flashTimer > 0;
     m.flash.group.visible = fl && g.visible;
     this.pivot.updateMatrixWorld(true);
+    this.arms.update(this.pivot);
     if (fl) {
       sp.muzzle.getWorldPosition(this.flashLight.position);
       this.flashLight.intensity = (this.flashTimer / this.flashDur) * 2.2 * (sp.flashScale + 0.3);
@@ -951,6 +970,7 @@ export class WeaponViewmodel {
     this.models.clear();
     this.mats.dispose();
     this.flashKit.dispose();
+    this.arms.dispose();
   }
 }
 

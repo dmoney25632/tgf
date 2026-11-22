@@ -267,6 +267,7 @@ function gltfFiles() {
   for (const [sub, pattern, quantize] of [
     ["models", /_1k\.gltf$/, true],
     ["weapons", /^model\.gltf$/, false],
+    ["characters", /^fparms\.gltf$/, false],
   ]) {
     const base = join(ASSETS, sub);
     if (!existsSync(base)) continue;

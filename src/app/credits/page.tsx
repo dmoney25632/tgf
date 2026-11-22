@@ -63,6 +63,16 @@ const ATTRIBUTED = [
       "Modified: converted to glTF, facial bones folded into the head, knife removed, textures packed into one atlas per avatar and downscaled, team-tint mask and simplified LOD added. Camouflage is re-tinted per team at runtime.",
   },
   {
+    title: "Microsoft Rocketbox avatar Military_Male_01 (first-person arms)",
+    use: "The player's first-person arms, sleeves and gloves in Iron Horizon",
+    author: "Microsoft",
+    authorUrl: "https://github.com/microsoft/Microsoft-Rocketbox",
+    license: "MIT License (Copyright (c) 2020 Microsoft)",
+    licenseUrl: "https://github.com/microsoft/Microsoft-Rocketbox/blob/master/LICENSE.md",
+    notes:
+      "Modified: arms and gloved hands cut from the body, smoothed and re-simplified, re-rigged onto a first-person arm skeleton with forearm twist bones, textures cropped to the arms with a glove mask added. Sleeve and glove colours are re-tinted from the player's look at runtime.",
+  },
+  {
     title: "M24 Bounty Hunter Sniper Rifle",
     use: "First-person M24 sniper rifle in Iron Horizon",
     author: "Naudaff3D",

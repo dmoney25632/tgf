@@ -1,0 +1,32 @@
+First-person arms (fparms.gltf, fparms.bin, fparms_*.jpg / .ktx2)
+
+   Microsoft Rocketbox avatar library: Military_Male_01.
+   https://github.com/microsoft/Microsoft-Rocketbox
+
+   Changes: the sleeves and gloved hands cut out of the body, smoothed and
+   re-simplified to 16k triangles, re-rigged onto a two-arm first-person
+   skeleton (forearm twist bones, three bones per finger), the textures
+   cropped to the arms with a glove mask and per-region albedo normalisation.
+   Built by scripts/fparms/build.mjs.
+
+   MIT License
+
+   Copyright (c) 2020 Microsoft
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
