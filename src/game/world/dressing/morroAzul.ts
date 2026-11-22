@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { attachGrime, finishGrime, grimeOf, holeRects } from "../architecture/grime";
+import { attachArchKit, finishArchKit, KIT_SIZE, type ArchKitLayer } from "../architecture/archkit";
 import type { Dressing, WorldExtra } from "./common";
 import { fbm2, smoothstep, poleLine, type PoleSpot } from "./common";
 import type { MeshBuilder } from "../MeshBuilder";
@@ -303,10 +304,16 @@ const BRICK_TINTS = [0xf2d8c8, 0xe8c8b4, 0xf8e4d6, 0xdcb8a2];
 // Houses
 // ---------------------------------------------------------------------------
 
-type Ctx = { B: MeshBuilder; quads: Quad[]; atlas: ReturnType<typeof makeAtlas>["rects"]; high: boolean };
+type Ctx = { B: MeshBuilder; quads: Quad[]; atlas: ReturnType<typeof makeAtlas>["rects"]; high: boolean; K: ArchKitLayer | null };
+
+// Kit stone sill / lintel lengths (art/blender/archkit/ak_pieces.py): scaled to each opening.
+const SILL_L = KIT_SIZE.window.w + 0.24;
+const LINTEL_L = KIT_SIZE.window.w + 0.3;
 
 function house(ctx: Ctx, l: Lot) {
-  const { B, quads, atlas } = ctx;
+  const { B, quads, atlas, K } = ctx;
+  // Boxes the kit replaces go to its hidden fallback group (shown again on Low or a failed load).
+  const kg = K ? K.fallback() : undefined;
   const r = rnd(l.seed ^ 0x5bd1);
   const H = l.floors * l.fh;
   const W = l.x1 - l.x0, D = l.z1 - l.z0;
@@ -378,8 +385,10 @@ function house(ctx: Ctx, l: Lot) {
       const brick = fl >= l.brickFrom;
       const frameTint = brick ? 0x6a6a64 : 0xe8e4d8;
       // Sill + lintel.
-      fbox(B, f, "concrete", w.u, w.y - 0.05, 0.05, w.w + 0.24, 0.1, 0.12, 0xc4c0b4);
-      fbox(B, f, "concrete", w.u, w.y + w.h + 0.06, 0.03, w.w + 0.2, 0.12, 0.08, 0xbcb8ac);
+      fbox(B, f, "concrete", w.u, w.y - 0.05, 0.05, w.w + 0.24, 0.1, 0.12, 0xc4c0b4, { group: kg });
+      fbox(B, f, "concrete", w.u, w.y + w.h + 0.06, 0.03, w.w + 0.2, 0.12, 0.08, 0xbcb8ac, { group: kg });
+      K?.at("win_sill", f, w.u, w.y, 0, (w.w + 0.24) / SILL_L, 1, 1, 0xc4c0b4);
+      K?.at("win_lintel", f, w.u, w.y + w.h, 0, (w.w + 0.2) / LINTEL_L, 0.6, 0.5, 0xbcb8ac);
       if (!l.enter) {
         // Dark interior / shutters / boards.
         const k = r();
@@ -409,9 +418,23 @@ function house(ctx: Ctx, l: Lot) {
       if (l.shop) {
         // Roll-up shutter part way up, awning and sign above.
         const open = 0.55 + r() * 0.35;
-        fbox(B, f, "metal_corrugated", d.u, d.h - (d.h * (1 - open)) / 2, -0.05, d.w, d.h * (1 - open), 0.04, 0xa8aca8);
-        fbox(B, f, "plain", d.u, (d.h * open) / 2, -0.4, d.w, d.h * open, 0.02, 0x1c1c1e);
-        fbox(B, f, "metal_painted", d.u, d.h + 0.3, 0.1, d.w + 0.3, 0.32, 0.08, 0xd8d4c8);
+        // Solid houses have no opening behind the shop front: draw it on the wall face, not inside the slab.
+        const face = l.enter ? 0 : 0.06;
+        fbox(B, f, "metal_corrugated", d.u, d.h - (d.h * (1 - open)) / 2, -0.05 + face, d.w, d.h * (1 - open), 0.04, 0xa8aca8, { group: kg });
+        fbox(B, f, "plain", d.u, (d.h * open) / 2, l.enter ? -0.4 : 0.012, d.w, d.h * open, 0.02, 0x1c1c1e);
+        if (K) {
+          // Roller shutter: housing and guides, the curtain stacked in 0.5 m slat modules, bottom rail.
+          const sx = d.w / KIT_SIZE.shop.w;
+          const tint = [0xa8aca8, 0x8a9aa8, 0xb8b0a0, 0x7a8a7a][(l.seed + s) & 3]; // no r(): the layout must match Low
+          K.at("roller_box", f, d.u, 0, 0, sx, d.h / KIT_SIZE.shop.h, 1, tint);
+          const c = d.h * (1 - open);
+          const n = Math.max(1, Math.ceil(c / KIT_SIZE.slats));
+          const sy = c / (n * KIT_SIZE.slats);
+          for (let i = 0; i < n; i++) K.at("roller_slats", f, d.u, d.h * open + i * KIT_SIZE.slats * sy, 0, sx, sy, 1, tint);
+          K.at("roller_bottom", f, d.u, d.h * open, 0, sx, 1, 1, tint);
+        }
+        // Fascia board above (in front of the shutter housing when the kit draws one).
+        fbox(B, f, "metal_painted", d.u, d.h + 0.3, K ? 0.36 : 0.1, d.w + 0.3, 0.32, 0.08, 0xd8d4c8);
         if (r() < 0.7) awning(B, f, d.u, d.h + 0.55, d.w + 0.4, 1.3, 0.35, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < 0.25);
         const p = f.at(d.u, d.h + 0.95, 0.14);
         quads.push({ c: p, right: f.t.clone(), up: new THREE.Vector3(0, 1, 0), w: Math.min(d.w + 0.6, 3.4), h: Math.min(d.w + 0.6, 3.4) / 4, rect: atlas.signs[Math.floor(r() * atlas.signs.length)] });
@@ -438,7 +461,15 @@ function house(ctx: Ctx, l: Lot) {
       const mw = Math.min(L - 1, 7), mh = Math.min(H - 0.6, mw * 0.75);
       quads.push({ c: f.at(L / 2, 0.4 + mh / 2, 0.015), right: f.t.clone(), up: new THREE.Vector3(0, 1, 0), w: mw, h: mh, rect: atlas.murals[Math.floor(r() * atlas.murals.length)] });
     }
-    if (r() < 0.35) downpipe(B, f, r() < 0.5 ? 0.25 : L - 0.25, H, clutterGroup(cx, cz));
+    if (r() < 0.35) {
+      const pu = r() < 0.5 ? 0.25 : L - 0.25;
+      downpipe(B, f, pu, H, K ? K.fallback(clutterGroup(cx, cz)) : clutterGroup(cx, cz));
+      if (K) {
+        K.at("downpipe_head", f, pu, H, 0);
+        K.at("downpipe", f, pu, 0.45, 0, 1, H - 0.3 - 0.45);
+        K.at("downpipe_shoe", f, pu, 0, 0);
+      }
+    }
   }
 
   // Roof slab (solid houses; enterable roofs come from the colliders).
@@ -574,8 +605,10 @@ export const morroAzul: Dressing = (kit) => {
   const r = rnd(9001);
   const atlasData = makeAtlas();
   const quads: Quad[] = [];
-  const ctx: Ctx = { B, quads, atlas: atlasData.rects, high };
   attachGrime(B, q, "dry");
+  // Modular architecture kit: stone sills and lintels, roller shutters, downpipes (not on Low).
+  const K = attachArchKit(B, q);
+  const ctx: Ctx = { B, quads, atlas: atlasData.rects, high, K };
   const flat = () => 0;
 
   // ---- Streets ------------------------------------------------------------------
@@ -771,6 +804,7 @@ export const morroAzul: Dressing = (kit) => {
   extras.push(palms(palmList, kit.materials, kit.windTime));
   extras.push(atlasExtra(quads, atlasData.canvas, high ? 8 : 4));
   extras.push(...finishGrime(B));
+  extras.push(...finishArchKit(B));
 
   return {
     terrain: {

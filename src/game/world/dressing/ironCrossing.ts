@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachArchKit, finishArchKit } from "../architecture/archkit";
 import { attachGrime, finishGrime } from "../architecture/grime";
 import { skyline } from "../architecture/skyline";
 import { rng, type BushPlacement, type TreePlacement } from "../Foliage";
@@ -60,6 +61,8 @@ export const ironCrossing: Dressing = (kit) => {
   const detail = worldDetail(name);
   const extras: WorldExtra[] = [];
   attachGrime(B, qualityName(quality), "wet");
+  // Modular architecture kit: building() swaps its window / door / balcony boxes for kit units.
+  attachArchKit(B, qualityName(quality));
   const { south, north, deck, core, deckHalf, catOut, pad, piers } = BRIDGE;
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -493,6 +496,7 @@ export const ironCrossing: Dressing = (kit) => {
   );
 
   extras.push(...finishGrime(B));
+  extras.push(...finishArchKit(B));
   return {
     terrain: { height, splat, inner: 110, outer: 480 },
     foliage: { grass, grassBounds: 175, trees, bushes, tallGrass, tallGrassBounds: 175 },

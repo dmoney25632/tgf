@@ -132,9 +132,9 @@ test("archkit: pieces batch into one draw per material, LOD and range culling pe
   x.dispose();
 });
 
-function brennhollow(q: keyof typeof QUALITY, kit: boolean) {
+function dress(id: string, q: keyof typeof QUALITY, kit: boolean, views: THREE.Vector3[]) {
   archKitConfig.enabled = kit;
-  const entry = MAPS.find((m) => m.id === "brennhollow")!;
+  const entry = MAPS.find((m) => m.id === id)!;
   const builder = new MeshBuilder();
   const props = { place: () => {} } as unknown as DressingKit["props"];
   const boxes = JSON.stringify(entry.def.boxes);
@@ -176,12 +176,15 @@ function brennhollow(q: keyof typeof QUALITY, kit: boolean) {
   const pieces = new Map<string, number>();
   for (const p of K?.placements ?? []) pieces.set(p.piece, (pieces.get(p.piece) ?? 0) + 1);
   for (const x of plan.extras ?? []) x.dispose();
-  // From the square, the church steps and the east lane: what the kit submits after range culling and LOD.
+  // What the kit submits from the given viewpoints after range culling and LOD.
   const m = meta();
-  const views = [new THREE.Vector3(0, 1.7, -8), new THREE.Vector3(-14, 1.7, 8), new THREE.Vector3(24, 1.7, -2)];
   const seen = K ? Math.max(...views.map((v) => K.estimate(v, (p, lod) => m.pieces[p][lod ? "lod1" : "lod0"].tris).triangles)) : 0;
   return { draws, tris, fallbackTris, fallbackDraws, kit: !!K, pieces, doors: K?.doors.length ?? 0, seen };
 }
+
+// From the square, the church steps and the east lane.
+const BH_VIEWS = [new THREE.Vector3(0, 1.7, -8), new THREE.Vector3(-14, 1.7, 8), new THREE.Vector3(24, 1.7, -2)];
+const brennhollow = (q: keyof typeof QUALITY, kit: boolean) => dress("brennhollow", q, kit, BH_VIEWS);
 
 test("archkit: Brennhollow before / after (draws, triangles), Low untouched", () => {
   const m = meta();
@@ -230,4 +233,35 @@ test("archkit: building() places kit units when a kit is attached, same boxes ot
   for (const p of ["win_casement", "win_sill", "win_lintel", "door_frame", "door_step"] as KitPiece[]) assert.ok(kinds.has(p), `building places ${p}`);
   assert.ok(K.doors.length > 0, "door leaves are kit leaves (hinged)");
   for (const x of finishArchKit(withKit)) x.dispose();
+});
+
+// Other maps with kit pieces: building() maps (windows / doors / balconies) and Morro Azul (sills, lintels, roller shutters, downpipes).
+const KIT_MAPS = ["ironCrossing", "greywater", "morroAzul"];
+
+test("archkit: the building() maps attach the kit within budget, Low untouched", () => {
+  const m = meta();
+  for (const dressing of KIT_MAPS) {
+    const entry = MAPS.find((e) => e.def.dressing === dressing);
+    assert.ok(entry, `a map uses the ${dressing} dressing`);
+    const views: THREE.Vector3[] = [];
+    for (let x = -60; x <= 60; x += 30) for (let z = -60; z <= 60; z += 30) views.push(new THREE.Vector3(x, 1.7, z));
+    for (const q of ["medium", "high"] as const) {
+      const before = dress(entry.id, q, false, views);
+      const after = dress(entry.id, q, true, views);
+      assert.ok(after.kit, `${dressing}: kit attached`);
+      assert.ok(after.draws <= before.draws, `${dressing} ${q}: buckets ${after.draws} <= ${before.draws}`);
+      let lod1 = 0, n = 0;
+      for (const [p, c] of after.pieces) {
+        lod1 += m.pieces[p].lod1.tris * c;
+        n += c;
+      }
+      assert.ok(n > 50, `${dressing} ${q}: ${n} kit instances`);
+      assert.ok(lod1 < 400_000, `${dressing} ${q}: kit LOD1 ${lod1}`);
+      assert.ok(after.seen < (q === "high" ? 500_000 : 260_000), `${dressing} ${q}: kit triangles in range ${after.seen}`);
+      console.log(`# ${dressing} ${q}: ${before.draws} -> ${after.draws} + 3 kit draws, ${before.tris} -> ${after.tris} box tris, kit ${n} instances (${lod1} tris LOD1), worst view ${after.seen}`);
+    }
+    const low = dress(entry.id, "low", true, views);
+    assert.equal(low.kit, false, `${dressing}: Low builds the box path only`);
+    assert.equal(low.fallbackDraws, 0);
+  }
 });

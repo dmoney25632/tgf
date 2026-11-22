@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { attachArchKit, finishArchKit } from "../architecture/archkit";
 import { attachGrime, finishGrime } from "../architecture/grime";
 import { rng, type BushPlacement, type TreePlacement } from "../Foliage";
 import type { Splat } from "../Terrain";
@@ -38,6 +39,8 @@ export const greywater: Dressing = (kit) => {
   const detail = worldDetail(name);
   const extras: WorldExtra[] = [];
   attachGrime(B, qualityName(quality), "wet");
+  // Modular architecture kit: building() swaps its window / door / balcony boxes for kit units.
+  attachArchKit(B, qualityName(quality));
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const flat = () => 0;
 
@@ -258,6 +261,7 @@ export const greywater: Dressing = (kit) => {
   extras.push(convoy(kit));
 
   extras.push(...finishGrime(B));
+  extras.push(...finishArchKit(B));
   return {
     terrain: { height, splat, inner: 130, outer: 480 },
     foliage: {
