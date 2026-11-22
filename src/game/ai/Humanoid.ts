@@ -7,6 +7,8 @@ import { disposeHeads, FACE_IDS, faceIdentity, faceMaterial, onHeadReady, type F
 import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
+import { disposeSoldierMaterials, mocapWanted, onSoldiersReady, soldierLodDistances, type SoldierLibrary } from "./soldier/assets";
+import { MocapBody, type DriveState } from "./soldier/MocapBody";
 
 export type HumanoidLook = LookDef;
 
@@ -45,6 +47,8 @@ type SoldierGeo = {
 
 const geoCache = new Map<string, SoldierGeo>();
 const gunCache = new Map<string, GunSpec>();
+/** Rifle-only skinned geometry (gun bone), drawn next to the mocap body. */
+const gunOnlyCache = new Map<string, THREE.BufferGeometry>();
 const boxCache = new Map<string, THREE.BoxGeometry>();
 const IDENTITY = new THREE.Matrix4();
 const IDENTITIES = Array.from({ length: BONES.length + 1 }, () => IDENTITY);
@@ -95,6 +99,17 @@ function gunFor(look: LookDef, lod: number) {
   if (!s) gunCache.set(k, (s = withQuality(lod, () => buildGun(kit, accent, vest, gun))));
   return s;
 }
+
+function gunOnly(look: LookDef, lod: number) {
+  const { kit, accent, vest, gun } = look;
+  const k = `${kit}|${gun ?? ""}|${accent}|${vest}|${lod}`;
+  let g = gunOnlyCache.get(k);
+  if (!g) gunOnlyCache.set(k, (g = skinMerge([[GUN_BONE, gunFor(look, lod).geo]])));
+  return g;
+}
+
+/** Kits drawn with the motion-captured body (the heavy / ghillie / boss kits keep their sculpted gear). */
+const MOCAP_KITS = new Set<string>(["standard", "rusher"]);
 
 function soldierGeo(look: LookDef, variant: number): SoldierGeo {
   const key = `${look.kit}|${look.gun ?? ""}|${look.uniform}|${look.vest}|${look.helmet}|${look.accent}|${look.camo ?? ""}|${variant}`;
@@ -153,6 +168,9 @@ export function disposeHumanoidCache() {
     s.elite.dispose();
   });
   gunCache.forEach((g) => g.geo.dispose());
+  gunOnlyCache.forEach((g) => g.dispose());
+  gunOnlyCache.clear();
+  disposeSoldierMaterials();
   boxCache.forEach((g) => g.dispose());
   geoCache.clear();
   gunCache.clear();
@@ -362,6 +380,13 @@ export class Humanoid {
   private readonly e1 = new THREE.Euler();
   private readonly s1 = new THREE.Vector3(1, 1, 1);
 
+  // Motion-captured body (medium / high quality; procedural until it loads).
+  private mocap: MocapBody | null = null;
+  private mocapDt = 0;
+  private mocapTick = 0;
+  private elite = false;
+  private readonly drive: DriveState = { speed: 0, crouch: 0, aim: 0, aimPitch: 0, moveF: 1, moveS: 0, down: 0 };
+
   constructor(owner: Hittable, look: HumanoidLook) {
     this.scale = look.scale;
     const kit = look.kit;
@@ -493,11 +518,67 @@ export class Humanoid {
     this.setElite(false);
     this.root.scale.setScalar(look.scale);
     this.update(0, 0, false, 0, false);
+
+    // Explicit cosmetic variants (operator previews, players' chosen gear) stay procedural.
+    if (MOCAP_KITS.has(kit) && look.variant === undefined && mocapWanted()) {
+      onSoldiersReady((lib) => this.attachMocap(lib, look));
+    }
+  }
+
+  /**
+   * Swaps the near / mid LOD levels for the motion-captured body (plus the
+   * procedural rifle, drawn alone). The procedural skeleton, hitboxes, rifle
+   * bone and muzzle keep running unchanged underneath; far away the
+   * procedural coarse body still draws.
+   */
+  private attachMocap(lib: SoldierLibrary, look: HumanoidLook) {
+    if (this.mocap) return;
+    let body: MocapBody;
+    try {
+      body = new MocapBody(lib, look, this.b, RIG.spineY + RIG.neckY);
+    } catch (e) {
+      console.warn("[soldiers] mocap body failed; keeping the procedural soldier", e);
+      return;
+    }
+    this.mocap = body;
+    this.root.add(body.root);
+    const skinnedGun = (lod: number) => {
+      const m = new THREE.SkinnedMesh(gunOnly(look, lod), uberMaterial(0xb08a6a));
+      m.bind(this.skeleton, IDENTITY);
+      m.boundingSphere = CULL;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      return m;
+    };
+    const [dMid, dFar] = soldierLodDistances();
+    const levels = this.lod.levels;
+    const near = new THREE.Group();
+    near.add(body.lod0, skinnedGun(0));
+    const mid = new THREE.Group();
+    mid.add(body.lod1, skinnedGun(1));
+    for (const [i, obj, dist] of [[0, near, 0], [1, mid, dMid]] as const) {
+      this.lod.remove(levels[i].object);
+      levels[i].object = obj;
+      levels[i].distance = dist;
+      this.lod.add(obj);
+    }
+    levels[2].distance = dFar;
+    // The elite armbands are sculpted onto the procedural arms: the mocap body tints its kit instead.
+    this.eliteMesh.visible = false;
+    body.setElite(this.elite);
+    if (this.death >= 0) body.die(false);
   }
 
   /** Toggle the red elite markings (pooled models are reused for both). */
   setElite(on: boolean) {
-    this.eliteMesh.visible = on;
+    this.elite = on;
+    if (this.mocap) this.mocap.setElite(on);
+    else this.eliteMesh.visible = on;
+  }
+
+  /** True once the motion-captured body has replaced the procedural near / mid meshes. */
+  get mocapActive() {
+    return this.mocap !== null;
   }
 
 
@@ -512,6 +593,7 @@ export class Humanoid {
       this.headSnap.impulse(dir * 11 * s);
       this.headRoll.impulse((Math.random() - 0.5) * 8 * s);
     }
+    this.mocap?.flinch(head, s);
   }
 
   fire() {
@@ -542,6 +624,8 @@ export class Humanoid {
     this.gunQ1.setFromEuler(this.e1);
     this.gunDrop = 0;
     this.root.attach(this.gun);
+    // Backward falls play the mocap death; the rest puppet the procedural topple.
+    this.mocap?.die(this.kind === 0);
   }
 
   revive() {
@@ -553,6 +637,7 @@ export class Humanoid {
     if (this.gun.parent !== this.b.spine) this.b.spine.add(this.gun);
     this.gun.scale.set(1, 1, 1);
     this.hasPrev = false;
+    this.mocap?.revive();
     // A downed squadmate gets up (keeps its pose and blends out); a pooled /
     // respawned model snaps to standing.
     if (wasDead || !this.root.visible) {
@@ -586,6 +671,11 @@ export class Humanoid {
 
     if (this.death >= 0) {
       this.updateDeath(dt);
+      if (this.mocap && this.mocapDue(dt)) {
+        const t = this.death;
+        this.mocap.updateDeath(this.mocapDt, { t, groundY: this.groundY, yaw0: this.yaw0, sink: t > 3.3 ? Math.min(1, (t - 3.3) / 1.2) * 0.5 : 0 }, this.root);
+        this.mocapDt = 0;
+      }
       return;
     }
     const b = this.b;
@@ -750,6 +840,33 @@ export class Humanoid {
       ql.slerp(Q_WOUND_L, db);
     }
     solveArm(b.uArmL, b.fArmL, b.handL, this.shoulderL, wl, ql, POLE_L, L1, L2);
+
+    if (this.mocap && this.mocapDue(dt)) {
+      const d = this.drive;
+      d.speed = sp;
+      d.crouch = this.crouch * (1 - db);
+      d.aim = a;
+      d.aimPitch = ap;
+      d.moveF = this.moveF;
+      d.moveS = this.moveS;
+      d.down = db;
+      this.mocap.update(this.mocapDt, d, this.root);
+      this.mocapDt = 0;
+    }
+  }
+
+  /**
+   * Mocap animation budget: full rate on the near LOD, every other frame on
+   * the mid LOD, frozen while the procedural far LOD (or nothing) is drawn.
+   * Accumulates dt so a skipped frame is caught up on the next update.
+   */
+  private mocapDue(dt: number) {
+    this.mocapDt = Math.min(0.25, this.mocapDt + dt);
+    if (!this.root.visible) return false;
+    const level = this.lod.getCurrentLevel();
+    if (level >= 2) return false;
+    if (level === 1 && (++this.mocapTick & 1) === 1) return false;
+    return true;
   }
 
   // ---------------------------------------------------------------------------

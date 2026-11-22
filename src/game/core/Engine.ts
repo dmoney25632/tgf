@@ -27,6 +27,7 @@ import { Sfx } from "../audio/Sfx";
 import type { EngineContext, EngineEvent, GameMode } from "./GameMode";
 import { RangeMode } from "./RangeMode";
 import { BackgroundTicker } from "./BackgroundTicker";
+import { setSoldierQuality } from "../ai/soldier/assets";
 import { SurvivalGameMode, type SurvivalConfig } from "../survival/SurvivalGameMode";
 
 export type { GameSettings };
@@ -133,6 +134,7 @@ export class GameEngine {
     const survival = opts.mode === "survival";
 
     const preset = QUALITY[this.settings.quality];
+    setSoldierQuality(this.settings.quality);
     const picked = opts.map ?? getMap(opts.mission ? getMission(opts.mission.missionId)?.mapId : opts.mapId);
     const mapDef = picked && (!survival || picked.survival) ? picked : survival ? DUSTFALL_OUTPOST : KESTREL_YARD;
     this.map = loadMap(this.scene, mapDef, preset);
@@ -340,6 +342,7 @@ export class GameEngine {
     if (this.settings.bindings !== prevBindings) this.syncGlyphs();
     if (next.quality && next.quality !== prevQuality) {
       const q = QUALITY[next.quality];
+      setSoldierQuality(next.quality);
       this.pipeline.setQuality(q);
       this.map.setQuality(q);
       this.effects.setLimits(q.maxDecals, q.maxParticles);
