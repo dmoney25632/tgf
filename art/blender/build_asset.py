@@ -37,14 +37,15 @@ def args():
     return p.parse_args(argv)
 
 
-def split_glass(objs):
+def split_glass(objs, preset="glass_lens", name="lens"):
     """Optic glass ships as its own unbaked mesh named `lens`: the game swaps in
-    see-through glass and a reticle (baked, it would be an opaque disc)."""
+    see-through glass and a reticle (baked, it would be an opaque disc). Modelled
+    reticles (preset "reticle") ship the same way as `reticle`, drawn glowing."""
     import bpy
 
     parts = []
     for o in scene.meshes(objs):
-        idx = [i for i, sl in enumerate(o.material_slots) if sl.material and sl.material.get("tgf_preset") == "glass_lens"]
+        idx = [i for i, sl in enumerate(o.material_slots) if sl.material and sl.material.get("tgf_preset") == preset]
         if not idx:
             continue
         bpy.ops.object.select_all(action="DESELECT")
@@ -60,8 +61,8 @@ def split_glass(objs):
         parts += [s for s in bpy.context.selected_objects if s is not o]
     if not parts:
         return None
-    lens = scene.join(parts, "lens")
-    mat = bpy.data.materials.new("lens")
+    lens = scene.join(parts, name)
+    mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
     bsdf.inputs["Base Color"].default_value = (0.05, 0.07, 0.08, 1)
@@ -83,12 +84,13 @@ def main():
 
     export.apply_modifiers(objs)
     lens = split_glass(objs)
+    reticle = split_glass(objs, "reticle", "reticle")
     out_dir = os.path.dirname(a.out)
     if res.get("bake", True):
         tex_dir = os.path.join(a.previews, "_bake", a.id)
         for o in scene.meshes(objs):
             bake.bake_object(o, tex_dir, size=res.get("bake_size", 1024))
-    ship = list(objs) + ([lens] if lens else [])
+    ship = list(objs) + [x for x in (lens, reticle) if x]
     for i, ratio in enumerate(res.get("lods", [])):
         for o in scene.meshes(objs):
             ship.append(export.add_lod(o, ratio, f"lod{i + 1}"))

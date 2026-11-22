@@ -125,7 +125,8 @@ def build(ctx):
     park = M.pbr("p90_parkerized", "parkerized", wear=0.5)
     smoke = M.pbr("p90_mag_smoke", "polymer_black", base=(0.045, 0.035, 0.022), roughness=0.4, wear=0.05, scale=90)
     lens = M.pbr("p90_lens", "glass_lens")
-    red = M.pbr("p90_reticle", None, base=(0.85, 0.06, 0.03), metallic=0.0, roughness=0.3, wear=0.0)
+    # Preset "reticle": ships unbaked as its own mesh; the game draws it glowing.
+    red = M.pbr("p90_reticle", "reticle", base=(0.85, 0.06, 0.03), metallic=0.0, roughness=0.3, wear=0.0)
     parts = []
     add = parts.append
 

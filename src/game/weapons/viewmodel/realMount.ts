@@ -79,12 +79,19 @@ function rebuildArm(target: THREE.Object3D, src: GeoBuilder, mats: ViewmodelMate
 function mountGlass(real: THREE.Object3D, root: THREE.Object3D, toGun: (o: THREE.Object3D) => THREE.Matrix4, cfg: RealGun, mats: ViewmodelMaterials, owned: { dispose(): void }[]) {
   const lenses: THREE.Mesh[] = [];
   real.updateMatrixWorld(true);
-  real.traverse((o) => (o as THREE.Mesh).isMesh && /^lens/.test(o.name || o.parent?.name || "") && lenses.push(o as THREE.Mesh));
-  if (!lenses.length) return;
+  const reticles: THREE.Mesh[] = [];
+  real.traverse((o) => {
+    if (!(o as THREE.Mesh).isMesh) return;
+    const name = o.name || o.parent?.name || "";
+    if (/^lens/.test(name)) lenses.push(o as THREE.Mesh);
+    else if (/^reticle/.test(name)) reticles.push(o as THREE.Mesh);
+  });
+  if (!lenses.length && !reticles.length) return;
   const b = new GeoBuilder(mats.render);
   b.into(root);
   const box = new THREE.Box3();
-  for (const mesh of lenses) {
+  for (const mesh of [...lenses, ...reticles]) {
+    const glow = reticles.includes(mesh);
     // Plain float copy (the source may be quantized / indexed) placed in gun space.
     const src = mesh.geometry.attributes.position;
     const idx = mesh.geometry.index;
@@ -99,11 +106,17 @@ function mountGlass(real: THREE.Object3D, root: THREE.Object3D, toGun: (o: THREE
     g.applyMatrix4(toGun(mesh));
     g.computeVertexNormals();
     g.computeBoundingBox();
+    if (glow) {
+      // Modelled reticle (the P90 ring): self-lit, in the optic's colour, never baked dark.
+      b.add(cfg.reticle === "amber" ? mats.reticleAmber : mats.reticleRed, g);
+      mesh.removeFromParent();
+      continue;
+    }
     box.union(g.boundingBox!);
     b.add(mats.lens, g);
     mesh.removeFromParent();
   }
-  if (cfg.reticle) {
+  if (cfg.reticle && !reticles.length && lenses.length) {
     const c = box.getCenter(new THREE.Vector3());
     const r = cfg.reticle === "red" ? 0.0007 : 0.0009;
     b.add(cfg.reticle === "red" ? mats.reticleRed : mats.reticleAmber, new THREE.CircleGeometry(r, 12), new THREE.Matrix4().makeTranslation(c.x, c.y, box.min.z + 0.0015));
