@@ -32,6 +32,37 @@ The gun models were obtained via the [FirstWave](https://github.com/moyzyy/First
 
 Obtained from the three.js repository (`examples/models/gltf/LeePerrySmith/`); the original licence text is kept as `characters/head/LeePerrySmith_License.txt`. Changes: the specular map was downscaled to 512 px; at runtime the bust is trimmed to head and neck, the albedo is re-tinted (skin tone, facial hair, painted eyes) and the head is fitted with procedurally modelled headgear.
 
+## More first-person gun models
+
+| Folder | Work | Author | License |
+|---|---|---|---|
+| `weapons/m24/` | "M24 Bounty Hunter Sniper Rifle" | [Naudaff3D](https://sketchfab.com/3d-models/m24-bounty-hunter-sniper-rifle-d40e74e2259549f5b025807163f1028c) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/svd/` | "Dragunov SVD" | [Vintar](https://sketchfab.com/3d-models/dragunov-svd-e3520e52a0d547b6b7c7ff2726161702) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/r870/` | "Remington870 Shotgun" | [Trip (Triptonic)](https://sketchfab.com/3d-models/remington870-shotgun-a4852997660a43839c30e36dfca5a3e7) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/m249/` | "M249 Machine Gun" | [Kendrick Russell (Buce)](https://sketchfab.com/3d-models/m249-machine-gun-bf0105376a2d4c37926f3ce95316460d) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/sw629/` | "357 Python Revolver (Rigged)" | [Erai (Khosro3D)](https://sketchfab.com/3d-models/357-python-revolver-rigged-3b81c991e9c84236a5c03895f9ca0aa3) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/m9/` | "Service Pistol" | [Mateusz Sadek, Poly Haven](https://polyhaven.com/a/service_pistol) | [CC0](https://polyhaven.com/license) |
+
+Each folder holds `model.gltf`, `model.bin`, JPG textures and a `LICENSE.txt`.
+
+The Sketchfab models came from open-source game repositories that redistribute them:
+
+- M24: 317gw/HYPERLUNATIC
+- SVD: ZHe-testName/StalkerCV
+- Remington 870: Noureddine-Hci/RevenantOps
+- M249: Yni-Viar/scp-continued-path (that copy's meshes were already merged)
+- Python: Haruluya/Rock-sugar
+
+Each model's licence was checked against the Sketchfab API.
+
+Changes to the files:
+
+- Textures re-encoded as JPG at 1024 px or less. The SVD's are 512 px, converted from AVIF.
+- The Python revolver's speedloader and loose cases removed, and its rig baked to a static pose.
+- The Service Pistol's alternate variant, loaded magazine and loose round removed.
+
+At runtime each model is re-oriented, scaled and fitted onto the procedural gun. Its magazine, pump or slide is split off to animate, and the Service Pistol's magazine is seated in the grip.
+
 ## Environment additions (CC0)
 
 | Folder | Source | License |

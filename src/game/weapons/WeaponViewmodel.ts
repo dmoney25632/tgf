@@ -7,7 +7,8 @@ import { GeoBuilder } from "./viewmodel/geo";
 import { createViewmodelMaterials, type ViewmodelMaterials } from "./viewmodel/materials";
 import { GUN_BUILDERS, buildGrenade, buildKnife, type GrenadeModel, type GunSpec } from "./viewmodel/guns";
 import { buildFlash, createFlashKit, type FlashKit } from "./viewmodel/flash";
-import { REAL_GUNS, fitRealGun, loadRealGun, type RealTemplate } from "./viewmodel/realGuns";
+import { REAL_GUNS, loadRealGun, type RealTemplate } from "./viewmodel/realGuns";
+import { mountRealGun } from "./viewmodel/realMount";
 import type { Surf } from "./viewmodel/materials";
 
 type ModelKind = WeaponDef["model"];
@@ -292,14 +293,8 @@ export class WeaponViewmodel {
       const owned: { dispose(): void }[] = [];
       const spec = (GUN_BUILDERS[kind] ?? GUN_BUILDERS.m4a1)({ b, m: this.mats });
       b.finish(owned);
-      if (real) {
-        spec.root.updateMatrixWorld(true);
-        const inv = spec.root.matrixWorld.clone().invert();
-        const gun = new THREE.Box3();
-        const rel = new THREE.Matrix4();
-        for (const [obj, box] of b.gunBounds) gun.union(box.clone().applyMatrix4(rel.multiplyMatrices(inv, obj.matrixWorld)));
-        spec.root.add(fitRealGun(kind, real, gun, spec.muzzle.position));
-      } else this.requestReal(kind);
+      if (real) mountRealGun(spec, b, real, REAL_GUNS[kind]!, this.mats, owned);
+      else this.requestReal(kind);
       const flash = buildFlash(this.flashKit, spec.flash, spec.flashScale, owned);
       spec.muzzle.add(flash.group);
       m = {

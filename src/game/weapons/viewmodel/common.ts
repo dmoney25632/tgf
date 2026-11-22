@@ -69,6 +69,8 @@ export type GunSpec = {
    */
   magPath?: { pull: V3; away: V3; rot: V3; rockIn?: number };
   muzzle: THREE.Object3D;
+  /** Muzzle of the bare gun when an add-on (suppressor) moved `muzzle` forward: real models fit to this. */
+  boreMuzzle?: THREE.Vector3;
   /** Ejection port; brass leaves along `ejectDir` (gun space). */
   eject: THREE.Object3D;
   ejectDir: THREE.Vector3;

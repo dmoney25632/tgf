@@ -23,7 +23,11 @@ function suppressed(kind: ViewModelKind, build: (k: Kit) => GunSpec, r: number, 
     const g = build(k);
     k.b.into(g.root);
     const mz = g.muzzle.position;
+    g.boreMuzzle = mz.clone();
+    // Kept over a real model (it has no can of its own) and left out of its fit.
+    k.b.keep = true;
     suppressor(k, mz.z + 0.004, mz.y, r, len);
+    k.b.keep = false;
     mz.z -= len - 0.004;
     g.flash = "pistol";
     g.flashScale *= 0.35;
