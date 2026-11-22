@@ -46,3 +46,14 @@ Obtained from the three.js repository (`examples/models/gltf/LeePerrySmith/`); t
 | `models/plastic_crate_02`, `wooden_crate_02`, `Barrel_02`, `utility_box_02` | [Poly Haven models](https://polyhaven.com/models) (1K glTF; textures re-encoded to JPEG q80/q85 like `scripts/optimize-assets.sh`) | [CC0](https://polyhaven.com/license) |
 
 The facade grime atlas (rain streaks, roof runs, rising damp, cracks, rust, algae, corner dirt) is painted procedurally on a canvas at load time (`src/game/world/architecture/grime.ts`); it uses no third-party images.
+
+## Motion-captured soldiers (MIT + CC0)
+
+Enemies and AI squadmates on the Medium / High presets. Licence texts are kept in `characters/soldiers/LICENSE.txt`.
+
+| Folder | Work | Author | License |
+|---|---|---|---|
+| `characters/soldiers/` (`soldier_a/b/c.glb`, `soldier_*_color*.jpg`, `soldier_*_normal.jpg`, `soldier_*_orm.jpg`) | Microsoft Rocketbox avatars `Military_Male_01`, `_03`, `_04` | [Microsoft](https://github.com/microsoft/Microsoft-Rocketbox) | [MIT](https://github.com/microsoft/Microsoft-Rocketbox/blob/master/LICENSE.md) (attribution: copyright notice kept) |
+| `characters/soldiers/anims.glb`, `soldiers.json` | Universal Animation Library [Standard] | [Quaternius](https://quaternius.com/packs/universalanimationlibrary.html) | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+
+Changes: FBX converted to metre-scale glTF, facial bones folded into the head, the knife removed, each avatar's four texture sets packed into one atlas (2048 px colour plus a 1024 px variant, 1024 px normal), the specular map turned into a roughness channel plus a team-tint mask, and a simplified LOD (~4.4k triangles) added. Animations (idle, walk, jog, sprint, crouch idle / walk, hit reacts, Death01, a finger grip) were retargeted onto the Rocketbox Biped skeleton and resampled at 30 fps. At runtime the camouflage is re-tinted per team and the arms are solved onto the game's own rifle.

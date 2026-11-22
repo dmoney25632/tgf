@@ -52,11 +52,22 @@ const ATTRIBUTED = [
     licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
     notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px, effect meshes removed; re-oriented and scaled at runtime to fit the in-game hands.",
   },
+  {
+    title: "Microsoft Rocketbox avatars (Military_Male_01, 03, 04)",
+    use: "Motion-captured enemy and squadmate soldiers in Iron Horizon",
+    author: "Microsoft",
+    authorUrl: "https://github.com/microsoft/Microsoft-Rocketbox",
+    license: "MIT License (Copyright (c) 2020 Microsoft)",
+    licenseUrl: "https://github.com/microsoft/Microsoft-Rocketbox/blob/master/LICENSE.md",
+    notes:
+      "Modified: converted to glTF, facial bones folded into the head, knife removed, textures packed into one atlas per avatar and downscaled, team-tint mask and simplified LOD added. Camouflage is re-tinted per team at runtime.",
+  },
 ];
 
 const CC0 = [
   { name: "Poly Haven", what: "textures, HDRI sky and props", url: "https://polyhaven.com/license" },
   { name: "ambientCG", what: "fabric texture", url: "https://docs.ambientcg.com/license/" },
+  { name: "Quaternius", what: "Universal Animation Library soldier animations (retargeted)", url: "https://quaternius.com/packs/universalanimationlibrary.html" },
 ];
 
 export default function CreditsPage() {
@@ -69,7 +80,7 @@ export default function CreditsPage() {
       </div>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Attribution (CC BY)</h2>
+        <h2 className="text-lg font-semibold">Attribution (CC BY, MIT)</h2>
         {ATTRIBUTED.map((a) => (
           <Card key={a.title}>
             <CardHeader>
