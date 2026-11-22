@@ -153,7 +153,11 @@ function killSwitch() {
   }
 }
 
-/** The glTF material with the operator tint applied per region (ORM red = glove mask). */
+/**
+ * The glTF material with the operator tint applied per region. ORM red is
+ * the region mask: 0 sleeve (tints[1]), 1 glove (tints[0]), 0.5 untinted
+ * (bare skin, watch: the albedo is final). ORM blue is metalness (watch case).
+ */
 export function createArmsMaterial(src: THREE.MeshStandardMaterial, tints: THREE.Color[]) {
   const mat = new THREE.MeshStandardMaterial({
     name: "fp-arms",
@@ -162,9 +166,9 @@ export function createArmsMaterial(src: THREE.MeshStandardMaterial, tints: THREE
     roughnessMap: src.roughnessMap,
     metalnessMap: src.metalnessMap,
     roughness: 1,
-    metalness: 0,
+    metalness: src.metalnessMap ? 1 : 0,
   });
-  // Baked albedo mean is 0.25 (linear) per region: x4 gives the tint.
+  // Baked albedo mean is 0.25 (linear) per tinted region: x4 gives the tint.
   const uniforms = { fpTints: { value: tints }, fpGain: { value: 4 } };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -174,13 +178,15 @@ export function createArmsMaterial(src: THREE.MeshStandardMaterial, tints: THREE
         "#include <map_fragment>",
         `#include <map_fragment>
 #ifdef USE_ROUGHNESSMAP
-float fpGlove = step(0.5, texture2D(roughnessMap, vRoughnessMapUv).r);
+float fpRegion = texture2D(roughnessMap, vRoughnessMapUv).r;
 #else
-float fpGlove = 0.0;
+float fpRegion = 0.0;
 #endif
-diffuseColor.rgb *= mix(fpTints[1], fpTints[0], fpGlove) * fpGain;`,
+float fpGlove = clamp(fpRegion * 2.0 - 1.0, 0.0, 1.0);
+float fpSleeve = clamp(1.0 - fpRegion * 2.0, 0.0, 1.0);
+diffuseColor.rgb *= (fpTints[0] * fpGlove + fpTints[1] * fpSleeve) * fpGain + (1.0 - fpGlove - fpSleeve);`,
       );
   };
-  mat.customProgramCacheKey = () => "fp-arms-v1";
+  mat.customProgramCacheKey = () => "fp-arms-v2";
   return mat;
 }

@@ -1,3 +1,8 @@
+// SUPERSEDED: the shipped arms are now built by art/blender/fparms/build.mjs
+// (Blender pipeline), which starts from this script's output, frozen in
+// art/blender/fparms/source/rocketbox_arms.glb. Running this script again
+// would overwrite the Blender build; keep it to regenerate that source.
+//
 // Builds public/assets/characters/fparms/* (first-person arms) from the
 // Microsoft Rocketbox avatar Military_Male_01 (MIT), reusing the soldier
 // conversion (scripts/soldiers/avatar.mjs):

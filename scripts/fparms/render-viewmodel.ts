@@ -183,9 +183,17 @@ function rasterise(vm: WeaponViewmodel, cam: THREE.PerspectiveCamera, tex: { col
           const o = (iy * tx.w + ix) * 4;
           const om = tex.orm, ox = Math.min(om.w - 1, Math.floor(u * om.w)), oy = Math.min(om.h - 1, Math.floor(vv * om.h));
           const oo = (oy * om.w + ox) * 4;
-          const tint = tints[om.d[oo] > 127 ? 0 : 1];
-          alb = [LUT[tx.d[o]] * 4 * tint.r, LUT[tx.d[o + 1]] * 4 * tint.g, LUT[tx.d[o + 2]] * 4 * tint.b];
+          // Region mask (ORM red): 0 sleeve, 1 glove, 0.5 untinted (skin / watch); see createArmsMaterial.
+          const reg = om.d[oo] / 255;
+          const gw = Math.min(1, Math.max(0, reg * 2 - 1)), sw = Math.min(1, Math.max(0, 1 - reg * 2)), uw = 1 - gw - sw;
+          const [g0, s0] = tints;
+          alb = [
+            LUT[tx.d[o]] * ((g0.r * gw + s0.r * sw) * 4 + uw),
+            LUT[tx.d[o + 1]] * ((g0.g * gw + s0.g * sw) * 4 + uw),
+            LUT[tx.d[o + 2]] * ((g0.b * gw + s0.b * sw) * 4 + uw),
+          ];
           rough = om.d[oo + 1] / 255;
+          metal = om.d[oo + 2] / 255;
           if (NV) {
             nrm = new THREE.Vector3(
               q0 * NV[a * 3] + q1 * NV[b * 3] + q2 * NV[c * 3],

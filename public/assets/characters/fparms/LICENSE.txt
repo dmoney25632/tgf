@@ -1,13 +1,20 @@
 First-person arms (fparms.gltf, fparms.bin, fparms_*.jpg / .ktx2)
 
-   Microsoft Rocketbox avatar library: Military_Male_01.
+   Based on the Microsoft Rocketbox avatar library: Military_Male_01.
    https://github.com/microsoft/Microsoft-Rocketbox
 
    Changes: the sleeves and gloved hands cut out of the body, smoothed and
-   re-simplified to 16k triangles, re-rigged onto a two-arm first-person
-   skeleton (forearm twist bones, three bones per finger), the textures
-   cropped to the arms with a glove mask and per-region albedo normalisation.
-   Built by scripts/fparms/build.mjs.
+   re-simplified, re-rigged onto a two-arm first-person skeleton (forearm
+   twist bones, three bones per finger) by scripts/fparms/build.mjs; then
+   rebuilt in Blender by art/blender/fparms (original work, same licence):
+   the sleeve cut back to a pushed-up, turned hem and fitted to the forearm,
+   a new glove cuff with a rolled rim and a hook-and-loop closure tab, bare
+   wrist skin, a field watch on the left wrist, weights re-transferred and
+   cleaned, new UV layout, and all textures (albedo, normal, roughness /
+   metalness / region mask) replaced by procedurally painted ones: molded
+   knuckle guard, finger pads, stitched seams, fourchettes, palm panels,
+   ripstop sleeve with folds, skin, watch dial. No Rocketbox texture pixels
+   remain; the mesh of the hands and sleeves derives from Rocketbox.
 
    MIT License
 

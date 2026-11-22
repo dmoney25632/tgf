@@ -3,8 +3,9 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { anchorMatrix, type HandAnchorData } from "./anchor";
 
 /**
- * Skinned first-person arms (public/assets/characters/fparms, built by
- * scripts/fparms/build.mjs from a Rocketbox avatar): rest-pose data per arm
+ * Skinned first-person arms (public/assets/characters/fparms, built in
+ * Blender by art/blender/fparms from a Rocketbox avatar; the sleeve's girth
+ * is final in the mesh, nothing is scaled here): rest-pose data per arm
  * and the solvers that put a hand on an anchor.
  *
  * Per frame and arm: the hand bone goes exactly onto its anchor; two-bone IK
@@ -32,8 +33,6 @@ const KNUCKLE_OUT = 0.014;
 /** Max upper-arm stretch, and the shoulder->wrist / arm-length ratio it aims for (keeps a bent elbow). */
 const UPPER_STRETCH = 1.6;
 const BEND = 0.93;
-/** Forearm sleeve girth (twist bones, around the forearm axis): the source jacket is baggy. */
-const SLEEVE_SLIM = 0.86;
 
 type BoneRest = { index: number; pos: THREE.Vector3; quat: THREE.Quaternion };
 
@@ -389,7 +388,6 @@ export class ArmsRig {
     for (let i = 0; i < 3; i++) {
       _tw.setFromAxisAngle(_ax, (ang * (i + 1)) / 3);
       B[rest.twist[i].index].quaternion.copy(_tw);
-      B[rest.twist[i].index].scale.set(1, SLEEVE_SLIM, SLEEVE_SLIM);
     }
 
     const fq = sol.fingers;
