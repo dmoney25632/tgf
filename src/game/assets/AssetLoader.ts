@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import type { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { HDRI, MODELS, TEXTURE_SETS, assetUrl, textureUrl, type ModelId, type TextureMapKind } from "./manifest";
+import { HDRI, MODELS, TEXTURE_SETS, assetUrl, textureKtx2Url, textureUrl, type ModelId, type TextureMapKind } from "./manifest";
 
 /**
  * Loads optional on-disk assets listed in the manifest. Everything resolves to
@@ -18,8 +18,13 @@ import { HDRI, MODELS, TEXTURE_SETS, assetUrl, textureUrl, type ModelId, type Te
  *   textures at 512 px, falling back to the full file if it is missing.
  * - Images are decoded (and resized) off the main thread with
  *   createImageBitmap, already flipped for WebGL, so uploads don't stall.
+ * - GPU-compressed textures (KTX2 / Basis Universal, scripts/encode-ktx2.mjs)
+ *   are used only when the GPU has a compressed format (ASTC, BC7, ETC2 or
+ *   sRGB-capable S3TC); otherwise, or when transcoding fails, the JPEGs are.
+ *   Texture sets: `loadCompressedTextureSet`; glTF: KHR_texture_basisu with
+ *   the JPEG kept as the core source.
  * - glTF files using EXT_meshopt_compression or KHR_texture_basisu get the
- *   matching decoder loaded on demand (see scripts/ktx2-encode.sh).
+ *   matching decoder loaded on demand.
  */
 
 /**
@@ -47,7 +52,10 @@ export function isPreFlipped(img: unknown) {
 }
 
 let assetRenderer: THREE.WebGLRenderer | null = null;
-/** Lets loaders that need GPU capabilities (KTX2) query the renderer. */
+/**
+ * Lets loaders that need GPU capabilities (KTX2) query the renderer.
+ * Optional: without it the formats are probed on a throwaway WebGL2 context.
+ */
 export function setAssetRenderer(r: THREE.WebGLRenderer | null) {
   assetRenderer = r;
 }
@@ -128,6 +136,127 @@ function loadImage(url: string, maxSize: number, smallUrl?: string): Promise<Img
 
 /** Edge size of the pre-scaled texture-set variants written by scripts/optimize-assets.sh. */
 const SMALL_VARIANT = 512;
+/** Edge size of the full texture-set maps (and of their .ktx2 copies). */
+const FULL_VARIANT = 1024;
+
+/** Where the Basis transcoder is served from (copied there by scripts/encode-ktx2.mjs). */
+const BASIS_PATH = "/assets/basis/";
+
+/** The part of WebGLExtensions that KTX2Loader.detectSupport reads. */
+export type GlExtensions = { has(name: string): boolean; get(name: string): unknown };
+
+const S3TC = "WEBGL_compressed_texture_s3tc";
+const S3TC_SRGB = "WEBGL_compressed_texture_s3tc_srgb";
+const ASTC = "WEBGL_compressed_texture_astc";
+const BPTC = "EXT_texture_compression_bptc";
+const ETC2 = "WEBGL_compressed_texture_etc";
+const COMPRESSED_EXTENSIONS = [
+  ASTC,
+  BPTC,
+  ETC2,
+  "WEBGL_compressed_texture_etc1",
+  S3TC,
+  S3TC_SRGB,
+  "WEBGL_compressed_texture_pvrtc",
+  "WEBKIT_WEBGL_compressed_texture_pvrtc",
+];
+
+/** Compressed-format extensions of a throwaway WebGL2 context (same GPU and browser as the game's). */
+function probeExtensions(): GlExtensions | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2");
+    if (!gl) return null;
+    const supported = new Set(gl.getSupportedExtensions() ?? []);
+    const found = new Set(COMPRESSED_EXTENSIONS.filter((n) => supported.has(n)));
+    const astc = found.has(ASTC) ? (gl.getExtension(ASTC) as { getSupportedProfiles(): string[] } | null) : null;
+    const profiles = astc?.getSupportedProfiles() ?? [];
+    (gl.getExtension("WEBGL_lose_context") as { loseContext(): void } | null)?.loseContext();
+    return { has: (n) => found.has(n), get: (n) => (n === ASTC ? { getSupportedProfiles: () => profiles } : null) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The extensions KTX2Loader may pick from, or null when transcoding could
+ * only produce uncompressed RGBA (no VRAM gain: the JPEGs are used instead).
+ * S3TC counts only with its sRGB variant, which sRGB albedo maps need.
+ */
+export function compressedSupport(ext: GlExtensions | null): GlExtensions | null {
+  if (!ext) return null;
+  const dxt = ext.has(S3TC) && ext.has(S3TC_SRGB);
+  if (!ext.has(ASTC) && !ext.has(BPTC) && !ext.has(ETC2) && !dxt) return null;
+  return { has: (n) => (n === S3TC ? dxt : ext.has(n)), get: (n) => ext.get(n) };
+}
+
+let ktx2: Promise<KTX2Loader | null> | null = null;
+
+/** Shared KTX2Loader (one transcoder worker pool), or null when compressed textures aren't usable here. */
+function ktx2Loader(): Promise<KTX2Loader | null> {
+  ktx2 ??= (async () => {
+    const ext = compressedSupport(assetRenderer ? assetRenderer.extensions : probeExtensions());
+    if (!ext) return null;
+    const { KTX2Loader } = await import("three/addons/loaders/KTX2Loader.js");
+    const l = new KTX2Loader().setTranscoderPath(versionedUrl(BASIS_PATH));
+    // detectSupport only reads `extensions` of a WebGLRenderer.
+    l.detectSupport({ extensions: ext } as unknown as THREE.WebGLRenderer);
+    return l;
+  })().catch((err) => {
+    warnOnce("KTX2 transcoder", err);
+    return null;
+  });
+  return ktx2;
+}
+
+const ktxCache = new Map<string, Promise<THREE.CompressedTexture | null>>();
+
+function loadKtx2(loader: KTX2Loader, url: string): Promise<THREE.CompressedTexture | null> {
+  let p = ktxCache.get(url);
+  if (!p) {
+    p = loader
+      .loadAsync(versionedUrl(url))
+      .then((t) => ((t as THREE.CompressedTexture).isCompressedTexture ? (t as THREE.CompressedTexture) : null))
+      .catch(() => null);
+    ktxCache.set(url, p);
+  }
+  return p;
+}
+
+/**
+ * Which .ktx2 copy suits a preset's texture cap: the 512 px one at exactly
+ * 512, the full one at 1024 or more, none (JPEGs, resized on decode) for
+ * other caps, since compressed mips can't be resized at load.
+ */
+export function ktx2Variant(maxSize: number): "small" | "full" | null {
+  if (maxSize === SMALL_VARIANT) return "small";
+  return maxSize >= FULL_VARIANT ? "full" : null;
+}
+
+export type CompressedTextureSet = Partial<Record<TextureMapKind, THREE.CompressedTexture>>;
+
+/**
+ * GPU-compressed maps of a set, transcoded off-thread to ASTC / BC7 / ETC2 /
+ * BC1-3. Null when the set has no KTX2 copies, the GPU has no compressed
+ * format or any map fails: callers then use `loadTextureSet` (JPEGs).
+ * Results are cached templates: clone them (clones share one GPU upload
+ * through their common source).
+ */
+export async function loadCompressedTextureSet(id: string, maxSize: number): Promise<CompressedTextureSet | null> {
+  const entry = TEXTURE_SETS[id];
+  const variant = ktx2Variant(maxSize);
+  if (!entry?.ktx2 || !variant || typeof window === "undefined") return null;
+  const loader = await ktx2Loader();
+  if (!loader) return null;
+  const texs = await Promise.all(entry.maps.map((k) => loadKtx2(loader, textureKtx2Url(id, k, variant === "small"))));
+  if (texs.some((t) => !t)) {
+    warnOnce(`ktx2:${id}`);
+    return null;
+  }
+  const out: CompressedTextureSet = {};
+  entry.maps.forEach((k, i) => (out[k] = texs[i]!));
+  return out;
+}
 
 export type TextureSetImages = Partial<Record<TextureMapKind, Img>>;
 
@@ -175,6 +304,23 @@ export type PreparedModel = { id: ModelId; variants: ModelVariant[] };
 
 const KEEP = ["position", "normal", "uv"];
 
+/**
+ * Float32 copy of a quantized attribute (KHR_mesh_quantization: int8/int16,
+ * maybe normalized or interleaved, as gltfpack writes). Baking applies node
+ * matrices to the vertices, which would overflow the integer range, and
+ * mergeGeometries needs matching array types.
+ */
+export function dequantize(attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): THREE.BufferAttribute {
+  if (!(attr as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute && attr.array instanceof Float32Array) {
+    return attr as THREE.BufferAttribute;
+  }
+  const n = attr.count;
+  const size = attr.itemSize;
+  const out = new Float32Array(n * size);
+  for (let i = 0; i < n; i++) for (let c = 0; c < size; c++) out[i * size + c] = attr.getComponent(i, c);
+  return new THREE.BufferAttribute(out, size);
+}
+
 /** Bakes meshes under `root` (relative to `root`) into one geometry per material. */
 function bake(root: THREE.Object3D): ModelVariant | null {
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -193,7 +339,10 @@ function bake(root: THREE.Object3D): ModelVariant | null {
       phys.depthWrite = false;
     }
     const g = mesh.geometry.clone();
-    for (const name of Object.keys(g.attributes)) if (!KEEP.includes(name)) g.deleteAttribute(name);
+    for (const name of Object.keys(g.attributes)) {
+      if (!KEEP.includes(name)) g.deleteAttribute(name);
+      else g.setAttribute(name, dequantize(g.getAttribute(name)));
+    }
     if (!g.attributes.normal) g.computeVertexNormals();
     g.applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld));
     const list = groups.get(mesh.material) ?? [];
@@ -217,10 +366,6 @@ function bake(root: THREE.Object3D): ModelVariant | null {
 
 type MeshoptDecoderLike = Parameters<GLTFLoader["setMeshoptDecoder"]>[0];
 let meshopt: Promise<MeshoptDecoderLike> | null = null;
-let ktx2: Promise<KTX2Loader> | null = null;
-
-/** Where the Basis transcoder is served from (copied there by scripts/ktx2-encode.sh). */
-const BASIS_PATH = "/assets/basis/";
 
 /**
  * Loads a glTF, pulling in the meshopt / KTX2 decoders only when the file
@@ -239,12 +384,10 @@ async function loadGltf(url: string) {
     loader.setMeshoptDecoder(await meshopt);
   }
   if (text.includes("KHR_texture_basisu")) {
-    ktx2 ??= import("three/addons/loaders/KTX2Loader.js").then(({ KTX2Loader }) => {
-      const l = new KTX2Loader().setTranscoderPath(versionedUrl(BASIS_PATH));
-      if (assetRenderer) l.detectSupport(assetRenderer);
-      return l;
-    });
-    loader.setKTX2Loader(await ktx2);
+    // Without a KTX2Loader, GLTFLoader uses each texture's JPEG `source`
+    // (scripts/encode-ktx2.mjs never marks the extension as required).
+    const ktx = await ktx2Loader();
+    if (ktx) loader.setKTX2Loader(ktx);
   }
   return loader.parseAsync(text, THREE.LoaderUtils.extractUrlBase(url));
 }
@@ -296,6 +439,8 @@ export function releaseModel(m: PreparedModel) {
 /** Drops all cached asset data (call after disposing every map that used it). */
 export function clearAssetCaches() {
   imageCache.clear();
+  for (const p of ktxCache.values()) void p.then((t) => t?.dispose());
+  ktxCache.clear();
   for (const p of modelCache.values()) void p.then((m) => m && releaseModel(m));
   modelCache.clear();
   if (hdriCache) void hdriCache.then((t) => t?.dispose());
