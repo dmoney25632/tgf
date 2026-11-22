@@ -527,6 +527,9 @@ def paint_watch(T, sel, Mw, H, R, M, col, mpt, region):
     Minv = np.array(Mw.inverted())
     p = (np.c_[T.P[sel], np.ones(sel.sum())] @ Minv.T)[:, :3]
     x, y, z = p[:, 0], p[:, 1], p[:, 2]
+    # The watch is painted on the right arm and the game wears its mirror on the left wrist:
+    # paint the face pre-mirrored (12 and 6 swapped, crown stays at 3) so it reads clockwise there.
+    y = -y
     rr = np.hypot(x, y)
     ang = np.arctan2(x, y)  # 0 at 12 o'clock (+y, toward the strap), clockwise toward +x (3 o'clock, the crown)
     c = np.zeros((sel.sum(), 3))
