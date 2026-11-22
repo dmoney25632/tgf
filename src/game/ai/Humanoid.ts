@@ -7,8 +7,10 @@ import { disposeHeads, FACE_IDS, faceIdentity, faceMaterial, onHeadReady, type F
 import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
 import { buildGun, type GunSpec } from "./humanoid/rifle";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
-import { disposeSoldierMaterials, mocapWanted, onSoldiersReady, soldierLodDistances, type SoldierLibrary } from "./soldier/assets";
-import { MocapBody, type DriveState } from "./soldier/MocapBody";
+import { disposeSoldierMaterials, mocapWanted, onSoldiersReady, soldierLodDistances, withAvatars, type SoldierAvatar, type SoldierLibrary } from "./soldier/assets";
+import { disposeSoldierGear } from "./soldier/gear";
+import { npcIdentity, partSources, playerIdentity, type AvatarId, type SoldierIdentity } from "./soldier/identity";
+import { MocapBody, type DriveState, type ProcRig } from "./soldier/MocapBody";
 
 export type HumanoidLook = LookDef;
 
@@ -56,9 +58,9 @@ const IDENTITIES = Array.from({ length: BONES.length + 1 }, () => IDENTITY);
 const CULL = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 2.3);
 let variantCounter = 0;
 let toneCounter = 0;
+/** Identity seed for soldiers created without one (remote co-op enemies, previews). */
+let npcCounter = 1_000_003;
 
-/** Realistic skin tones (sRGB), light to deep. */
-const TONES = [0xecc4a6, 0xdcaa88, 0xc99470, 0xb27c58, 0x96633f, 0x75472b, 0x56341f];
 const IRIS = [0x3a2414, 0x2a1a0e, 0x46596a, 0x3a3a22, 0x4a2e18, 0x55636c, 0x3e4a36, 0x2a1a0e];
 
 function hitBox(size: readonly number[]) {
@@ -107,9 +109,6 @@ function gunOnly(look: LookDef, lod: number) {
   if (!g) gunOnlyCache.set(k, (g = skinMerge([[GUN_BONE, gunFor(look, lod).geo]])));
   return g;
 }
-
-/** Kits drawn with the motion-captured body (the heavy / ghillie / boss kits keep their sculpted gear). */
-const MOCAP_KITS = new Set<string>(["standard", "rusher"]);
 
 function soldierGeo(look: LookDef, variant: number): SoldierGeo {
   const key = `${look.kit}|${look.gun ?? ""}|${look.uniform}|${look.vest}|${look.helmet}|${look.accent}|${look.camo ?? ""}|${variant}`;
@@ -171,6 +170,7 @@ export function disposeHumanoidCache() {
   gunOnlyCache.forEach((g) => g.dispose());
   gunOnlyCache.clear();
   disposeSoldierMaterials();
+  disposeSoldierGear();
   boxCache.forEach((g) => g.dispose());
   geoCache.clear();
   gunCache.clear();
@@ -382,6 +382,8 @@ export class Humanoid {
 
   // Motion-captured body (medium / high quality; procedural until it loads).
   private mocap: MocapBody | null = null;
+  private readonly identity: SoldierIdentity;
+  private readonly follows: { bone: BoneName; proc: THREE.Object3D; vis: THREE.Object3D | null }[] = [];
   private mocapDt = 0;
   private mocapTick = 0;
   private elite = false;
@@ -400,7 +402,9 @@ export class Humanoid {
     // Per-soldier face: skin tone, facial hair, eye colour. An explicit
     // variant (menu previews) keeps the palette's skin colour.
     const t = toneCounter++;
-    const tone = look.variant !== undefined ? look.skin : TONES[(t * 3 + 1) % TONES.length];
+    // Who the motion-captured body is: the player's chosen gear and skin, or derived from the agent id.
+    this.identity = look.variant !== undefined ? playerIdentity(look.variant, look.skin) : npcIdentity(look.seed ?? npcCounter++, kit);
+    const tone = look.variant !== undefined ? look.skin : this.identity.tone;
     const face = geo.face;
     const faceId = t % FACE_IDS;
     let beard = face?.beard ?? 1;
@@ -519,9 +523,46 @@ export class Humanoid {
     this.root.scale.setScalar(look.scale);
     this.update(0, 0, false, 0, false);
 
-    // Explicit cosmetic variants (operator previews, players' chosen gear) stay procedural.
-    if (MOCAP_KITS.has(kit) && look.variant === undefined && mocapWanted()) {
-      onSoldiersReady((lib) => this.attachMocap(lib, look));
+    // Every kit (and the players' own characters) gets the motion-captured
+    // body once its avatars have loaded; until then (and on Low) it stays procedural.
+    if (mocapWanted()) {
+      const ids = Object.values(partSources(this.identity)).filter((x): x is AvatarId => !!x);
+      onSoldiersReady((lib) =>
+        withAvatars(ids, (avatars) => {
+          if (avatars) this.attachMocap(lib, avatars, look);
+        }),
+      );
+    }
+  }
+
+  /**
+   * Adds a visual attachment (armour plate, light, ...) to a procedural
+   * bone. With the motion-captured body active a twin rides on the matching
+   * mocap bone, and each copy only shows on the LOD levels that draw its body.
+   */
+  attachToBone(bone: BoneName, obj: THREE.Object3D) {
+    this.b[bone].add(obj);
+    const f = { bone, proc: obj, vis: null as THREE.Object3D | null };
+    this.follows.push(f);
+    if (this.mocap) this.followMocap(f);
+  }
+
+  private followMocap(f: { bone: BoneName; proc: THREE.Object3D; vis: THREE.Object3D | null }) {
+    const socket = this.mocap?.socket(f.bone as keyof ProcRig);
+    if (!socket || f.vis) return;
+    f.vis = f.proc.clone();
+    // Bulkier plates over the mocap body's kit (its plate carrier sits proud of the procedural torso).
+    if (f.bone === "spine" || f.bone === "pelvis") f.vis.scale.multiplyScalar(1.06);
+    socket.add(f.vis);
+  }
+
+  /** Procedural-bone attachments show with the far LOD, their mocap twins with the near / mid ones. */
+  private syncFollows() {
+    if (!this.follows.length || !this.mocap) return;
+    const far = this.lod.getCurrentLevel() >= 2;
+    for (const f of this.follows) {
+      f.proc.visible = far;
+      if (f.vis) f.vis.visible = !far;
     }
   }
 
@@ -531,11 +572,11 @@ export class Humanoid {
    * bone and muzzle keep running unchanged underneath; far away the
    * procedural coarse body still draws.
    */
-  private attachMocap(lib: SoldierLibrary, look: HumanoidLook) {
+  private attachMocap(lib: SoldierLibrary, avatars: Map<AvatarId, SoldierAvatar>, look: HumanoidLook) {
     if (this.mocap) return;
     let body: MocapBody;
     try {
-      body = new MocapBody(lib, look, this.b, RIG.spineY + RIG.neckY);
+      body = new MocapBody(lib, avatars, this.identity, look, this.b, RIG.spineY + RIG.neckY, look.seed ?? 0);
     } catch (e) {
       console.warn("[soldiers] mocap body failed; keeping the procedural soldier", e);
       return;
@@ -552,10 +593,10 @@ export class Humanoid {
     };
     const [dMid, dFar] = soldierLodDistances();
     const levels = this.lod.levels;
-    const near = new THREE.Group();
-    near.add(body.lod0, skinnedGun(0));
-    const mid = new THREE.Group();
-    mid.add(body.lod1, skinnedGun(1));
+    const near = body.near;
+    near.add(skinnedGun(0));
+    const mid = body.mid;
+    mid.add(skinnedGun(1));
     for (const [i, obj, dist] of [[0, near, 0], [1, mid, dMid]] as const) {
       this.lod.remove(levels[i].object);
       levels[i].object = obj;
@@ -567,6 +608,12 @@ export class Humanoid {
     this.eliteMesh.visible = false;
     body.setElite(this.elite);
     if (this.death >= 0) body.die(false);
+    for (const f of this.follows) this.followMocap(f);
+  }
+
+  /** Who the motion-captured body is (parts, kit, build). */
+  get soldierIdentity(): Readonly<SoldierIdentity> {
+    return this.identity;
   }
 
   /** Toggle the red elite markings (pooled models are reused for both). */
@@ -861,6 +908,7 @@ export class Humanoid {
    * Accumulates dt so a skipped frame is caught up on the next update.
    */
   private mocapDue(dt: number) {
+    this.syncFollows();
     this.mocapDt = Math.min(0.25, this.mocapDt + dt);
     if (!this.root.visible) return false;
     const level = this.lod.getCurrentLevel();

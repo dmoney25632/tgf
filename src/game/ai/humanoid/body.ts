@@ -59,6 +59,8 @@ export type LookDef = {
   variant?: number;
   /** Third-person weapon family; the kit picks one when omitted (teammates pass their primary's). */
   gun?: ThirdPersonKind;
+  /** Identity seed for the motion-captured body (the agent id): same seed, same soldier. */
+  seed?: number;
 };
 
 export type HitDims = { size: [number, number, number]; at: [number, number, number] };

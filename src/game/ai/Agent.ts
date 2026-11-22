@@ -111,7 +111,7 @@ export class Agent implements Hittable, Combatant, StaggerState {
   onDamage: DamageListener | null = null;
 
   constructor(readonly spec: AgentSpec, readonly id: number) {
-    this.model = new Humanoid(this, spec.look);
+    this.model = new Humanoid(this, { ...spec.look, seed: spec.look.seed ?? id });
     this.model.root.visible = false;
   }
 

@@ -1,15 +1,20 @@
 Motion-captured soldiers: two sources, two licences.
 
-1) Soldier meshes and textures (soldier_a/b/c.glb, soldier_*_color*.jpg,
-   soldier_*_normal.jpg, soldier_*_orm.jpg)
+1) Soldier meshes and textures (soldier_<a-h>.gltf / .bin / _1k.gltf,
+   soldier_*_color*.jpg / .ktx2, soldier_*_normal.*, soldier_*_orm.*)
 
    Microsoft Rocketbox avatar library: Military_Male_01 (a), Military_Male_03 (b),
-   Military_Male_04 (c). https://github.com/microsoft/Microsoft-Rocketbox
+   Military_Male_04 (c), Military_Male_02 (d), Military_Male_05 (e),
+   Military_Male_06 (f), Military_Female_01 (g), Military_Female_02 (h).
+   https://github.com/microsoft/Microsoft-Rocketbox
 
    Changes: converted from FBX to glTF, scaled to metres, facial bones folded
-   into the head, the knife removed, the four texture sets packed into one
-   atlas per avatar (downscaled to 2048 / 1024 px), the specular map turned
-   into a roughness channel plus a team-tint mask, and a simplified LOD added.
+   into the head, the knife removed, split into swappable parts (body, head,
+   helmet, equipment) over one canonical joint order, each part given a
+   simplified LOD, the four texture sets packed into one atlas per avatar
+   (2048 / 1024 px colour, 1024 px normal), the specular map turned into a
+   roughness channel plus team-tint and skin masks, beard / eye-band masks
+   added to the heads, meshopt-compressed, KTX2 copies of the textures.
 
    MIT License
 
