@@ -149,6 +149,11 @@ export class SkyOcclusion {
         "#include <lights_fragment_end>",
         `{
 	float skyV = skyVisibility( vSkyWP );
+	#ifdef IH_GI
+		// Baked materials (render/BakedLighting) carry their own sky visibility
+		// once the bake has landed (ihGiParams.x fades 0 -> 1).
+		skyV = mix( skyV, 1.0, ihGiParams.x );
+	#endif
 	#if defined( RE_IndirectDiffuse )
 		irradiance *= skyV;
 		iblIrradiance *= skyV;
