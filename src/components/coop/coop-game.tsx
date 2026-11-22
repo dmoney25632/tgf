@@ -49,6 +49,7 @@ export function CoopGame({
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shopOpen, setShopOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [saved, setSaved] = useState("");
   const [mode, setMode] = useState<SurvivalGameMode | null>(null);
@@ -58,9 +59,14 @@ export function CoopGame({
 
   const onEvent = useCallback((e: EngineEvent) => {
     if (e.type === "shop") setShopOpen(e.open);
+    if (e.type === "map") {
+      setMapOpen(e.open);
+      if (!e.open) engineRef.current?.lock(e.via);
+    }
     if (e.type === "end") {
       setSummary(e.summary);
       setShopOpen(false);
+      setMapOpen(false);
       const s = e.summary;
       saveMatch(matchReport(s, s.mode === "mission" ? "mission-coop" : "survival-coop", Math.max(2, Math.min(4, launch.roster.length))))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
@@ -125,7 +131,7 @@ export function CoopGame({
     engineRef.current?.lock(via);
   };
 
-  const showPause = !locked && !shopOpen && !summary;
+  const showPause = !locked && !shopOpen && !mapOpen && !summary;
   const names = launch.roster.map((r) => r.name).join(" · ");
 
   return (

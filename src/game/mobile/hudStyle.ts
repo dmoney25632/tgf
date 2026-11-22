@@ -15,8 +15,9 @@ export const TOUCH_HUD_STYLE = `
 .ih-touch .ih-hud .ih-health{left:50%!important;bottom:calc(8px + var(--ih-b))!important;width:170px!important;transform:translateX(-50%) scale(var(--ih-k));transform-origin:bottom center}
 .ih-touch .ih-hud .ih-weapon{right:calc(104px + var(--ih-r))!important;bottom:auto!important;top:calc(4px + var(--ih-t))!important;transform:scale(calc(var(--ih-k) * .9));transform-origin:top right}
 .ih-touch .ih-hud .ih-feed{right:calc(12px + var(--ih-r))!important;top:calc(84px + var(--ih-t))!important;transform:scale(var(--ih-k));transform-origin:top right}
-.ih-touch .ih-hud .ih-s-wave{left:calc(12px + var(--ih-l))!important;top:calc(8px + var(--ih-t))!important;transform:scale(var(--ih-k));transform-origin:top left}
-.ih-touch .ih-hud .ih-s-money{left:calc(104px + var(--ih-l))!important;bottom:auto!important;top:calc(14px + var(--ih-t))!important;transform:scale(var(--ih-k));transform-origin:top left}
+.ih-touch .ih-hud .ih-s-wave{left:calc(120px + var(--ih-l))!important;top:calc(8px + var(--ih-t))!important;transform:scale(var(--ih-k));transform-origin:top left}
+.ih-touch .ih-hud .ih-s-money{left:auto!important;right:calc(50% + 96px)!important;top:auto!important;bottom:calc(6px + var(--ih-b))!important;transform:scale(var(--ih-k));transform-origin:bottom right}
 .ih-touch .ih-hud .ih-s-boss{top:calc(56px + var(--ih-t))!important}
+.ih-touch .ih-hud .ih-s-alerts{top:calc(78px + var(--ih-t))!important;transform:translateX(-50%) scale(var(--ih-k))!important;transform-origin:top center}
 .ih-touch .ih-hud .ih-s-prompt{top:calc(50% + 58px)!important}
 `;

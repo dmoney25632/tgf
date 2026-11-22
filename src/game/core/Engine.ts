@@ -21,6 +21,7 @@ import { CameraShake } from "../effects/CameraShake";
 import { RenderPipeline } from "../render/RenderPipeline";
 import { HUD, type HitKind, type HudFrame } from "../ui/HUD";
 import { sanitizeSettings, saveSettings, type GameSettings } from "../ui/Settings";
+import { mapPrefs } from "../ui/Minimap";
 import { glyphContext } from "../ui/Glyphs";
 import { hudSignals } from "../ui/SurvivalHUD";
 import { AimAssist } from "../player/AimAssist";
@@ -137,6 +138,8 @@ export class GameEngine {
   constructor(private readonly container: HTMLElement, private readonly opts: EngineOptions = {}) {
     this.callsign = opts.callsign ?? "Recruit";
     this.settings = sanitizeSettings(opts.settings);
+    mapPrefs.rotate = this.settings.minimapRotate;
+    mapPrefs.radarAssist = this.settings.radarAssist;
     const survival = opts.mode === "survival";
 
     const preset = QUALITY[this.settings.quality];
@@ -356,6 +359,8 @@ export class GameEngine {
     if (!next.bindings) this.settings.bindings = prevBindings;
     this.input.configure(this.settings);
     this.hud.setFpsVisible(this.settings.showFps);
+    mapPrefs.rotate = this.settings.minimapRotate;
+    mapPrefs.radarAssist = this.settings.radarAssist;
     if (this.settings.bindings !== prevBindings) this.syncGlyphs();
     if (next.quality && next.quality !== prevQuality) {
       const q = QUALITY[next.quality];

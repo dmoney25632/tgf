@@ -28,6 +28,10 @@ export type SurvivalHudFrame = {
   reviveProgress: number;
   downedHint: string;
   boss: { name: string; frac: number } | null;
+  /** Holdout seconds left (0 = not a holdout). */
+  hold?: number;
+  /** Seconds to the next squad (Infinity / undefined = none due). */
+  nextSquad?: number;
 };
 
 /**
@@ -73,6 +77,7 @@ export class SurvivalHUD {
   private readonly downedRevive: HTMLDivElement;
   private readonly downedHint: HTMLDivElement;
   private readonly boss: HTMLDivElement;
+  private readonly alerts: HTMLDivElement;
   private readonly bossName: HTMLDivElement;
   private readonly bossFill: HTMLDivElement;
   private readonly nums: { el: HTMLDivElement; pos: THREE.Vector3; t: number; vy: number; active: boolean }[] = [];
@@ -86,6 +91,7 @@ export class SurvivalHUD {
   private lPhase = "";
   private lRemaining = -1;
   private lTimer = -1;
+  private lDetail = "";
   private lGlyphVer = -1;
   private lBossOn = false;
   private lBossName = "";
@@ -105,7 +111,8 @@ export class SurvivalHUD {
     this.root.style.cssText += `color:${HUD_FG};font-family:${HUD_SANS};text-shadow:0 1px 2px rgba(0,0,0,.6);`;
 
     // ---- Top-left: wave + team ----------------------------------------------------
-    const tl = div("position:absolute;left:26px;top:20px;width:210px;", this.root, "ih-s-wave");
+    // Sits under the minimap (ui/Minimap.ts); touch layout in mobile/hudStyle.ts.
+    const tl = div("position:absolute;left:26px;top:232px;width:210px;", this.root, "ih-s-wave");
     this.waveLabel = div("opacity:.7;", tl, "ih-cap");
     this.waveLabel.textContent = "Wave";
     const wn = div("display:flex;align-items:baseline;gap:6px;line-height:1;margin-top:2px;", tl);
@@ -133,6 +140,9 @@ export class SurvivalHUD {
     this.bossName = div("color:#ff8a6a;text-align:center;margin-bottom:5px;", this.boss, "ih-cap");
     const bb = div("height:5px;background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(255,120,90,.35);overflow:hidden;", this.boss);
     this.bossFill = div("height:100%;width:100%;background:linear-gradient(90deg,#b8261a,#ff5a3a);transform-origin:left;transition:transform 120ms;", bb);
+
+    // ---- Squad alerts (under the compass / boss bar) ----------------------------------
+    this.alerts = div("position:absolute;left:50%;top:96px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;", this.root, "ih-s-alerts");
 
     // ---- Banner ---------------------------------------------------------------------
     this.bannerWrap = div("position:absolute;left:50%;top:24%;transform:translateX(-50%);text-align:center;opacity:0;white-space:nowrap;", this.root);
@@ -187,12 +197,19 @@ export class SurvivalHUD {
     const timer = Math.ceil(f.timer);
     const intermission = f.phase === "intermission" || pre;
     hudSignals.ready = intermission;
-    if (this.lPhase !== f.phase || (f.phase === "combat" && this.lRemaining !== f.remaining) || (intermission && (this.lTimer !== timer || glyphs))) {
+    const clock = (t: number) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+    let detail = "";
+    if (f.phase === "combat") {
+      if (f.hold && f.hold > 0) detail = `<span style="color:${HUD_ACCENT}">HOLD <span class="ih-num" style="font-size:13px">${clock(Math.ceil(f.hold))}</span></span>`;
+      else if (f.nextSquad !== undefined && Number.isFinite(f.nextSquad) && f.nextSquad > 0) detail = `<span style="opacity:.75">NEXT SQUAD <span class="ih-num" style="font-size:13px">${clock(Math.ceil(f.nextSquad))}</span></span>`;
+    }
+    if (this.lPhase !== f.phase || (f.phase === "combat" && (this.lRemaining !== f.remaining || this.lDetail !== detail)) || (intermission && (this.lTimer !== timer || glyphs))) {
       this.lPhase = f.phase;
       this.lRemaining = f.remaining;
       this.lTimer = timer;
+      this.lDetail = detail;
       let html = "";
-      if (f.phase === "combat") html = `<span><span class="ih-num" style="font-size:13px">${f.remaining}</span> HOSTILE${f.remaining === 1 ? "" : "S"} LEFT</span>`;
+      if (f.phase === "combat") html = `<span><span class="ih-num" style="font-size:13px">${f.remaining}</span> HOSTILE${f.remaining === 1 ? "" : "S"} LEFT</span>${detail}`;
       else if (intermission) {
         const mm = Math.floor(timer / 60), ss = String(timer % 60).padStart(2, "0");
         html = `<span>NEXT <span class="ih-num" style="font-size:13px;color:${HUD_ACCENT}">${mm}:${ss}</span></span><span style="opacity:.8;display:inline-flex;align-items:center;gap:5px">${formatPrompt("[N] READY", glyphContext, 16)}</span>`;
@@ -358,6 +375,29 @@ export class SurvivalHUD {
     if (anim) anim.onfinish = done;
     else setTimeout(done, 1700);
     this.money.animate?.([{ transform: "scale(1.12)", color: "#e4ffcf" }, { transform: "scale(1)", color: "#a6e57a" }], { duration: 300, easing: "ease-out" });
+  }
+
+  /** Compact alert under the compass ("BREACHER RUSH · NORTH-EAST"); stacks up to three. */
+  alert(text: string, color = "#ffb03a", seconds = 3.4) {
+    while (this.alerts.childElementCount >= 3) this.alerts.firstElementChild?.remove();
+    const el = div(
+      `display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px;font-weight:700;letter-spacing:.2em;white-space:nowrap;background:rgba(10,12,10,.62);border-left:2px solid ${color};color:${color};`,
+      this.alerts,
+    );
+    el.textContent = text;
+    const ms = seconds * 1000;
+    const anim = el.animate?.(
+      [
+        { opacity: 0, transform: "translateY(-6px)" },
+        { opacity: 1, transform: "none", offset: 0.08 },
+        { opacity: 1, transform: "none", offset: 0.85 },
+        { opacity: 0, transform: "translateY(-4px)" },
+      ],
+      { duration: ms, easing: "ease-out", fill: "forwards" },
+    );
+    const done = () => el.isConnected && el.remove();
+    if (anim) anim.onfinish = done;
+    else setTimeout(done, ms);
   }
 
   showBanner(title: string, sub: string, seconds = 2.6, color = HUD_FG) {

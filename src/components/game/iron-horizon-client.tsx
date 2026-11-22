@@ -218,6 +218,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [mapName, setMapName] = useState(choice.mode === "survival" ? "Dustfall Outpost" : "Kestrel Yard");
   const [shopOpen, setShopOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [saved, setSaved] = useState("");
   const [survivalMode, setSurvivalMode] = useState<SurvivalGameMode | null>(null);
@@ -231,9 +232,15 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
 
   const onEvent = useCallback((e: EngineEvent) => {
     if (e.type === "shop") setShopOpen(e.open);
+    if (e.type === "map") {
+      setMapOpen(e.open);
+      // Closing the full-screen map is a click / key press: re-capture the pointer right away.
+      if (!e.open) engineRef.current?.lock(e.via);
+    }
     if (e.type === "end") {
       setSummary(e.summary);
       setShopOpen(false);
+      setMapOpen(false);
       const s = e.summary;
       saveMatch(matchReport(s))
         .then((r) => setSaved(r.ok ? "Match saved to your career stats." : r.error === "offline" ? "Offline mode — stats not saved." : `Stats not saved: ${r.error}`))
@@ -385,7 +392,7 @@ export function GameView({ callsign, choice, onAgain, onLobby, extras }: { calls
   const canDeploy = ready && loaded && !deployed && !error;
   useGamepadNav(loadRef, { onStart: () => resume("pad") }, canDeploy);
 
-  const showPause = deployed && !locked && !shopOpen && !summary;
+  const showPause = deployed && !locked && !shopOpen && !mapOpen && !summary;
 
   return (
     <div className="fixed inset-0 bg-black">

@@ -25,6 +25,7 @@ import {
 import type { NetTransport, RoomSettings, RosterEntry } from "./transport";
 import type { CoopMode, MissionNet, SurvivalBridge, TeammateView } from "./types";
 import type { MissionEvent, MissionState } from "../missions/types";
+import type { MapBlip } from "../ui/Minimap";
 
 export type CoopMatchSetup = {
   transport: NetTransport;
@@ -1073,6 +1074,14 @@ export class CoopSurvivalNet implements MissionNet {
         if (Array.isArray(ev.o)) ctx.map.doors?.applyStates(ev.o);
         return;
       }
+      case "wv": {
+        if (typeof ev.t === "string") this.bridge.shud.showBanner(ev.t, String(ev.s ?? ""), 3.4, typeof ev.c === "string" ? ev.c : "#f2efe6");
+        return;
+      }
+      case "sq": {
+        if (typeof ev.x === "number" && typeof ev.z === "number") this.bridge.incoming?.(ev.x, ev.z, String(ev.l ?? "SQUAD"), !!ev.h, Math.max(0, Math.min(30, Number(ev.eta) || 0)));
+        return;
+      }
       case "end": {
         if (this.mode.ended) return;
         this.mode.wallet.earned = ev.earned?.[this.slot] ?? this.mode.wallet.earned;
@@ -1375,6 +1384,36 @@ export class CoopSurvivalNet implements MissionNet {
   }
 
   private readonly peerOrder: Peer[] = [];
+
+  /** Minimap: teammates; on clients with radar also the replicated hostiles. */
+  mapBlips(out: MapBlip[], radar: boolean) {
+    for (const p of this.peers.values()) {
+      if (!p.connected) continue;
+      const v = p.vitals;
+      if (v.dead) continue;
+      const pos = p.avatar?.position ?? p.pos;
+      if (!pos) continue;
+      out.push({ x: pos.x, z: pos.z, kind: v.downed ? "downed" : "ally", yaw: p.avatar?.yaw, label: p.name });
+    }
+    if (radar && this.role === "client") {
+      for (const e of this.proxies.values()) {
+        if (!e.alive) continue;
+        out.push({ x: e.position.x, z: e.position.z, kind: e.type === "warden" ? "boss" : e.elite ? "elite" : "enemy" });
+      }
+    }
+  }
+
+  /** Host: an incoming squad (clients show the alert and the radar marker). */
+  squadIncoming(x: number, z: number, label: string, heavy: boolean, eta: number) {
+    if (this.role !== "host") return;
+    this.events.push({ k: "sq", x: Math.round(x), z: Math.round(z), l: label, h: heavy, eta: Math.round(eta * 10) / 10 });
+  }
+
+  /** Host: a wave banner for clients (sent after the snapshot's own phase banner, so it wins). */
+  waveBanner(title: string, sub: string, color: string) {
+    if (this.role !== "host") return;
+    this.events.push({ k: "wv", t: title, s: sub, c: color });
+  }
 
   teamRows(out: TeamRow[]) {
     const canShop = this.mode.canShop;

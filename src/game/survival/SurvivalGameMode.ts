@@ -16,7 +16,9 @@ import {
 import { PlayerLoadout } from "./PlayerLoadout";
 import { PlayerState } from "./PlayerState";
 import { ShopSystem, Wallet, type ShopView } from "./ShopSystem";
-import { WaveManager } from "./WaveManager";
+import { WaveManager, type IncomingSquad, type WaveEvent } from "./WaveManager";
+import { PACING, SQUAD_LABEL } from "./waves";
+import { Minimap, mapPrefs, type MapBlip, type MapIncoming } from "../ui/Minimap";
 import { EnemySpawner } from "./EnemySpawner";
 import type { SurvivalNet } from "../net/types";
 import { viewmodelColors, type CharacterLook } from "../character";
@@ -85,6 +87,13 @@ export class SurvivalGameMode implements GameMode {
   /** Sorties still to launch this wave (delay counts down). */
   private readonly airQueue: AirSortie[] = [];
   private readonly heliTargets: Combatant[] = [];
+  private readonly minimap: Minimap;
+  private readonly blips: MapBlip[] = [];
+  private readonly marks: MapIncoming[] = [];
+  private readonly incomingNow: IncomingSquad[] = [];
+  private readonly sectorPt = { x: 0, z: 0 };
+  /** [coop] Clients: incoming squads the host announced (expire at `until`, match seconds). */
+  private readonly remoteIncoming: (MapIncoming & { until: number })[] = [];
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmp2 = new THREE.Vector3();
@@ -181,7 +190,7 @@ export class SurvivalGameMode implements GameMode {
       onCrash: (_h, at) => this.onHeliCrash(at),
     });
     this.agents.extraHostiles = this.helis.airborne;
-    this.waves = new WaveManager(config.waveTarget, this.diff.count, Math.min(2, config.squad), config.startWave ?? 1);
+    this.waves = new WaveManager(config.waveTarget, this.diff.count, this.teamSize(), config.startWave ?? 1, this.spawner.sectors.length);
     this.shop = new ShopSystem({
       wallet: this.wallet,
       loadout: this.loadout,
@@ -195,12 +204,17 @@ export class SurvivalGameMode implements GameMode {
       },
     });
     this.shud = new SurvivalHUD(ctx.container);
+    this.minimap = new Minimap(ctx.container, ctx.map.def, (open, via) => {
+      if (open) ctx.unlock();
+      ctx.emit({ type: "map", open, via });
+    });
     // Skipping ahead comes with the funds you'd have earned.
     if ((config.startWave ?? 1) > 1) this.wallet.money += 650 * ((config.startWave ?? 1) - 1);
     this.reset();
     this.net?.attach(this, ctx, {
       shud: this.shud,
       crateUsed: this.crateUsed,
+      incoming: (x, z, label, heavy, eta) => this.remoteSquad(x, z, label, heavy, eta),
       countKill: (type, part, source) => {
         this.kills[type] = (this.kills[type] ?? 0) + 1;
         if (source === "melee") this.meleeKills++;
@@ -239,6 +253,7 @@ export class SurvivalGameMode implements GameMode {
       return;
     }
     if (!this.ended) this.seconds += dt;
+    if (ctx.input.pressed("KeyM") && !this.shopOpen) this.minimap.toggle();
 
     // ---- Player vitals / revive ---------------------------------------------------
     const holdingF = ctx.input.isDown("KeyF");
@@ -326,7 +341,7 @@ export class SurvivalGameMode implements GameMode {
   }
 
   debug(out: Record<string, string | number>) {
-    out.wave = `${this.waves.wave} ${this.waves.phase} queue ${this.waves.queue.length}`;
+    out.wave = `${this.waves.wave} ${this.waves.kind} ${this.waves.phase} queue ${this.waves.queue.length} t ${this.waves.clock.toFixed(0)} next ${this.waves.nextSquadIn.toFixed(0)}`;
     out.enemies = `${this.agents.enemiesAlive} alive / ${this.agents.active.length} active`;
     out.money = this.wallet.money;
     out.vitals = `${Math.round(this.state.health)}/${this.state.maxHealth} armor ${Math.round(this.state.armor)}`;
@@ -381,16 +396,31 @@ export class SurvivalGameMode implements GameMode {
       }
       w.timer -= dt;
       if (w.timer <= 0) {
+        w.team = this.teamSize();
         w.startNextWave();
         this.crateUsed.fill(false);
         this.spawner.freePerches();
         if (this.agents.squad.length) this.agents.restoreSquad(ctx.player.position);
         ctx.sfx.waveStart();
-        const boss = w.queue.includes("warden");
         this.airQueue.length = 0;
         for (const s of composeAir(w.wave)) this.airQueue.push(s);
         const air = this.airQueue.length ? `  ·  ${this.airQueue.length > 1 ? "GUNSHIPS" : "GUNSHIP"} EXPECTED` : "";
-        this.shud.showBanner(`WAVE ${w.wave}`, (boss ? "WARNING: THE WARDEN IS INBOUND" : `${w.total} HOSTILES INBOUND`) + air, 3, boss ? "#ff6a4a" : "#f2efe6");
+        const plan = w.plan!;
+        const squads = plan.squads.length;
+        let title = `WAVE ${w.wave}`;
+        let sub = `${plan.title.toUpperCase()}  ·  ${squads} SQUAD${squads === 1 ? "" : "S"}  ·  ${w.total} HOSTILES`;
+        let color = "#f2efe6";
+        if (plan.kind === "boss") {
+          title = `WAVE ${w.wave} · BOSS`;
+          sub = plan.squads.some((q) => q.members.includes("warden")) ? "WARNING: THE WARDEN IS INBOUND" : "IRON PAIR: TWO JUGGERNAUTS LEAD THE ASSAULT";
+          color = "#ff6a4a";
+        } else if (plan.kind === "holdout") {
+          title = `WAVE ${w.wave} · HOLDOUT`;
+          sub = `HOLD THE COMPOUND FOR ${Math.floor(plan.hold / 60)}:${String(Math.round(plan.hold % 60)).padStart(2, "0")}  ·  REINFORCEMENTS WON'T STOP`;
+          color = "#ffc845";
+        }
+        this.shud.showBanner(title, sub + air, 3.4, color);
+        this.net?.waveBanner?.(title, sub + air, color);
         ctx.emit({ type: "phase", phase: "combat", wave: w.wave });
       }
       return;
@@ -399,23 +429,16 @@ export class SurvivalGameMode implements GameMode {
 
     this.updateAir(dt);
 
-    // Spawn under the alive cap; faster trickle in later waves.
-    const alive = this.agents.enemiesAlive;
+    // Squads arrive on the wave's timeline; members enter under the alive cap.
     const cap = w.aliveCap(WAVES.maxAliveByQuality[ctx.quality]);
-    w.spawnTimer -= dt;
-    if (w.queue.length && alive < cap && w.spawnTimer <= 0) {
-      const type = w.queue[w.queue.length - 1];
-      const pick = this.spawner.pick(type, ctx.player.position, this.view, this.tmp);
-      if (pick) {
-        w.queue.pop();
-        this.spawn(type, this.tmp, pick.yaw, pick.perch);
-      } else if (type === "sniper") {
-        // No free perch: swap for a rifleman.
-        w.queue[w.queue.length - 1] = "rifleman";
-      }
-      const [a, b] = WAVES.spawnInterval;
-      w.spawnTimer = (a + Math.random() * (b - a)) * Math.max(0.45, 1 - w.wave * 0.04);
+    const { spawns, events } = w.update(dt, this.agents.enemiesAlive, cap);
+    for (const r of spawns) {
+      const pick = this.spawner.pickInSector(r.type, r.sector, ctx.player.position, this.view, this.tmp);
+      if (pick) this.spawn(r.type, this.tmp, pick.yaw, pick.perch);
+      // No free perch: the marksman comes in on foot as a rifleman.
+      else w.requeue(r.type === "sniper" ? { ...r, type: "rifleman" } : r);
     }
+    for (const e of events) this.onWaveEvent(e);
 
     // Re-read: a spawn this frame may have just emptied the queue.
     if (w.queue.length === 0 && this.agents.enemiesAlive === 0) {
@@ -458,13 +481,9 @@ export class SurvivalGameMode implements GameMode {
 
   /** A fast-rope trooper lands: take a foot soldier from the wave's queue. */
   private deployTrooper(at: THREE.Vector3) {
-    const q = this.waves.queue;
     if (this.ended || this.waves.phase !== "combat") return false;
-    let i = q.lastIndexOf("rifleman");
-    if (i < 0) i = q.lastIndexOf("rusher");
-    if (i < 0) return false;
-    const type = q[i];
-    q.splice(i, 1);
+    const type = this.waves.takeTrooper();
+    if (!type) return false;
     const cell = this.nav.nearestWalkable(at.x, at.z);
     if (cell >= 0) at.set(this.nav.cx(cell), this.nav.floor[cell], this.nav.cz(cell));
     this.spawn(type, at, Math.atan2(-at.x, -at.z), -1);
@@ -486,6 +505,82 @@ export class SurvivalGameMode implements GameMode {
     const p = this.ctx.player.position;
     const pd = Math.hypot(p.x - at.x, p.z - at.z);
     if (pd < AIR.crashRadius) this.playerHit(AIR.crashDamage * 0.5 * (1 - pd / AIR.crashRadius), at);
+  }
+
+  /** Fighters on our side for wave sizing: co-op humans count fully, squad bots a bit less. */
+  private teamSize() {
+    if (this.net) return Math.max(1, this.net.playerCount);
+    return 1 + Math.min(2, this.config.squad) * 0.78;
+  }
+
+  /** Radar: bought in the armory, or the always-on assist setting. */
+  get radar() {
+    return this.shop.radar || mapPrefs.radarAssist;
+  }
+
+  private onWaveEvent(e: WaveEvent) {
+    if (e.kind === "holdComplete") {
+      const sub = e.dropped > 0 ? "REINFORCEMENTS CALLED OFF  ·  CLEAR THE AREA" : "CLEAR THE AREA";
+      this.shud.showBanner("HOLD COMPLETE", sub, 3, "#9be070");
+      this.net?.waveBanner?.("HOLD COMPLETE", sub, "#9be070");
+      return;
+    }
+    const sec = this.spawner.sectors[e.sector];
+    const heavy = e.role === "boss" || e.role === "heavy";
+    const label = `${SQUAD_LABEL[e.role].toUpperCase()} · ${sec?.label ?? "PERIMETER"}`;
+    this.shud.alert(e.kind === "pulledIn" ? `${label} · MOVING IN` : `${label} INBOUND`, heavy ? "#ff6a4a" : "#ffb03a");
+    const c = this.spawner.sectorCentre(e.sector, this.sectorPt);
+    this.net?.squadIncoming?.(c.x, c.z, label, heavy, e.eta);
+  }
+
+  /** [coop] Client: the host announced an incoming squad. */
+  private remoteSquad(x: number, z: number, label: string, heavy: boolean, eta: number) {
+    this.shud.alert(`${label} INBOUND`, heavy ? "#ff6a4a" : "#ffb03a");
+    const r = this.remoteIncoming;
+    if (r.length > 6) r.shift();
+    r.push({ x, z, label, heavy, eta, until: this.seconds + eta + 5 });
+  }
+
+  /** Minimap / full map: you, allies, armories; hostiles and incoming squads with radar. */
+  private drawMap(dt: number) {
+    const ctx = this.ctx;
+    const b = this.blips;
+    b.length = 0;
+    for (const s of this.agents.squad) {
+      if (s.state === "dead" || s.state === "inactive") continue;
+      b.push({ x: s.position.x, z: s.position.z, kind: s.state === "downed" ? "downed" : "ally", yaw: s.yaw, label: s.name });
+    }
+    this.net?.mapBlips?.(b, this.radar);
+    const radar = this.radar;
+    if (radar) {
+      for (const a of this.agents.active) {
+        if (a.team !== "enemy" || !a.alive) continue;
+        b.push({ x: a.position.x, z: a.position.z, kind: a.spec.role === "warden" ? "boss" : a.elite ? "elite" : "enemy" });
+      }
+      for (const h of this.helis.helis) if (h.targetable) b.push({ x: h.position.x, z: h.position.z, kind: "heli" });
+    }
+    const m = this.marks;
+    m.length = 0;
+    if (radar && this.waves.phase === "combat") {
+      if (this.net?.role === "client") {
+        for (const r of this.remoteIncoming) if (r.until > this.seconds) m.push({ ...r, eta: Math.max(0, r.until - 5 - this.seconds) });
+      } else {
+        for (const q of this.waves.incoming(PACING.warn + 2, this.incomingNow)) {
+          const c = this.spawner.sectorCentre(q.sector, this.sectorPt);
+          m.push({ x: c.x, z: c.z, eta: q.eta, label: SQUAD_LABEL[q.role].toUpperCase(), heavy: q.role === "boss" || q.role === "heavy" });
+        }
+      }
+    }
+    const w = this.waves;
+    const remaining = w.remaining(this.agents.enemiesAlive);
+    const status =
+      w.phase === "combat"
+        ? `WAVE ${w.wave}  ·  ${remaining} HOSTILE${remaining === 1 ? "" : "S"} LEFT${radar ? "" : "  ·  BUY RADAR AT AN ARMORY TO TRACK THEM"}`
+        : w.phase === "intermission" || w.phase === "prematch"
+          ? `BUY PHASE  ·  NEXT WAVE IN ${Math.ceil(w.timer)}s`
+          : w.phase.toUpperCase();
+    const p = ctx.player;
+    this.minimap.frame({ x: p.position.x, z: p.position.z, yaw: p.yaw, blips: b, incoming: m, radar, shopOnline: this.canShop, status }, dt);
   }
 
   // ---------------------------------------------------------------------------
@@ -742,18 +837,22 @@ export class SurvivalGameMode implements GameMode {
                 ? "HOLD ON — YOUR SQUAD IS COMING  ·  SIDEARM STILL WORKS"
                 : "NO ONE LEFT TO REVIVE YOU",
         boss,
+        hold: this.waves.holdLeft,
+        nextSquad: this.net?.role === "client" ? undefined : this.waves.nextSquadIn,
       },
       dt,
       ctx.camera,
       ctx.view.w,
       ctx.view.h,
     );
+    this.drawMap(dt);
   }
 
   /** Public for co-op: clients end when the host says so. */
   end(victory: boolean) {
     if (this.ended) return;
     this.ended = true;
+    this.minimap.close(false);
     this.victory = victory;
     this.waves.phase = victory ? "victory" : "defeat";
     this.endTimer = victory ? 3 : 2.5;
@@ -791,6 +890,7 @@ export class SurvivalGameMode implements GameMode {
 
   dispose() {
     this.net?.dispose();
+    this.minimap.dispose();
     this.shud.dispose();
     this.helis.dispose();
     this.agents.dispose();

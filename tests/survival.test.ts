@@ -27,15 +27,18 @@ test("wave composition follows the escalation table", () => {
   assert.ok(total(composeWave(5, 1, 2)) > total(composeWave(5, 1, 0)));
 });
 
-test("wave manager queues the whole wave and sends the Warden in early", () => {
+test("wave manager queues the whole wave and brings the Warden in early", () => {
   for (let i = 0; i < 20; i++) {
-    const w = new WaveManager(10, 1, 2, 10);
+    const w = new WaveManager(10, 1, 2, 10, 4);
     w.startNextWave();
     assert.equal(w.wave, 10);
     assert.equal(w.phase, "combat");
+    assert.equal(w.kind, "boss");
     assert.equal(w.queue.length, w.total);
-    // The queue spawns from the end: the Warden must be the 5th to pop.
-    assert.equal(w.queue.lastIndexOf("warden"), w.queue.length - 5);
+    // The Warden's squad is in the first half of the wave's timeline.
+    const squads = w.plan!.squads;
+    const boss = squads.findIndex((s) => s.members.includes("warden"));
+    assert.ok(boss >= 0 && boss <= Math.ceil(squads.length / 2), `boss squad at ${boss}/${squads.length}`);
   }
   const last = new WaveManager(10, 1, 2, 10);
   last.startNextWave();

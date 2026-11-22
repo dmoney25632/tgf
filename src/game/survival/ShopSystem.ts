@@ -71,6 +71,8 @@ function weaponStats(d: WeaponDef) {
 
 /** Between-wave shop: weapons, ammo, armor, grenades, perks and squad revives. */
 export class ShopSystem {
+  /** Radar upgrade bought (lasts the run): hostiles and incoming squads on the minimap. */
+  radar = false;
   constructor(private readonly deps: ShopDeps) {}
 
   view(): ShopView {
@@ -113,6 +115,8 @@ export class ShopSystem {
     items.push({ id: "grenade", category: "equipment", name: GRENADE.name, desc: `+1 frag grenade (carry ${grenades.maxCarry})`, price: ECONOMY.prices.grenade, status: grenades.count >= grenades.maxCarry ? "maxed" : "available" });
     items.push({ id: "flashbang", category: "equipment", name: FLASHBANG.name, desc: `+1 stun grenade: blinds hostiles that see it (carry ${grenades.maxFlash})`, price: ECONOMY.prices.flashbang, status: grenades.flashCount >= grenades.maxFlash ? "maxed" : "available" });
     items.push({ id: "smoke", category: "equipment", name: SMOKE.name, desc: `+1 smoke: ${SMOKE.duration}s screen that blocks enemy sight (carry ${grenades.maxSmoke})`, price: ECONOMY.prices.smoke, status: grenades.smokeCount >= grenades.maxSmoke ? "maxed" : "available" });
+
+    items.push({ id: "radar", category: "equipment", name: "Radar Uplink", desc: "Hostiles and incoming squads show on your minimap for the rest of the run", price: ECONOMY.prices.radar, status: this.radar ? "owned" : "available" });
 
     for (const p of Object.values(PERKS)) {
       const owned = p.id === "secondwind" ? state.selfRevives > 0 : loadout.perks.has(p.id);
@@ -161,6 +165,7 @@ export class ShopSystem {
       this.deps.onLoadoutChanged();
       return { ok: true, message: `${item.upgrade?.weapon} · ${item.name} tier ${(item.upgrade?.tier ?? 0) + 1} installed` };
     } else if (id === "ammo") weapons.refillAmmo(1);
+    else if (id === "radar") this.radar = true;
     else if (id === "armor") state.addArmor(ECONOMY.armorPlate);
     else if (id === "grenade") grenades.count = Math.min(grenades.maxCarry, grenades.count + 1);
     else if (id === "flashbang") grenades.flashCount = Math.min(grenades.maxFlash, grenades.flashCount + 1);

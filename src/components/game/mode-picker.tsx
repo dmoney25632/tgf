@@ -4,11 +4,17 @@ import { useEffect, useState } from "react";
 import { Crosshair, Flag, Globe, Shield, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DIFFICULTY, type DifficultyId, type WaveTarget } from "@/game/survival/config";
-import { SURVIVAL_MAPS } from "@/game/world/maps/registry";
+import { MAPS, SURVIVAL_MAPS, getMap } from "@/game/world/maps/registry";
 import { ALL_MISSIONS, getMission } from "@/game/missions/campaign";
 import { OPERATIONS } from "@/game/missions/operations";
 import { COOP_MAPS, coopMission } from "@/game/net/ids";
 import { uiSound } from "./ui-sound";
+import { MapOverview, MapPicker, type MapChoice } from "./map-picker";
+
+const choice = (id: string): MapChoice | null => {
+  const e = MAPS.find((m) => m.id === id);
+  return e ? { id: e.id, name: e.name, blurb: e.blurb, def: e.def } : null;
+};
 
 /** What the lobby's Play button starts. */
 export type PlayMode =
@@ -91,7 +97,7 @@ export function ModePicker({
   worldUnavailable?: string | null;
 }) {
   const party = context === "party";
-  const maps = party ? COOP_MAPS.map((m) => ({ id: m.id, name: m.name })) : SURVIVAL_MAPS.map((m) => ({ id: m.id, name: m.name }));
+  const maps = (party ? COOP_MAPS.map((m) => m.id) : SURVIVAL_MAPS.map((m) => m.id)).map(choice).filter((m): m is MapChoice => m !== null);
   const missions = party ? MISSIONS.filter((m) => coopMission(m.id)) : MISSIONS;
 
   // Per-tab drafts so switching tabs keeps each tab's picks.
@@ -124,7 +130,7 @@ export function ModePicker({
       <div
         role="dialog"
         aria-label="Choose a mode"
-        className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-white/15 bg-neutral-950 sm:rounded-2xl"
+        className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl [@media(max-height:520px)]:overflow-y-auto border border-white/15 bg-neutral-950 sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
@@ -155,18 +161,12 @@ export function ModePicker({
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [@media(max-height:520px)]:flex-none [@media(max-height:520px)]:overflow-visible">
           {tab === "survival" && (
             <div className="grid gap-5">
               <div>
                 <Label>Map</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  {maps.map((m) => (
-                    <Chip key={m.id} active={surv.map === m.id} onClick={() => setSurv((s) => ({ ...s, map: m.id }))} title={SURVIVAL_MAPS.find((x) => x.id === m.id)?.blurb}>
-                      {m.name}
-                    </Chip>
-                  ))}
-                </div>
+                <MapPicker maps={maps} value={surv.map} mode={party ? "Co-op survival" : "Survival"} onChange={(id) => setSurv((s) => ({ ...s, map: id }))} />
               </div>
               <DifficultyRow value={surv.difficulty} onChange={(d) => setSurv((s) => ({ ...s, difficulty: d }))} />
               <div className="grid gap-5 sm:grid-cols-2">
@@ -222,7 +222,12 @@ export function ModePicker({
                 {party && <p className="text-xs text-neutral-500">Escort missions are solo only.</p>}
               </div>
               <DifficultyRow value={miss.difficulty} onChange={(d) => setMiss((s) => ({ ...s, difficulty: d }))} />
-              {mdef && <p className="text-sm leading-relaxed text-neutral-400">{mdef.briefing}</p>}
+              {mdef && (
+                <div className="flex gap-3">
+                  <MapOverview def={getMap(mdef.mapId)} className="hidden size-28 shrink-0 rounded-lg border border-white/10 sm:block" />
+                  <p className="text-sm leading-relaxed text-neutral-400">{mdef.briefing}</p>
+                </div>
+              )}
               {!party && onBriefing && (
                 <button type="button" onClick={() => onBriefing(miss.missionId)} className="justify-self-start text-sm text-neutral-300 underline-offset-4 hover:text-white hover:underline">
                   Full briefing, intel map and fastest times →

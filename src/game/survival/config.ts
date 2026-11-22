@@ -119,7 +119,7 @@ export const ECONOMY = {
   waveBonusPerWave: 50,
   /** Bots earn the team this share of a normal kill. */
   botKillShare: 0.5,
-  prices: { ammo: 250, armor: 300, grenade: 200, flashbang: 150, smoke: 120, botRevive: 500 },
+  prices: { ammo: 250, armor: 300, grenade: 200, flashbang: 150, smoke: 120, botRevive: 500, radar: 1200 },
   armorPlate: 50,
 };
 
@@ -253,13 +253,18 @@ export const SQUAD = {
 // ---------------------------------------------------------------------------
 
 export const WAVES = {
-  intermission: 20,
+  /** Buy phase between waves (longer after a boss). */
+  intermission: 22,
+  intermissionAfterBoss: 32,
   firstDelay: 6,
   /** Hard cap on enemies alive at once by quality (perf), and by wave (pacing). */
   maxAliveByQuality: { low: 12, medium: 20, high: 28 },
-  aliveBase: 6,
-  alivePerWave: 1.4,
-  spawnInterval: [0.6, 1.6] as [number, number],
+  /** Squads arrive on a timeline (survival/waves.ts); this caps how many can be up at once. */
+  aliveBase: 5,
+  alivePerWave: 0.8,
+  alivePerTeammate: 2,
+  /** Seconds between members of one squad entering. */
+  memberInterval: 0.45,
   minSpawnDistance: 22,
   /** Per-wave enemy health and damage growth. */
   healthPerWave: 0.07,

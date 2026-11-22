@@ -2,6 +2,7 @@ import { LOOK, QUALITY } from "../config";
 import type { Input } from "../core/Input";
 import type { GameSettings } from "../ui/Settings";
 import { hudSignals } from "../ui/SurvivalHUD";
+import { minimapSignal } from "../ui/Minimap";
 import { isStandalone, platform, touchControlsEnabled } from "./device";
 import { OPTIONAL_BUTTONS, TOUCH_BUTTONS, type TouchButtonDef } from "./layout";
 import { tuneQualityForMobile } from "./mobileQuality";
@@ -52,6 +53,9 @@ const LAYER_CSS = `
 .ih-tb.pill{border-radius:999px;flex-direction:row;gap:8px;opacity:1;border-color:#9be070;background:rgba(20,40,14,.55)}
 .ih-tb.pill span{font-size:11px;letter-spacing:.2em}
 .ih-tb.hide{display:none}
+.ih-tb[data-id=map]{background:transparent;border-color:transparent;justify-content:flex-end;padding-bottom:2px;-webkit-backdrop-filter:none;backdrop-filter:none;opacity:1}
+.ih-tb[data-id=map] span{font-size:7px;opacity:.7;transform:translateY(12px)}
+.ih-tb[data-id=map].down{background:rgba(240,180,74,.18);transform:none}
 .ih-tb[data-id=fire],.ih-tb[data-id=fire2]{border-color:rgba(255,120,90,.75)}
 .ih-ts{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;opacity:0;transition:opacity 120ms}
 .ih-ts.on{opacity:1}
@@ -110,6 +114,7 @@ export class MobileLayer {
   private resumeOnLandscape = false;
   private lastInteract = false;
   private lastReady = false;
+  private lastMap = false;
   private rotateShown = false;
   private lostTimer = 0;
   private disposed = false;
@@ -332,6 +337,14 @@ export class MobileLayer {
         }
         continue;
       }
+      if (def.fixed) {
+        st.width = st.height = `${def.size}px`;
+        st.left = `calc(${def.x}px + var(--sl))`;
+        st.right = "";
+        st.top = `calc(${def.y}px + var(--st))`;
+        st.bottom = "";
+        continue;
+      }
       st.width = st.height = `${Math.round(size)}px`;
       const onRight = !def.stickSide !== s.leftHanded;
       const x = `calc(${Math.round(def.x * k)}px + ${onRight ? "var(--sr)" : "var(--sl)"})`;
@@ -375,6 +388,10 @@ export class MobileLayer {
     if (ready !== this.lastReady) {
       this.lastReady = ready;
       this.buttons.get("ready")?.el.classList.toggle("hide", !ready);
+    }
+    if (minimapSignal.on !== this.lastMap) {
+      this.lastMap = minimapSignal.on;
+      this.buttons.get("map")?.el.classList.toggle("hide", !minimapSignal.on);
     }
     // The game may drop aim (weapon swap, sprint): keep the toggle honest.
     if (this.adsOn && !this.input.isDown("Mouse2")) this.setAds(false);
