@@ -1,0 +1,12 @@
+Model Information:
+* title:	HK 416 A7 (free download)
+* source:	https://sketchfab.com/3d-models/hk-416-a7-free-download-a16768f0ffa24737a4fe324a411cfbd9
+* author:	r4m (https://sketchfab.com/r4m)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "HK 416 A7 (free download)" (https://sketchfab.com/3d-models/hk-416-a7-free-download-a16768f0ffa24737a4fe324a411cfbd9) by r4m (https://sketchfab.com/r4m) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained via github.com/Patriqu/CosmicFPSLibgdx (assets/models). Changes: textures re-encoded from PNG to 1024 px JPG; the spare magazine and loose rounds removed.
