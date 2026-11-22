@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CAMERA, HEAD_BOB, LOOK, MOVEMENT, SLIDE } from "../config";
 import type { CollisionWorld } from "../world/Collision";
+import { OPEN_RULES, TRAVERSAL, planBump, planTraversal, samplePlan, type ClimbRules, type TraversalBody, type TraversalPlan } from "./traversal";
 
 const DEG = Math.PI / 180;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -24,7 +25,7 @@ export type MoveIntent = {
 };
 
 /** Events the audio/HUD layers react to. Read and cleared by the engine. */
-export type MoveEvents = { jumped: boolean; landed: number; footstep: number; slideStarted: boolean };
+export type MoveEvents = { jumped: boolean; landed: number; footstep: number; slideStarted: boolean; /** A mantle / vault started this frame. */ traversal: "vault" | "mantle" | null };
 
 export type CameraOffsets = {
   /** Weapon recoil added to aim (radians). */
@@ -62,11 +63,28 @@ export class PlayerController {
   /** 0..1 smoothed sprint amount (viewmodel pose, FOV). */
   sprintBlend = 0;
   slideBlend = 0;
-  readonly events: MoveEvents = { jumped: false, landed: 0, footstep: 0, slideStarted: false };
+  readonly events: MoveEvents = { jumped: false, landed: 0, footstep: 0, slideStarted: false, traversal: null };
   /** Operator / weapon / perk speed multiplier. */
   speedMultiplier = 1;
   /** Downed: crawl only, camera near the floor. */
   downed = false;
+  /** Map limits for mantle / vault (set by the engine from the map). */
+  climbRules: ClimbRules = OPEN_RULES;
+  /** Mantle / vault in progress (scripted move), else null. */
+  private traversal: TraversalPlan | null = null;
+  private traversalT = 0;
+  /** 0..1 smoothed "hands busy climbing" amount (viewmodel lowers the gun). */
+  traversalBlend = 0;
+  /** Phase of the current move for the camera (0..1), -1 when none. */
+  private traversalPhase = -1;
+  private traversalRollSign = 1;
+  /** After a jump: running into a ledge still mantles for a moment. */
+  private airMantle = 0;
+  /** Feet height where we last stood (airborne mantles measure from here). */
+  private groundY = 0;
+  private readonly body: TraversalBody = {
+    radius: MOVEMENT.radius, standHeight: MOVEMENT.standHeight, crouchHeight: MOVEMENT.crouchHeight, stepHeight: MOVEMENT.stepHeight,
+  };
 
   private readonly prevPosition = new THREE.Vector3();
   private height: number = MOVEMENT.standHeight;
@@ -125,6 +143,15 @@ export class PlayerController {
     return this.renderPos;
   }
 
+  /** Mid mantle / vault: weapons can't fire, the gun is lowered. */
+  get traversing() {
+    return this.traversal !== null;
+  }
+
+  get traversalKind() {
+    return this.traversal?.kind ?? null;
+  }
+
   /** Current collider height (AI aims at the chest from this). */
   get colliderHeight() {
     return this.height;
@@ -139,6 +166,10 @@ export class PlayerController {
     this.pitch = 0;
     this.crouching = this.sliding = this.sprinting = false;
     this.downed = false;
+    this.traversal = null;
+    this.traversalPhase = -1;
+    this.airMantle = 0;
+    this.groundY = pos.y;
     this.height = MOVEMENT.standHeight;
     this.eyeHeight = MOVEMENT.standHeight - MOVEMENT.eyeOffset;
     this.stepOffset = this.landKick = 0;
@@ -168,6 +199,11 @@ export class PlayerController {
   fixedStep(h: number, intent: MoveIntent) {
     this.prevPosition.copy(this.position);
     this.slideCooldown = Math.max(0, this.slideCooldown - h);
+    if (this.traversal) {
+      this.stepTraversal(h);
+      return;
+    }
+    this.airMantle = Math.max(0, this.airMantle - h);
 
     // ---- Stance -----------------------------------------------------------
     const headroomToStand = !this.world.overlaps(this.position, MOVEMENT.radius, MOVEMENT.standHeight);
@@ -209,6 +245,12 @@ export class PlayerController {
       this.coyote = Math.max(0, this.coyote - h);
     }
     if (this.downed) this.jumpBuffer = 0;
+    // Mantle / vault: jump (or a recent jump) while pushing forward into a ledge.
+    if (
+      intent.forward > 0.3 && !this.downed && this.lungeTime <= 0 &&
+      (this.jumpBuffer > 0 || (this.airMantle > 0 && !this.grounded && this.velocity.y > TRAVERSAL.airMinVy)) &&
+      this.tryTraversal()
+    ) return;
     if (this.jumpBuffer > 0 && this.coyote > 0 && !this.jumpedSinceGrounded) {
       if (this.crouching && !this.sliding) {
         // Jump while crouched = stand up first.
@@ -222,6 +264,7 @@ export class PlayerController {
         this.jumpBuffer = 0;
         this.jumpedSinceGrounded = true;
         this.events.jumped = true;
+        this.airMantle = TRAVERSAL.airWindow;
       }
     }
 
@@ -317,12 +360,74 @@ export class PlayerController {
       }
     }
 
+    if (this.grounded) this.groundY = this.position.y;
     if (!wasGrounded && this.grounded) {
       this.events.landed = Math.max(this.events.landed, -fallSpeed);
       if (fallSpeed < -4) this.landKick = Math.min(HEAD_BOB.landKickMax, -fallSpeed * HEAD_BOB.landKickPerSpeed);
     }
 
     this.speed = Math.hypot(this.velocity.x, this.velocity.z);
+  }
+
+  /** Starts a mantle / vault toward the view direction if one fits. */
+  private tryTraversal() {
+    const dirX = -Math.sin(this.yaw), dirZ = -Math.cos(this.yaw);
+    const plan = planTraversal(this.world, this.position, dirX, dirZ, this.body, this.climbRules, this.grounded ? this.position.y : this.groundY);
+    if (!plan) return false;
+    if (this.sliding) this.endSlide();
+    this.traversal = plan;
+    this.traversalT = 0;
+    this.traversalPhase = 0;
+    this.traversalRollSign = Math.random() < 0.5 ? -1 : 1;
+    this.jumpBuffer = 0;
+    this.airMantle = 0;
+    this.coyote = 0;
+    this.jumpedSinceGrounded = true;
+    this.grounded = false;
+    this.sprinting = false;
+    this.crouching = false;
+    this.height = Math.min(TRAVERSAL.tuckHeight, MOVEMENT.crouchHeight);
+    this.events.jumped = true;
+    this.events.traversal = plan.kind;
+    return true;
+  }
+
+  /** One fixed step along the scripted mantle / vault; cancels if something moved into the path. */
+  private stepTraversal(h: number) {
+    const p = this.traversal!;
+    if (this.downed) return this.endTraversal(false);
+    this.traversalT = Math.min(1, this.traversalT + h / p.duration);
+    this.traversalPhase = this.traversalT;
+    const next = samplePlan(p, this.traversalT, this.stepTry);
+    // A door (or anything else that moves) swung into the path: stop where we are.
+    if (this.world.overlaps(next, MOVEMENT.radius * TRAVERSAL.tuckRadiusScale, this.height)) return this.endTraversal(false);
+    this.velocity.set((next.x - this.position.x) / h, (next.y - this.position.y) / h, (next.z - this.position.z) / h);
+    this.position.copy(next);
+    this.speed = Math.hypot(this.velocity.x, this.velocity.z);
+    if (this.traversalT >= 1) this.endTraversal(true);
+  }
+
+  private endTraversal(completed: boolean) {
+    const p = this.traversal!;
+    this.traversal = null;
+    this.traversalPhase = -1;
+    this.jumpBuffer = 0;
+    const roomToStand = !this.world.overlaps(this.position, MOVEMENT.radius, MOVEMENT.standHeight);
+    this.crouching = completed ? p.crouchEnd || !roomToStand : !roomToStand;
+    this.height = this.crouching ? MOVEMENT.crouchHeight : MOVEMENT.standHeight;
+    if (!completed) {
+      this.velocity.set(0, Math.min(0, this.velocity.y), 0);
+      this.grounded = false;
+      return;
+    }
+    const exit = p.kind === "vault" ? TRAVERSAL.vaultExitSpeed : TRAVERSAL.mantleExitSpeed;
+    this.velocity.set(p.dirX * exit, p.exitAirborne ? p.exitVy : 0, p.dirZ * exit);
+    this.grounded = !p.exitAirborne;
+    if (this.grounded) {
+      this.groundY = this.position.y;
+      this.events.landed = Math.max(this.events.landed, p.kind === "vault" ? 3.2 : 2.4);
+    }
+    this.speed = exit;
   }
 
   private tryStepUp(dx: number, dz: number, hitX: boolean, hitZ: boolean) {
@@ -380,7 +485,17 @@ export class PlayerController {
     const targetFov = CAMERA.sprintFovBoost * this.sprintBlend * Math.min(1, this.speed / MOVEMENT.sprintSpeed) + CAMERA.slideFovBoost * this.slideBlend;
     this.fovBoost += (targetFov - this.fovBoost) * k(CAMERA.fovLerp);
 
-    const targetEye = this.height - MOVEMENT.eyeOffset;
+    // Mid mantle / vault the eye follows the finishing stance with a dip, not the tucked collider.
+    const tp = this.traversalPhase;
+    const kind = this.traversal?.kind;
+    const bump = tp >= 0 ? planBump(tp) : 0;
+    this.traversalBlend += ((tp >= 0 ? Math.max(0.6, bump) : 0) - this.traversalBlend) * k(tp >= 0 ? 16 : 8);
+    // (Tucking all the way on a vault keeps the eye under a window lintel the path was checked against.)
+    const finishEye = (this.traversal?.crouchEnd ? MOVEMENT.crouchHeight : MOVEMENT.standHeight) - MOVEMENT.eyeOffset;
+    const tuckEye = TRAVERSAL.tuckHeight - MOVEMENT.eyeOffset;
+    const targetEye = tp >= 0
+      ? finishEye - Math.max(0, finishEye - tuckEye) * bump * (kind === "vault" ? TRAVERSAL.vaultEyeTuck : TRAVERSAL.mantleEyeTuck)
+      : this.height - MOVEMENT.eyeOffset;
     this.eyeHeight += (targetEye - this.eyeHeight) * k(MOVEMENT.crouchLerp);
     this.stepOffset -= this.stepOffset * k(MOVEMENT.stepSmoothing);
     this.landKick -= this.landKick * k(9);
@@ -403,7 +518,8 @@ export class PlayerController {
     }
 
     // Slide roll.
-    const targetRoll = this.slideBlend * SLIDE.tilt * DEG + (this.downed ? 0.18 : 0);
+    const climbRoll = tp >= 0 ? bump * this.traversalRollSign * (kind === "vault" ? TRAVERSAL.vaultRoll : TRAVERSAL.mantleRoll) * DEG : 0;
+    const targetRoll = this.slideBlend * SLIDE.tilt * DEG + (this.downed ? 0.18 : 0) + climbRoll;
     this.roll += (targetRoll - this.roll) * k(10);
 
     this.renderPos.lerpVectors(this.prevPosition, this.position, alpha);
@@ -411,8 +527,10 @@ export class PlayerController {
     this.renderPos.y += this.eyeHeight + this.stepOffset - this.landKick + bobY + o.shakeY;
 
     const cam = this.camera;
+    // Mantles tip the view slightly toward the ledge mid-climb.
+    const climbPitch = tp >= 0 && kind === "mantle" ? -0.06 * bump : 0;
     cam.rotation.set(
-      THREE.MathUtils.clamp(this.pitch + o.recoilPitch, -this.maxPitch, this.maxPitch) + o.shakePitch,
+      THREE.MathUtils.clamp(this.pitch + o.recoilPitch, -this.maxPitch, this.maxPitch) + o.shakePitch + climbPitch,
       this.yaw + o.recoilYaw + o.shakeYaw,
       this.roll + o.shakeRoll,
     );

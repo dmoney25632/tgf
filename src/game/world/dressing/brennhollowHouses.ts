@@ -256,6 +256,8 @@ function dressOpening(V: Village, f: Frame, o: HouseOpening, uWall: number, h: H
   else fbox(V.stone, f, "plain", u, o.h + o.w / 2 + 0.1, 0.03, 0.26, 0.34, 0.08, stoneTrim);
   fbox(V.stone, f, "plain", u, 0.05, 0.22, o.w + 0.4, 0.1, 0.42, 0xb8b0a2);
   const leafT = new THREE.Color(r() < 0.5 ? 0x6a4a30 : h.shutter).multiplyScalar(0.85);
+  // Interactive door (world/interaction/doors) hangs here: frame only.
+  if (o.leaf) return;
   if (interior || o.w > 2.4) {
     // Swung inwards against the reveal.
     const n = o.w > 2.4 ? 2 : 1;

@@ -14,6 +14,15 @@ export type CoverPoint = { x: number; z: number; y: number; nx: number; nz: numb
 const SMOOTH_WINDOW = 24;
 
 /**
+ * Low, thin obstacles the AI vaults (sandbag lines, low walls, crates):
+ * every box blocking the cell is at most this tall above the floor and this
+ * thin in its smaller horizontal size.
+ */
+export const NAV_VAULT = { maxHeight: 1.15, maxThickness: 1.0, /** Extra A* cost per vault cell (cells). */ cost: 2.5 } as const;
+/** `walkable` codes: 0 blocked, 1 open floor, 2 vault-over (path through, never stop there). */
+export const WALK = { blocked: 0, open: 1, vault: 2 } as const;
+
+/**
  * Ground-level navigation heightfield over the map, with A* on an 8-connected
  * grid (binary heap, typed arrays, reused between searches) and line-of-sight
  * path smoothing. Boxes are inflated by the agent radius; low boxes (≤ step
@@ -24,7 +33,10 @@ export class NavGrid {
   readonly cols: number;
   readonly rows: number;
   readonly floor: Float32Array;
+  /** See WALK: 0 blocked, 1 walkable, 2 vault cell (A* crosses it, nothing stops on it). */
   readonly walkable: Uint8Array;
+  /** Obstacle top (m above the cell floor) on vault cells, 0 elsewhere. */
+  readonly vaultTop: Float32Array;
   readonly cover: CoverPoint[] = [];
 
   private readonly g: Float32Array;
@@ -54,12 +66,15 @@ export class NavGrid {
     const n = this.cols * this.rows;
     this.floor = new Float32Array(n);
     this.walkable = new Uint8Array(n);
+    this.vaultTop = new Float32Array(n);
     this.g = new Float32Array(n);
     this.f = new Float32Array(n);
     this.parent = new Int32Array(n);
     this.visit = new Uint32Array(n);
     this.closed = new Uint32Array(n);
     this.heap = new Int32Array(n);
+    // Moving world pieces: the open door leaves' footprints stay off paths (the doorway stays open: AI pushes doors open).
+    const blockers = world.dynamic?.navBlockers() ?? [];
 
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
@@ -75,17 +90,33 @@ export class NavGrid {
           if (x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z && b.min.y <= floor + 0.01 && b.max.y <= floor + maxStep && b.max.y > floor) floor = b.max.y;
         }
         let blocked = false;
+        // Vaultable while every blocker is low, thin and standing on this floor.
+        let vault = true;
+        let top = 0;
         for (let k = 0; k < near.length; k++) {
           const b = boxes[near[k]];
           if (!(x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z)) continue;
           if (b.max.y > floor + 0.02 && b.min.y < floor + headroom) {
             blocked = true;
+            const h = b.max.y - floor;
+            if (b.min.y > floor + 0.05 || h > NAV_VAULT.maxHeight || Math.min(b.max.x - b.min.x, b.max.z - b.min.z) > NAV_VAULT.maxThickness) {
+              vault = false;
+              break;
+            }
+            top = Math.max(top, h);
+          }
+        }
+        for (const b of blockers) {
+          if (x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z && b.max.y > floor + 0.02 && b.min.y < floor + headroom) {
+            blocked = true;
+            vault = false;
             break;
           }
         }
         const i = r * this.cols + c;
         this.floor[i] = floor;
-        this.walkable[i] = blocked ? 0 : 1;
+        this.walkable[i] = !blocked ? WALK.open : vault ? WALK.vault : WALK.blocked;
+        if (blocked && vault) this.vaultTop[i] = top;
       }
     }
     this.buildCover();
@@ -114,10 +145,16 @@ export class NavGrid {
     return i >= 0 ? this.floor[i] : 0;
   }
 
+  /** Vault cell under (x, z): obstacle top above the floor (m), else 0. */
+  vaultAt(x: number, z: number) {
+    const i = this.index(x, z);
+    return i >= 0 && this.walkable[i] === WALK.vault ? this.vaultTop[i] : 0;
+  }
+
   /** Nearest walkable cell to (x, z) within a few rings, or -1. */
   nearestWalkable(x: number, z: number, rings = 6) {
     const i0 = this.index(x, z);
-    if (i0 >= 0 && this.walkable[i0]) return i0;
+    if (i0 >= 0 && this.walkable[i0] === WALK.open) return i0;
     const c0 = Math.floor((x - this.minX) / this.cell);
     const r0 = Math.floor((z - this.minZ) / this.cell);
     let best = -1;
@@ -129,7 +166,7 @@ export class NavGrid {
           const c = c0 + dc, r = r0 + dr;
           if (c < 0 || r < 0 || c >= this.cols || r >= this.rows) continue;
           const i = r * this.cols + c;
-          if (!this.walkable[i]) continue;
+          if (this.walkable[i] !== WALK.open) continue;
           const d = dr * dr + dc * dc;
           if (d < bestD) {
             bestD = d;
@@ -196,7 +233,7 @@ export class NavGrid {
         if (Math.abs(this.floor[ni] - fy) > 0.5) continue;
         // No corner cutting on diagonals.
         if (dc !== 0 && dr !== 0 && (!this.walkable[r * cols + nc] || !this.walkable[nr * cols + c])) continue;
-        const ng = this.g[cur] + cost;
+        const ng = this.g[cur] + cost + (this.walkable[ni] === WALK.vault ? NAV_VAULT.cost : 0);
         if (this.visit[ni] !== stamp || ng < this.g[ni]) {
           this.visit[ni] = stamp;
           this.g[ni] = ng;

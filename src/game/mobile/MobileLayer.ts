@@ -365,7 +365,7 @@ export class MobileLayer {
       if (!engaged) this.resetFingers();
     }
     if (!engaged) return;
-    const interact = hudSignals.interact;
+    const interact = hudSignals.interact || hudSignals.door;
     if (interact !== this.lastInteract) {
       this.lastInteract = interact;
       this.buttons.get("usePill")?.el.classList.toggle("hide", !interact);

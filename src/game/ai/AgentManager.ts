@@ -787,10 +787,17 @@ export class AgentManager {
 
     // Collide the upper body only; low steps are handled by the nav floor.
     const floor = this.nav.floorAt(ag.position.x, ag.position.z);
-    const f = this.feet.set(ag.position.x, floor + 0.55, ag.position.z);
+    // Vaulting: on (or about to step onto) a vault cell, lift the collider over the low obstacle.
+    const sp = Math.hypot(ag.velocity.x, ag.velocity.z);
+    const ahead = sp > 0.2 ? 0.55 / sp : 0;
+    const vault = Math.max(this.nav.vaultAt(ag.position.x, ag.position.z), this.nav.vaultAt(ag.position.x + ag.velocity.x * ahead, ag.position.z + ag.velocity.z * ahead));
+    const f = this.feet.set(ag.position.x, floor + (vault > 0 ? vault + 0.03 : 0.55), ag.position.z);
     const px = f.x, pz = f.z;
-    this.world.moveAxis(f, "x", ag.velocity.x * dt, BODY_RADIUS, 1.2);
-    this.world.moveAxis(f, "z", ag.velocity.z * dt, BODY_RADIUS, 1.2);
+    // Doors in the way swing open (and the door system learns where bodies are).
+    this.world.dynamic?.agentNear(f.x, f.z, ag.velocity.x, ag.velocity.z);
+    const bodyH = vault > 0 ? 0.7 : 1.2;
+    this.world.moveAxis(f, "x", ag.velocity.x * dt, BODY_RADIUS, bodyH);
+    this.world.moveAxis(f, "z", ag.velocity.z * dt, BODY_RADIUS, bodyH);
     ag.position.x = f.x;
     ag.position.z = f.z;
     const moved = Math.hypot(f.x - px, f.z - pz);
@@ -802,7 +809,8 @@ export class AgentManager {
         ag.pathLen = 0;
       }
     } else ag.stuckTimer = 0;
-    const target = this.nav.floorAt(ag.position.x, ag.position.z);
+    // Over a vault cell the body rides up onto the obstacle (a quick hop), then back down.
+    const target = this.nav.floorAt(ag.position.x, ag.position.z) + this.nav.vaultAt(ag.position.x, ag.position.z) * 0.85;
     ag.position.y += (target - ag.position.y) * Math.min(1, dt * 12);
   }
 

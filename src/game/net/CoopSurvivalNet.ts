@@ -39,6 +39,10 @@ const MAX_CLAIMS_PER_MSG = 64;
 /** Missions: full state resend interval and gunship pose rate. */
 const MISSION_STATE_EVERY = 1;
 const AIR_EVERY = 0.25;
+/** Host resends door state this often (covers lost events / late joiners). */
+const DOORS_EVERY = 2;
+/** Door toggles a client may ask for per state message. */
+const MAX_DOOR_REQUESTS = 8;
 /** Per-message cap on gunship hit claims and on one claim's damage. */
 const MAX_HELI_HITS = 24;
 const MAX_HELI_HIT = 240;
@@ -119,6 +123,8 @@ export class CoopSurvivalNet implements MissionNet {
   private readonly heliHits: [number, number, number, number][] = [];
   private msAcc = 0;
   private airAcc = 0;
+  private doorsAcc = 0;
+  private doorsVersion = -1;
 
   // Host.
   private readonly encoder: SnapshotEncoder;
@@ -219,6 +225,8 @@ export class CoopSurvivalNet implements MissionNet {
     this.ctx = ctx;
     this.bridge = bridge;
     const t = this.setup.transport;
+    // Doors: the host owns them; clients predict their own toggles and ask.
+    if (ctx.map.doors) ctx.map.doors.authority = this.role === "host";
 
     // Spread the squad around the spawn point.
     const [ox, oz] = SPAWN_OFFSETS[this.slot % SPAWN_OFFSETS.length];
@@ -351,6 +359,7 @@ export class CoopSurvivalNet implements MissionNet {
       if (Array.isArray(payload.buy)) for (const b of payload.buy.slice(0, 16)) if (Array.isArray(b) && typeof b[0] === "string") p.buys.push(b);
       p.interact = payload.i === 1;
       if (Array.isArray(payload.hh)) for (const h of payload.hh.slice(0, MAX_HELI_HITS)) if (Array.isArray(h) && h.length === 4) p.heliHits.push(h);
+      if (Array.isArray(payload.dr)) this.applyDoorRequests(p, payload.dr);
       // A client's delta decoder lost sync: heal with a keyframe (rate-limited).
       if (payload.k === 1 && now - this.lastKeyRequest > 250) {
         this.lastKeyRequest = now;
@@ -441,6 +450,8 @@ export class CoopSurvivalNet implements MissionNet {
     if (this.buys.length) payload.buy = this.buys.splice(0);
     if (this.mode.mission?.holdingInteract) payload.i = 1;
     if (this.heliHits.length) payload.hh = this.heliHits.splice(0, MAX_HELI_HITS);
+    const doors = this.ctx.map.doors;
+    if (this.role === "client" && doors?.requests.length) payload.dr = doors.drainRequests().slice(-MAX_DOOR_REQUESTS) as [number, number][];
     if (this.role === "client" && this.wantKeyframe) payload.k = 1;
     return payload;
   }
@@ -485,6 +496,18 @@ export class CoopSurvivalNet implements MissionNet {
       let all = true;
       for (const p of this.peers.values()) if (p.connected && p.heard && !p.last?.ready) all = false;
       if (all) w.skip();
+    }
+
+    // Doors: broadcast on change, and now and then for anyone who missed it.
+    const doors = this.ctx.map.doors;
+    if (doors) {
+      this.doorsAcc += dt;
+      if (doors.version !== this.doorsVersion || this.doorsAcc >= DOORS_EVERY) {
+        this.doorsAcc = 0;
+        this.doorsVersion = doors.version;
+        for (let i = this.events.length - 1; i >= 0; i--) if (this.events[i].k === "doors") this.events.splice(i, 1);
+        this.events.push({ k: "doors", o: doors.states() });
+      }
     }
 
     // Missions: resend the full state now and then (covers lost events / late snapshots), stream gunships.
@@ -955,6 +978,18 @@ export class CoopSurvivalNet implements MissionNet {
     px.buffer.push(time, [e.x, e.y, e.z, e.yaw, e.pitch]);
   }
 
+  /** Host: a client toggled doors. Only doors within reach of where we last saw them. */
+  private applyDoorRequests(p: Peer, list: unknown[]) {
+    const doors = this.ctx.map.doors;
+    if (!doors) return;
+    for (const r of list.slice(0, MAX_DOOR_REQUESTS)) {
+      if (!Array.isArray(r) || typeof r[0] !== "number" || !Number.isInteger(r[0]) || r[0] < 0 || r[0] >= doors.count) continue;
+      const d = doors.def(r[0]);
+      if (Math.hypot(d.x - p.pos.x, d.z - p.pos.z) > d.w + 4) continue;
+      doors.set(r[0], r[1] === 1, "remote");
+    }
+  }
+
   private queueClaim(e: RemoteEnemy, amount: number, part: HitPart, source: string) {
     if (this.claims.length >= 256) return;
     const w = this.ctx.weapons;
@@ -1011,6 +1046,10 @@ export class CoopSurvivalNet implements MissionNet {
       }
       case "air": {
         this.applyAir(ev.h);
+        return;
+      }
+      case "doors": {
+        if (Array.isArray(ev.o)) ctx.map.doors?.applyStates(ev.o);
         return;
       }
       case "end": {

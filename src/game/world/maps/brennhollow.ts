@@ -1,4 +1,4 @@
-import type { MapBox, MapDef } from "../MapLoader";
+import type { MapBox, MapDef, MapDoor } from "../MapLoader";
 
 /**
  * Brennhollow — an original, shelled hillside village in a green valley,
@@ -25,7 +25,11 @@ const GREEN_SCREEN = 0x2bd36a;
 const AMBER = 0xffa73a;
 
 export type Side = 0 | 1 | 2 | 3; // N, E, S, W (facade frames: u runs counter-clockwise from the corner)
-export type HouseOpening = { side: Side; u: number; y: number; w: number; h: number; arch?: boolean; kind: "door" | "win" | "hole" | "arch" };
+export type HouseOpening = {
+  side: Side; u: number; y: number; w: number; h: number; arch?: boolean; kind: "door" | "win" | "hole" | "arch";
+  /** Door with an interactive leaf (world/interaction/doors): the dressing draws only the frame. */
+  leaf?: boolean;
+};
 export type WallKind = "stone" | "plaster" | "white" | "ochre";
 
 export type HouseDef = {
@@ -42,7 +46,8 @@ export type HouseDef = {
   enter?: boolean;
   /** Stair to the upper floor (enter only): bottom-step x/z, run direction, width. */
   stair?: { x: number; z: number; dir: "+x" | "-x" | "+z" | "-z"; width: number };
-  doors: { side: Side; u: number; w: number; h?: number; arch?: boolean }[];
+  /** `leaf`: an interactive door hangs here (`open`: starts open). Only on doors into walkable rooms. */
+  doors: { side: Side; u: number; w: number; h?: number; arch?: boolean; leaf?: boolean; open?: boolean }[];
   /** Facades with no windows (party walls / backs). */
   blank?: Side[];
   damage: number;
@@ -57,7 +62,7 @@ export const HOUSES: HouseDef[] = [
   {
     id: "hall", x0: -25, x1: -13, z0: -12, z1: -3, floors: 2, fh: 3.3, wall: "white", tint: 0xf0ece2, shutter: 0xa8322a,
     roof: { axis: "x", pitch: 0.72 }, enter: true, stair: { x: -16.9, z: -11.0, dir: "-x", width: 1.1 },
-    doors: [{ side: 1, u: 4.5, w: 2.0, h: 2.6 }, { side: 2, u: 8.5, w: 1.6 }, { side: 3, u: 3.0, w: 1.6 }],
+    doors: [{ side: 1, u: 4.5, w: 2.0, h: 2.6, leaf: true, open: true }, { side: 2, u: 8.5, w: 1.6, leaf: true }, { side: 3, u: 3.0, w: 1.6, leaf: true }],
     damage: 0.35, chimneys: [[-23.4, -7.5], [-14.8, -5.2]],
   },
   { id: "nw1", x0: -24, x1: -16, z0: -26, z1: -17, floors: 2, fh: 3.0, wall: "plaster", tint: 0xd8c9a8, shutter: 0x5f6e52, roof: { axis: "z", pitch: 0.8 }, doors: [{ side: 2, u: 4, w: 1.2 }], damage: 0.4, chimneys: [[-20, -24.5]] },
@@ -69,10 +74,10 @@ export const HOUSES: HouseDef[] = [
   // Church nave (tower handled separately). Enterable.
   {
     id: "church", x0: -6, x1: 6, z0: -34, z1: -18.6, floors: 1, fh: 8, wall: "white", tint: 0xe8e2d4, shutter: 0x4a3a2a,
-    roof: { axis: "z", pitch: 0.85 }, enter: true, doors: [{ side: 1, u: 10, w: 1.8, h: 2.7 }], damage: 0.25,
+    roof: { axis: "z", pitch: 0.85 }, enter: true, doors: [{ side: 1, u: 10, w: 1.8, h: 2.7, leaf: true }], damage: 0.25,
   },
   // Shelled manor (front hall + blown corner handled separately).
-  { id: "manor", x0: 19, x1: 31, z0: -36, z1: -25, floors: 3, fh: 3.4, wall: "ochre", tint: 0xd8b888, shutter: 0x3f5a48, roof: { axis: "x", pitch: 0.95, hip: true }, doors: [{ side: 2, u: 6.5, w: 2.0, h: 2.8, arch: true }], damage: 0.85, chimneys: [[28.5, -31], [21, -33]] },
+  { id: "manor", x0: 19, x1: 31, z0: -36, z1: -25, floors: 3, fh: 3.4, wall: "ochre", tint: 0xd8b888, shutter: 0x3f5a48, roof: { axis: "x", pitch: 0.95, hip: true }, doors: [{ side: 2, u: 6.5, w: 2.0, h: 2.8, arch: true, leaf: true }], damage: 0.85, chimneys: [[28.5, -31], [21, -33]] },
   { id: "e1", x0: 15, x1: 23, z0: -14, z1: -6, floors: 2, fh: 3.0, wall: "plaster", tint: 0xe2d6bc, shutter: 0x6e4a32, roof: { axis: "x", pitch: 0.75 }, doors: [{ side: 2, u: 3, w: 1.2 }], damage: 0.5, chimneys: [[17, -10]] },
   { id: "e2", x0: 26, x1: 34, z0: -15, z1: -7, floors: 2, fh: 3.0, wall: "stone", tint: 0xc8bfae, shutter: 0x4c6278, roof: { axis: "z", pitch: 0.8 }, doors: [{ side: 2, u: 4, w: 1.2 }], damage: 0.7, chimneys: [[30, -13.5]] },
   { id: "e3", x0: 38, x1: 45, z0: -15, z1: -8, floors: 1, fh: 3.6, wall: "plaster", tint: 0xc8bca4, shutter: 0x5a5a50, roof: { axis: "x", pitch: 0.6 }, doors: [{ side: 2, u: 3.5, w: 2.4, h: 2.6 }], damage: 0.4 },
@@ -80,7 +85,7 @@ export const HOUSES: HouseDef[] = [
   // Barn: stone base, timber gables. Enterable with a hayloft (sniper perch).
   {
     id: "barn", x0: 30, x1: 42, z0: 7, z1: 19, floors: 1, fh: 5.2, wall: "stone", tint: 0xbab09e, shutter: 0x5a4430,
-    roof: { axis: "z", pitch: 0.82 }, enter: true, doors: [{ side: 0, u: 6, w: 3.6, h: 3.6 }, { side: 3, u: 6, w: 2.4, h: 2.8 }], blank: [1], damage: 0.3,
+    roof: { axis: "z", pitch: 0.82 }, enter: true, doors: [{ side: 0, u: 6, w: 3.6, h: 3.6 }, { side: 3, u: 6, w: 2.4, h: 2.8, leaf: true }], blank: [1], damage: 0.3,
   },
   { id: "s1", x0: -13, x1: -4, z0: 13, z1: 21, floors: 2, fh: 3.0, wall: "plaster", tint: 0xe6dcc4, shutter: 0x4c6a7a, roof: { axis: "x", pitch: 0.8 }, doors: [{ side: 0, u: 4.5, w: 1.3 }], damage: 0.35, chimneys: [[-11, 17]] },
   { id: "s2", x0: 5, x1: 12.5, z0: 13, z1: 22, floors: 2, fh: 3.0, wall: "stone", tint: 0xd0c6b4, shutter: 0x7a3a2a, roof: { axis: "z", pitch: 0.82 }, doors: [{ side: 0, u: 3.5, w: 1.3 }], damage: 0.55, chimneys: [[9, 20.5]] },
@@ -114,7 +119,7 @@ function rnd(seed: number) {
 export function houseOpenings(h: HouseDef): HouseOpening[] {
   const out: HouseOpening[] = [];
   const r = rnd(h.id.split("").reduce((a, c) => a * 31 + c.charCodeAt(0), 7));
-  for (const d of h.doors) out.push({ side: d.side, u: d.u, y: 0, w: d.w, h: d.h ?? 2.25, arch: d.arch, kind: "door" });
+  for (const d of h.doors) out.push({ side: d.side, u: d.u, y: 0, w: d.w, h: d.h ?? 2.25, arch: d.arch, kind: "door", leaf: d.leaf });
   if (h.id === "church") {
     for (const s of [1, 3] as Side[]) for (let i = 0; i < 4; i++) {
       const u = 2.4 + i * 3.4;
@@ -150,6 +155,41 @@ export function houseOpenings(h: HouseDef): HouseOpening[] {
 
 const boxes: MapBox[] = [];
 const B = (b: MapBox) => boxes.push(b);
+
+/** Facade direction (u) and inward normal per side. */
+const U_DIR: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const IN_DIR: [number, number][] = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+/** Open angle of a house door leaf (just past square to the wall). */
+const DOOR_SWING = (92 * Math.PI) / 180;
+
+/**
+ * Interactive leaves for a house doorway: hung on the inner face of the
+ * wall, swinging into the house; openings wider than 1.7 m get a pair.
+ */
+export function houseDoors(h: HouseDef, wallT = WALL_T): MapDoor[] {
+  const out: MapDoor[] = [];
+  for (const d of h.doors) {
+    if (!d.leaf) continue;
+    const [ux, uz] = U_DIR[d.side], [nx, nz] = IN_DIR[d.side];
+    const n = d.w > 1.7 ? 2 : 1;
+    const lw = d.w / n;
+    const depth = wallT - 0.03;
+    const height = (d.h ?? 2.25) - 0.02;
+    for (let i = 0; i < n; i++) {
+      // Leaf 0 hangs on the jamb at u − w/2 and points +u; leaf 1 on the other jamb, pointing −u.
+      const sgn = i === 0 ? 1 : -1;
+      const [jx, jz] = facadePoint(h, d.side, d.u - (sgn * d.w) / 2);
+      const dx = ux * sgn, dz = uz * sgn;
+      const yaw = Math.atan2(-dz, dx);
+      // Opening direction: d(dir)/dθ = (dz, −dx); swing toward the inside.
+      const swing = Math.sign(nx * dz - nz * dx) * DOOR_SWING;
+      // Weathered shutter colour (85 %), like the dressing's leaves.
+      const tint = (((h.shutter >> 16) & 255) * 0.85) << 16 | (((h.shutter >> 8) & 255) * 0.85) << 8 | ((h.shutter & 255) * 0.85);
+      out.push({ id: `${h.id}:${d.side}:${d.u}:${i}`, x: jx + nx * depth, z: jz + nz * depth, yaw, w: lw, h: height, swing, open: d.open, color: tint, style: h.id === "barn" ? "barn" : "plank" });
+    }
+  }
+  return out;
+}
 /** Box from min/max corners. */
 const R = (x0: number, x1: number, z0: number, z1: number, y0: number, y1: number, b: Omit<MapBox, "x" | "z" | "w" | "d" | "y" | "h">) => {
   if (x1 - x0 < 0.02 || z1 - z0 < 0.02 || y1 - y0 < 0.02) return;
@@ -461,6 +501,8 @@ const perches = [
   { x: 8.5, y: 3.0, z: 31 },
 ];
 
+const doors: MapDoor[] = HOUSES.flatMap((h) => houseDoors(h, h.id === "church" ? 0.6 : WALL_T));
+
 export const BRENNHOLLOW: MapDef = {
   id: "brennhollow",
   name: "Brennhollow",
@@ -490,6 +532,7 @@ export const BRENNHOLLOW: MapDef = {
   dressing: "brennhollow",
   spawns: [{ x: 0, z: 4.5, yaw: 0 }],
   boxes,
+  doors,
   targets: [],
   plates: [],
   signs: [

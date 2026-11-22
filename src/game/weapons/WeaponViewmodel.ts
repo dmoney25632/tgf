@@ -74,6 +74,8 @@ export type ViewmodelState = {
   shellReload: boolean;
   /** Magazine empty: bolt / slide locks back (optional). */
   empty?: boolean;
+  /** 0..1 mid mantle / vault: gun dipped and canted out of the way (optional). */
+  traverse?: number;
 };
 
 /** Receives brass from the viewmodel (implemented by EffectsPool). */
@@ -567,6 +569,15 @@ export class WeaponViewmodel {
     // Slide pose: cant the weapon.
     g.rotation.z += 0.22 * s.slide;
     g.position.y -= 0.015 * s.slide;
+    // Mantle / vault: support hand is on the ledge, the gun drops and tilts away.
+    const tv = s.traverse ?? 0;
+    if (tv > 0.001) {
+      const t = tv * tv * (3 - 2 * tv);
+      g.position.y -= 0.1 * t;
+      g.position.x += 0.025 * t;
+      g.rotation.x -= 0.42 * t;
+      g.rotation.z -= 0.5 * t;
+    }
 
     // ---- Bolt / slide cycling ----------------------------------------------
     const rpm = this.def?.rpm ?? 600;

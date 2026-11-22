@@ -34,7 +34,11 @@ export type SurvivalHudFrame = {
  * What the HUD is currently asking of the player. Read by the engine so the
  * gamepad's X knows whether a tap reloads or a hold interacts.
  */
-export const hudSignals = { interact: false, /** Between waves: "[N] READY" is on offer (touch shows a READY button). */ ready: false };
+export const hudSignals = {
+  interact: false,
+  /** Between waves: "[N] READY" is on offer (touch shows a READY button). */ ready: false,
+  /** A door is under the crosshair (engine): F toggles it, touch shows the USE pill. */ door: false,
+};
 
 const NUM_POOL = 28;
 const TEAM_MAX = 4;

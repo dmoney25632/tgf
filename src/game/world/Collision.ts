@@ -7,6 +7,19 @@ const CELL = 4;
 const MAX_CELLS_PER_BOX = 64;
 
 /**
+ * Moving world pieces (door leaves) as the collision world sees them. The
+ * door system implements it; the AI calls `agentNear` while walking so
+ * closed doors in its way swing open, and the nav grid keeps the swept
+ * leaf footprints clear of paths.
+ */
+export interface DynamicHooks {
+  /** An AI body at (x, z) moving with (vx, vz) this frame. */
+  agentNear(x: number, z: number, vx: number, vz: number): void;
+  /** Footprints the nav grid must treat as solid (open door leaves). */
+  navBlockers(): readonly THREE.Box3[];
+}
+
+/**
  * Axis-aligned box collision world. The map registers solid boxes; the
  * player moves as an upright AABB resolved one axis at a time, which is
  * cheap, stable and good enough for a blocky military map.
@@ -32,10 +45,52 @@ export class CollisionWorld {
   private stamp = new Uint32Array(0);
   private query = 0;
   private readonly cand: number[] = [];
+  /**
+   * Moving boxes (door leaves): not part of `boxes` (static consumers such as
+   * the nav grid, cover and foliage never see them), tested on every query
+   * and free to change in place. A disabled one is skipped entirely.
+   */
+  private readonly dyn: THREE.Box3[] = [];
+  private readonly dynOn: boolean[] = [];
+  /** Per static box: 1 = the player may not mantle onto it (roofs, bounds). */
+  noClimb = new Uint8Array(0);
+  /** Index of the static box the last `raycast` hit (-1 = none / a moving box). */
+  lastHit = -1;
+  /** Door system (or other moving pieces) hooked into this world, if any. */
+  dynamic: DynamicHooks | null = null;
 
   add(box: THREE.Box3) {
     this.boxes.push(box);
     this.dirty = true;
+  }
+
+  /** Flags static box `i` as not climbable (mantle / vault never lands on it). */
+  setNoClimb(i: number, on = true) {
+    if (this.noClimb.length < this.boxes.length) {
+      const n = new Uint8Array(Math.max(this.boxes.length, this.noClimb.length * 2));
+      n.set(this.noClimb);
+      this.noClimb = n;
+    }
+    this.noClimb[i] = on ? 1 : 0;
+  }
+
+  isNoClimb(i: number) {
+    return i >= 0 && i < this.noClimb.length && this.noClimb[i] === 1;
+  }
+
+  /** Registers a moving box (mutate it in place afterwards). Returns its handle. */
+  addDynamic(box: THREE.Box3) {
+    this.dyn.push(box);
+    this.dynOn.push(true);
+    return this.dyn.length - 1;
+  }
+
+  setDynamicEnabled(handle: number, on: boolean) {
+    this.dynOn[handle] = on;
+  }
+
+  get dynamicCount() {
+    return this.dyn.length;
   }
 
   private build() {
@@ -144,6 +199,15 @@ export class CollisionWorld {
         feet.z - radius < b.max.z - EPS && feet.z + radius > b.min.z + EPS
       ) return true;
     }
+    for (let k = 0; k < this.dyn.length; k++) {
+      if (!this.dynOn[k]) continue;
+      const b = this.dyn[k];
+      if (
+        feet.x - radius < b.max.x - EPS && feet.x + radius > b.min.x + EPS &&
+        feet.y < b.max.y - EPS && feet.y + height > b.min.y + EPS &&
+        feet.z - radius < b.max.z - EPS && feet.z + radius > b.min.z + EPS
+      ) return true;
+    }
     return false;
   }
 
@@ -181,6 +245,24 @@ export class CollisionWorld {
         }
       }
     }
+    return this.moveAxisDynamic(feet, axis, delta, radius, height) || hit;
+  }
+
+  /** Resolves the moving boxes after the static ones (same push rule). */
+  private moveAxisDynamic(feet: THREE.Vector3, axis: "x" | "y" | "z", delta: number, radius: number, height: number) {
+    let hit = false;
+    for (let k = 0; k < this.dyn.length; k++) {
+      if (!this.dynOn[k]) continue;
+      const b = this.dyn[k];
+      if (
+        !(feet.x - radius < b.max.x - EPS && feet.x + radius > b.min.x + EPS &&
+          feet.y < b.max.y - EPS && feet.y + height > b.min.y + EPS &&
+          feet.z - radius < b.max.z - EPS && feet.z + radius > b.min.z + EPS)
+      ) continue;
+      hit = true;
+      if (axis === "y") feet.y = delta > 0 ? b.min.y - height - EPS : b.max.y;
+      else feet[axis] = delta > 0 ? b.min[axis] - radius - EPS : b.max[axis] + radius + EPS;
+    }
     return hit;
   }
 
@@ -197,7 +279,7 @@ export class CollisionWorld {
       if (axis === "y") feet.y = delta > 0 ? b.min.y - height - EPS : b.max.y;
       else feet[axis] = delta > 0 ? b.min[axis] - radius - EPS : b.max[axis] + radius + EPS;
     }
-    return hit;
+    return this.moveAxisDynamic(feet, axis, delta, radius, height) || hit;
   }
 
   /**
@@ -214,8 +296,27 @@ export class CollisionWorld {
     if (dz === 0) dz = 1e-12;
     const ix = 1 / dx, iy = 1 / dy, iz = 1 / dz;
     let best = maxDist;
+    let bestBox = -1;
     const q = this.nextQuery();
     const st = this.stamp;
+    const slab = (b: THREE.Box3) => {
+      let t1 = (b.min.x - ox) * ix, t2 = (b.max.x - ox) * ix;
+      let tmin = Math.min(t1, t2), tmax = Math.max(t1, t2);
+      t1 = (b.min.y - oy) * iy; t2 = (b.max.y - oy) * iy;
+      tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2));
+      t1 = (b.min.z - oz) * iz; t2 = (b.max.z - oz) * iz;
+      tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2));
+      return tmax >= Math.max(tmin, 0) ? Math.max(tmin, 0) : Infinity;
+    };
+    for (let k = 0; k < this.dyn.length; k++) {
+      if (!this.dynOn[k]) continue;
+      const t = slab(this.dyn[k]);
+      if (t < best) best = t;
+    }
+    if (anyHit && best < maxDist) {
+      this.lastHit = -1;
+      return best;
+    }
     const test = (i: number) => {
       const b = this.boxes[i];
       let t1 = (b.min.x - ox) * ix, t2 = (b.max.x - ox) * ix;
@@ -224,11 +325,18 @@ export class CollisionWorld {
       tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2));
       t1 = (b.min.z - oz) * iz; t2 = (b.max.z - oz) * iz;
       tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2));
-      if (tmax >= Math.max(tmin, 0) && tmin < best) best = Math.max(tmin, 0);
+      if (tmax >= Math.max(tmin, 0) && tmin < best) {
+        best = Math.max(tmin, 0);
+        bestBox = i;
+      }
     };
+    this.lastHit = -1;
     for (const i of this.big) {
       test(i);
-      if (anyHit && best < maxDist) return best;
+      if (anyHit && best < maxDist) {
+        this.lastHit = bestBox;
+        return best;
+      }
     }
     if (this.nx > 0) {
       // Clip the ray to the grid's XZ rectangle.
@@ -256,7 +364,10 @@ export class CollisionWorld {
             st[i] = q;
             test(i);
           }
-          if (anyHit && best < maxDist) return best;
+          if (anyHit && best < maxDist) {
+            this.lastHit = bestBox;
+            return best;
+          }
           if (nextX < nextZ) {
             tCell = nextX;
             nextX += ddx;
@@ -272,6 +383,7 @@ export class CollisionWorld {
         }
       }
     }
+    this.lastHit = bestBox;
     return best < maxDist ? best : Infinity;
   }
 
@@ -289,6 +401,11 @@ export class CollisionWorld {
     const c = this.gather(x - radius, z - radius, x + radius, z + radius);
     for (let k = 0; k < c.length; k++) {
       const b = this.boxes[c[k]];
+      if (x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z && b.max.y <= maxY + 1e-3 && b.max.y > y) y = b.max.y;
+    }
+    for (let k = 0; k < this.dyn.length; k++) {
+      if (!this.dynOn[k]) continue;
+      const b = this.dyn[k];
       if (x + radius > b.min.x && x - radius < b.max.x && z + radius > b.min.z && z - radius < b.max.z && b.max.y <= maxY + 1e-3 && b.max.y > y) y = b.max.y;
     }
     return y;

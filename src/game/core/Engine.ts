@@ -31,6 +31,7 @@ import { RangeMode } from "./RangeMode";
 import { BackgroundTicker } from "./BackgroundTicker";
 import { setSoldierQuality } from "../ai/soldier/assets";
 import { SurvivalGameMode, type SurvivalConfig } from "../survival/SurvivalGameMode";
+import { DoorPrompt } from "../ui/DoorPrompt";
 
 export type { GameSettings };
 
@@ -83,6 +84,9 @@ export class GameEngine {
   private readonly aimAssist = new AimAssist();
   private readonly assistList: THREE.Object3D[] = [];
   private readonly mobile: MobileLayer;
+  private readonly doorPrompt: DoorPrompt;
+  /** Door under the crosshair (-1 none). */
+  private doorFocus = -1;
   private readonly resizeObserver: ResizeObserver;
   readonly settings: GameSettings;
   readonly mode: GameMode;
@@ -152,7 +156,7 @@ export class GameEngine {
     this.input = new Input(this.pipeline.canvas);
     this.input.configure(this.settings);
     this.input.requestLock = () => this.lock();
-    this.input.interactContext = () => hudSignals.interact;
+    this.input.interactContext = () => hudSignals.interact || hudSignals.door;
     this.input.onEngageChange = (engaged) => {
       if (engaged) this.accumulator = 0;
       else this.aimAssist.reset();
@@ -168,6 +172,10 @@ export class GameEngine {
       if (intensity < 50) flashLight(at, new THREE.Color(c[0], c[1], c[2]), intensity, duration * 1000, radius);
     });
     this.player = new PlayerController(this.camera, this.map.collision);
+    const climb = mapDef.climb;
+    this.player.climbRules = { disabled: climb?.disabled, bound: climb?.bound ?? mapDef.size / 2 - 1, maxY: climb?.maxY ?? Infinity };
+    this.doorPrompt = new DoorPrompt(container);
+    if (this.map.doors) this.map.doors.onSwing = (_i, _open, at) => this.sfx.impact(at, "wood");
     this.hud = new HUD(container);
     this.hud.onHurt = (amount) => this.input.rumble(Math.min(1, amount / 45), 0.35, 140);
     this.hud.setFpsVisible(this.settings.showFps);
@@ -505,7 +513,8 @@ export class GameEngine {
       }
       if (this.grenades.isHolding && !input.isDown(this.grenadeKey)) this.grenades.release();
       const wasDisabled = this.weapons.disabled;
-      if (throwing) this.weapons.disabled = true;
+      // Hands are busy mid mantle / vault.
+      if (throwing || this.player.traversing) this.weapons.disabled = true;
       this.weapons.update(dt, input, this.camera.position);
       this.weapons.disabled = wasDisabled;
       this.grenades.update(dt, this.camera.position, this.player.yaw, this.player.pitch, this.player.velocity);
@@ -514,6 +523,7 @@ export class GameEngine {
     // [coop] An online match never pauses: the host keeps simulating and clients keep syncing behind menus.
     const live = playing || this.opts.survival?.net !== undefined;
     this.mode.update(live ? dt : 0, playing);
+    this.updateDoors(live ? dt : 0, playing);
 
     this.updateFov(dt);
     this.handleMoveEvents();
@@ -538,6 +548,24 @@ export class GameEngine {
     }
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   }
+
+  /** Door under the crosshair: prompt, F / USE toggles it; doors swing (holding while you stand in the arc). */
+  private updateDoors(dt: number, playing: boolean) {
+    const doors = this.map.doors;
+    if (!doors) return;
+    const p = this.player;
+    this.camera.getWorldDirection(this.forward);
+    // Another prompt (revive, buy, objective) owns F while it is up.
+    const free = playing && !hudSignals.interact && !p.downed && !p.traversing;
+    this.doorFocus = free ? doors.focus(this.camera.position, this.forward) : -1;
+    if (this.doorFocus >= 0 && this.input.pressed("KeyF")) doors.toggle(this.doorFocus, "local");
+    hudSignals.door = this.doorFocus >= 0;
+    this.doorPrompt.set(this.doorFocus >= 0 ? (doors.isOpen(this.doorFocus) ? "[F] CLOSE DOOR" : "[F] OPEN DOOR") : "");
+    this.doorBody.feet.copy(p.position);
+    this.doorBody.height = p.colliderHeight;
+    doors.update(dt, this.doorBody);
+  }
+  private readonly doorBody = { feet: new THREE.Vector3(), radius: 0.35, height: 1.8 };
 
   private handleHotkeys() {
     const input = this.input;
@@ -614,6 +642,8 @@ export class GameEngine {
       if (e.landed > 7) this.shake.add(Math.min(0.25, e.landed * 0.02));
     }
     if (e.slideStarted) this.sfx.slide();
+    if (e.traversal) this.sfx.slide();
+    e.traversal = null;
     e.footstep = 0;
     e.jumped = false;
     e.landed = 0;
@@ -626,6 +656,7 @@ export class GameEngine {
     s.ads = this.weapons.adsAmount;
     s.sprint = p.sprintBlend;
     s.slide = p.slideBlend;
+    s.traverse = p.traversalBlend;
     s.bobDistance = p.bobDistance;
     s.bobAmount = p.bobAmount;
     s.yawDelta = p.yaw - this.lastYaw;
@@ -808,6 +839,7 @@ export class GameEngine {
     window.removeEventListener("beforeunload", this.onBeforeUnload);
     this.resizeObserver.disconnect();
     this.mobile.dispose();
+    this.doorPrompt.dispose();
     this.input.dispose();
     this.mode.dispose();
     this.viewmodel.dispose();

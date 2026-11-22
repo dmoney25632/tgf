@@ -19,6 +19,7 @@ import { accelerateRaycast } from "./MeshRaycastGrid";
 import { MapLighting } from "./lighting/MapLighting";
 import { setActiveBlobs, releaseActiveBlobs, BlobShadows } from "../render/BlobShadows";
 import { installFlashLights, uninstallFlashLights } from "../render/FlashLights";
+import { DoorSystem, type MapDoor } from "./interaction/doors";
 
 /**
  * How a box is drawn (its collider is always the plain AABB):
@@ -58,7 +59,13 @@ export type MapBox = {
   rotY?: number;
   /** Rotate the texture 90° (horizontal planks, etc.). */
   rot90?: boolean;
+  /** The player can't mantle / vault onto it (tags in NO_CLIMB_TAGS are implied). */
+  noClimb?: boolean;
 };
+
+/** Box tags that are never climbable: roofs, roof masses and map bounds. */
+export const NO_CLIMB_TAGS: ReadonlySet<string> = new Set(["roof", "roofmass", "bound"]);
+export type { MapDoor };
 
 /** Points of interest for survival. */
 export type SurvivalLayout = {
@@ -105,6 +112,13 @@ export type MapDef = {
   weather?: Partial<WeatherDef>;
   /** AI nav-grid window (defaults to ±50 m). Large mission maps size it to their bounds. */
   nav?: { minX: number; minZ: number; width: number; depth: number };
+  /** Hinged doors the player (and AI) can open: see world/interaction/doors. */
+  doors?: MapDoor[];
+  /**
+   * Mantle / vault limits: `disabled` turns them off, `maxY` caps the end
+   * height, `bound` the |x|/|z| of the end point (default: size / 2 − 1).
+   */
+  climb?: { disabled?: boolean; maxY?: number; bound?: number };
 };
 
 export type MapStats = { drawables: number; triangles: number; grassTriangles: number; treeTriangles: number; terrainTriangles: number };
@@ -122,6 +136,8 @@ export type LoadedMap = {
   lighting: MapLighting | null;
   /** Soft contact shadows under tracked objects: `blobs.track(soldier.root, { radius: 0.45 })`. */
   blobs: BlobShadows;
+  /** Interactive doors (null when the map has none). */
+  doors: DoorSystem | null;
   /** Rescales foliage density, shadow fit and dust for a preset. */
   setQuality(q: QualityPreset): void;
   /** Approximate static geometry counts (for perf budgeting/debug). */
@@ -219,6 +235,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
     } else drawBox(kit, b);
     if (b.decor) continue;
     collision.add(new THREE.Box3(new THREE.Vector3(b.x - b.w / 2, y, b.z - b.d / 2), new THREE.Vector3(b.x + b.w / 2, y + b.h, b.z + b.d / 2)));
+    if (b.noClimb || (b.tag && NO_CLIMB_TAGS.has(b.tag))) collision.setNoClimb(collision.boxes.length - 1);
   }
 
   // ---- Set dressing (terrain shape, foliage plan, extra decor) --------------
@@ -370,6 +387,13 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   // Bullets raycast these every shot: index the big merged ones spatially.
   for (const m of meshes) accelerateRaycast(m);
 
+  // Doors after the static world (their leaves move, so they stay out of the merged meshes).
+  const doors = def.doors?.length ? new DoorSystem(collision, root, def.doors, meshes) : null;
+  if (doors) {
+    sky.patchScene(doors.root);
+    disposables.push(doors);
+  }
+
   return {
     def,
     collision,
@@ -379,6 +403,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
     sky,
     lighting,
     blobs,
+    doors,
     setQuality,
     stats() {
       let drawables = 0;

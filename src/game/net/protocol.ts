@@ -554,6 +554,8 @@ export type StateExtras = {
    */
   i?: 1;
   hh?: [number, number, number, number][];
+  /** Door toggles (client → host; hosts that predate doors ignore it): [doorIndex, open 0/1]. */
+  dr?: [number, number][];
 };
 
 /** Host → peers events on a snapshot. */
@@ -574,7 +576,9 @@ export type HostEvent =
   /** Discrete mission event (objective, radio line, checkpoint, retry, detonation, extraction). */
   | { k: "mev"; e: MissionEvent }
   /** Host gunships, ~4 Hz: [x×10, y×10, z×10, yaw×100, health, maxHealth, state 0 idle · 1 flying · 2 dying] per slot. */
-  | { k: "air"; h: [number, number, number, number, number, number, number][] };
+  | { k: "air"; h: [number, number, number, number, number, number, number][] }
+  /** Door targets (0 closed · 1 open, map door order): on change and every couple of seconds. */
+  | { k: "doors"; o: number[] };
 
 /** `h`: the host's own player state (same encoding as StatePayload.b). */
 export type SnapshotPayload = { b: string; e?: HostEvent[]; h?: string };
