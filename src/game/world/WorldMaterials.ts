@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { QualityPreset } from "../config";
 import { EXTRA_MATERIAL_TEXTURES, type ExtraMaterialName, type MaterialName } from "../assets/manifest";
-import { loadTextureSet } from "../assets/AssetLoader";
+import { loadCompressedTextureSet, loadTextureSet } from "../assets/AssetLoader";
 import type { MaterialLibrary } from "../render/Materials";
 
 /** Any material the world builders can bucket geometry into. */
@@ -591,7 +591,31 @@ export class WorldMaterials {
       }
     }
     if (setId && typeof window !== "undefined") {
-      void loadTextureSet(setId, this.quality.maxTextureSize).then((imgs) => {
+      const max = this.quality.maxTextureSize;
+      // GPU-compressed copies when the device supports them, else the JPEGs.
+      void loadCompressedTextureSet(setId, max).then(async (ktx) => {
+        if (this.disposed) return;
+        if (ktx?.albedo) {
+          const ck = (c: THREE.CompressedTexture | undefined, srgb: boolean, fallback: THREE.Texture) => {
+            if (!c) return fallback;
+            // Clone the cached template: clones share one GPU upload.
+            const t = c.clone();
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+            t.anisotropy = this.quality.anisotropy;
+            t.repeat.set(rep, rep);
+            t.needsUpdate = true;
+            this.owned.push(t);
+            return t;
+          };
+          m.map = ck(ktx.albedo, true, place[0]);
+          m.normalMap = ck(ktx.normal, false, place[1]);
+          m.roughnessMap = ck(ktx.roughness, false, place[2]);
+          m.aoMap = ck(ktx.ao, false, place[3]);
+          if (def.gain) m.color.setRGB(...def.gain);
+          return;
+        }
+        const imgs = await loadTextureSet(setId, max);
         if (this.disposed || !imgs?.albedo) return;
         const mk = (img: TexImageSource | undefined, srgb: boolean, fallback: THREE.Texture) => {
           if (!img) return fallback;

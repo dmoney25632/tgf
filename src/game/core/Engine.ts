@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { setAssetRenderer } from "../assets/AssetLoader";
 import { flashLight } from "../render/FlashLights";
 import { CAMERA, LOOK, QUALITY, SIM } from "../config";
 import { Input } from "./Input";
@@ -145,6 +146,8 @@ export class GameEngine {
     // keeps a non-multisampled canvas until the next match).
     this.pipeline = new RenderPipeline(container, this.scene, this.camera, this.viewmodel.scene, this.viewmodel.camera, this.map.sun, !preset.postProcessing);
     this.viewmodel.scene.environment = this.pipeline.envMap;
+    // Exact compressed-texture format support for KTX2 loads (else a probe context is used).
+    setAssetRenderer(this.pipeline.renderer);
 
     this.input = new Input(this.pipeline.canvas);
     this.input.configure(this.settings);
@@ -220,6 +223,7 @@ export class GameEngine {
       onFlash: (at) => this.onFlashbang(at),
       onSmoke: (at) => this.sfx.smokePop(at, at.distanceTo(this.camera.position)),
     });
+    this.grenades.smokeVolume.setQuality(this.settings.quality);
 
     const ctx: EngineContext = {
       scene: this.scene,
@@ -348,6 +352,7 @@ export class GameEngine {
     if (next.quality && next.quality !== prevQuality) {
       const q = QUALITY[next.quality];
       setSoldierQuality(next.quality);
+      this.grenades.smokeVolume.setQuality(next.quality);
       this.pipeline.setQuality(q);
       this.map.setQuality(q);
       this.effects.setLimits(q.maxDecals, q.maxParticles);
@@ -793,6 +798,7 @@ export class GameEngine {
   };
 
   dispose() {
+    setAssetRenderer(null);
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     document.removeEventListener("visibilitychange", this.onVisibility);
