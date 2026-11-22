@@ -3,16 +3,30 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { cyl, dome, ellipsoid, GeoBuilder, loft, paint, rbox, seeded, shade, T, type Paint, type Ring } from "../humanoid/geo";
 import { withQuality } from "../humanoid/body";
 import { SURF } from "../humanoid/materials";
+import { loadScene } from "../../assets/AssetLoader";
 import type { SoldierIdentity } from "./identity";
 
 /**
- * Procedural kit layered over the Rocketbox parts: boonie hat, goggles,
- * glasses / shades, shemagh, radio, packs, a light chest rig, belt pouches
- * and a holster, knee pads, the marksman's ghillie and the warden's plate
- * armour. Each piece is rigid on one Biped bone and authored in the male
- * avatars' bind space (metres, +X = the soldier's left, +Z forward); on
- * another skeleton (the women) every piece moves with its bone's bind
- * offset. Built once per (kit combination, palette, skeleton) and shared.
+ * Kit layered over the Rocketbox parts: boonie hat, goggles, glasses /
+ * shades, shemagh, radio, packs, a light chest rig, belt pouches and a
+ * holster, knee pads, the marksman's ghillie and the warden's plate armour.
+ * Each piece is rigid on one Biped bone and authored in the male avatars'
+ * bind space (metres, +X = the soldier's left, +Z forward); on another
+ * skeleton (the women) every piece moves with its bone's bind offset.
+ * Built once per (kit combination, palette, skeleton) and shared.
+ *
+ * Two sources, same pieces, bones and draw calls:
+ *  - authored: public/assets/characters/kit/kit.gltf, modelled in Blender
+ *    by art/blender/kit (real bevels, webbing, buckles; per-vertex baked
+ *    occlusion, seams, edge wear and dust). One node per piece (+ _lod1),
+ *    materials named k_<role>: the role picks the palette paint (ROLES), so
+ *    identity colours tint the fabric exactly as before; COLOR_0 multiplies
+ *    it (rgb) and carries the dust amount (a); TEXCOORD_0 is a metric box
+ *    projection, so the uber shader's weave, folds, camo and PALS rows run
+ *    at real scale;
+ *  - procedural (below): the fallback while the asset loads, when it is
+ *    missing, and with localStorage tgf.kit = "procedural" (or
+ *    tgf.soldiers = "procedural").
  */
 
 /** Male bind-pose joint positions the gear is authored against. */
@@ -98,14 +112,140 @@ const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 const cache = new Map<string, SoldierGear>();
 
+// ---------------------------------------------------------------------------
+// Authored kit asset
+// ---------------------------------------------------------------------------
+const KIT_URL = "/assets/characters/kit/kit.gltf";
+
+/** Every node the authored path needs (each also as <name>_lod1, lenses excepted). */
+export const KIT_PIECES = [
+  "boonie", "goggles_eyes", "goggles_helmet", "glasses", "shades", "glasses_lens", "shades_lens",
+  "shemagh", "shemagh_tail", "shemagh_tail_vest", "chest_rig",
+  "pack_hydration", "pack_hydration_vest", "pack_assault", "pack_assault_vest", "pack_straps", "radio", "radio_mic",
+  "warden_chest", "warden_back", "warden_gorget", "warden_pauldron_L", "warden_pauldron_R", "warden_cuisse_L", "warden_cuisse_R", "warden_tassets", "warden_belt",
+  "belt_pouches", "holster", "kneepad_L", "kneepad_R",
+] as const;
+export type KitPieceName = (typeof KIT_PIECES)[number];
+const LENS_ONLY = new Set<string>(["glasses_lens", "shades_lens"]);
+
+/** One primitive of a piece: geometry in bind space (position, normal, uv, color rgba) + palette role. */
+type KitPart = { geo: THREE.BufferGeometry; role: string };
+type KitLib = Map<string, [KitPart[], KitPart[]]>;
+
+let kitLib: KitLib | null = null;
+let kitLoad: Promise<boolean> | null = null;
+
+function kitSwitchOff() {
+  try {
+    if (typeof window === "undefined") return false;
+    const ls = window.localStorage;
+    return ls?.getItem("tgf.kit") === "procedural" || ls?.getItem("tgf.soldiers") === "procedural";
+  } catch {
+    return false;
+  }
+}
+
+/** Plain float copy of an attribute (gltfpack may quantize / interleave). */
+function f32(a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size: number, fill = 1) {
+  const n = a.count;
+  const out = new Float32Array(n * size);
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < size; c++) out[i * size + c] = c < a.itemSize ? a.getComponent(i, c) : fill;
+  }
+  return new THREE.BufferAttribute(out, size);
+}
+
+/**
+ * Installs the authored kit from a loaded glTF scene (null: procedural).
+ * Returns false (and keeps the procedural kit) if a piece is missing.
+ */
+export function setSoldierKit(scene: THREE.Object3D | null): boolean {
+  const old = kitLib;
+  kitLib = null;
+  // Built gear stays valid (cache keys carry the source); only the templates go.
+  if (old) old.forEach(([a, b]) => [...a, ...b].forEach((p) => p.geo.dispose()));
+  if (!scene) return false;
+  scene.updateMatrixWorld(true);
+  const inv = scene.matrixWorld.clone().invert();
+  const lib: KitLib = new Map();
+  const m = new THREE.Matrix4();
+  for (const node of scene.children) {
+    const lod = /_lod1$/.test(node.name) ? 1 : 0;
+    const name = node.name.replace(/_lod1$/, "");
+    const parts: KitPart[] = [];
+    node.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const src = mesh.geometry;
+      const pos = src.getAttribute("position"), nrm = src.getAttribute("normal"), uv = src.getAttribute("uv"), col = src.getAttribute("color");
+      if (!pos || !nrm || !uv) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", f32(pos, 3));
+      geo.setAttribute("normal", f32(nrm, 3));
+      geo.setAttribute("uv", f32(uv, 2));
+      geo.setAttribute("color", col ? f32(col, 4, 0) : new THREE.BufferAttribute(new Float32Array(pos.count * 4).fill(1), 4));
+      const idx = src.index;
+      geo.setIndex(new THREE.BufferAttribute(idx ? Uint32Array.from({ length: idx.count }, (_, i) => idx.getX(i)) : Uint32Array.from({ length: pos.count }, (_, i) => i), 1));
+      geo.applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld));
+      const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.Material | undefined;
+      parts.push({ geo, role: (mat?.name ?? "").replace(/^k_/, "").replace(/\.\d+$/, "") });
+    });
+    if (!parts.length) continue;
+    let e = lib.get(name);
+    if (!e) lib.set(name, (e = [[], []]));
+    e[lod].push(...parts);
+  }
+  for (const n of KIT_PIECES) {
+    const e = lib.get(n);
+    if (!e || !e[0].length || (!LENS_ONLY.has(n) && !e[1].length)) {
+      console.warn(`[soldiers] kit.gltf has no ${n}; using the procedural kit`);
+      lib.forEach(([a, b]) => [...a, ...b].forEach((p) => p.geo.dispose()));
+      return false;
+    }
+  }
+  kitLib = lib;
+  return true;
+}
+
+/** Starts loading the authored kit (once). Resolves whether it is in use. */
+export function loadSoldierKit(): Promise<boolean> {
+  if (kitLoad) return kitLoad;
+  if (typeof window === "undefined" || kitSwitchOff()) return Promise.resolve(false);
+  kitLoad = loadScene(KIT_URL).then((scene) => setSoldierKit(scene));
+  return kitLoad;
+}
+
+/** Whether soldiers built now get the authored kit. */
+export function soldierKitReady() {
+  return kitLib !== null;
+}
+
+// The kit is small: fetch it with the soldier code, well before the first avatar finishes.
+if (typeof window !== "undefined") void loadSoldierKit();
+
 /**
  * Builds (or returns the cached) gear for an identity.
  * joints: the skeleton's canonical joint names; bindPos: a joint's bind position.
  */
 export function soldierGear(id: SoldierIdentity, pal: GearPalette, female: boolean, joints: readonly string[], bindPos: (bone: string) => THREE.Vector3): SoldierGear {
-  const key = gearKey(id, pal, female);
+  const lib = kitLib;
+  const key = (lib ? "a|" : "p|") + gearKey(id, pal, female);
   let g = cache.get(key);
   if (g) return g;
+  if (lib) {
+    const near = authored(lib, id, pal, 0);
+    const mid = authored(lib, id, pal, 1);
+    const ghillie = id.ghillie ? withQuality(0, () => ghillieCards(id, pal)) : null;
+    const place = (parts: Map<GearBone, { merge(): THREE.BufferGeometry | null }>) => skinParts(parts, female, joints, bindPos);
+    const lensGeo = near.lens ? place(new Map([["Bip01_Head", near.lens]])) : null;
+    g = {
+      kit: [place(near.parts), place(mid.parts)],
+      ghillie: ghillie ? place(ghillie) : null,
+      lens: lensGeo ? { geo: lensGeo, kind: id.eyewear === "shades" ? "dark" : "clear" } : null,
+    };
+    cache.set(key, g);
+    return g;
+  }
   const lens: { b: GeoBuilder; kind: "clear" | "dark" } | null = id.head !== "b" && id.eyewear !== "none" ? { b: new GeoBuilder(), kind: id.eyewear === "shades" ? "dark" : "clear" } : null;
   const near = withQuality(0, () => build(id, pal, lens?.b ?? null));
   const mid = withQuality(1, () => build(id, pal, null));
@@ -134,7 +274,7 @@ export function disposeSoldierGear() {
 }
 
 /** Merges each bone's builder, moves it onto this skeleton's joint and makes it rigidly skinned. */
-function skinParts(parts: Map<GearBone, GeoBuilder>, female: boolean, joints: readonly string[], bindPos: (bone: string) => THREE.Vector3) {
+function skinParts(parts: Map<GearBone, { merge(): THREE.BufferGeometry | null }>, female: boolean, joints: readonly string[], bindPos: (bone: string) => THREE.Vector3) {
   const list: THREE.BufferGeometry[] = [];
   for (const [bone, b] of parts) {
     const geo = b.merge();
@@ -168,6 +308,162 @@ function skinParts(parts: Map<GearBone, GeoBuilder>, female: boolean, joints: re
   return out;
 }
 
+/** Accumulates authored parts for one bone (same attribute layout as GeoBuilder). */
+class PartList {
+  private readonly list: THREE.BufferGeometry[] = [];
+  add(part: KitPart, pt: Paint, m?: THREE.Matrix4) {
+    const g = part.geo.clone();
+    if (m) g.applyMatrix4(m);
+    const n = g.getAttribute("position").count;
+    const vc = g.getAttribute("color") as THREE.BufferAttribute;
+    const col = new Float32Array(n * 3), mat = new Float32Array(n * 4), wear = new Float32Array(n);
+    const { r, g: gg, b } = pt.color;
+    for (let i = 0; i < n; i++) {
+      const k = vc.getX(i);
+      col[i * 3] = r * k;
+      col[i * 3 + 1] = gg * vc.getY(i);
+      col[i * 3 + 2] = b * vc.getZ(i);
+      mat[i * 4] = pt.surf;
+      mat[i * 4 + 1] = pt.rough;
+      mat[i * 4 + 2] = pt.metal;
+      mat[i * 4 + 3] = pt.emit;
+      wear[i] = vc.getW(i);
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setAttribute("aMat", new THREE.BufferAttribute(mat, 4));
+    g.setAttribute("aWear", new THREE.BufferAttribute(wear, 1));
+    this.list.push(g);
+  }
+  merge(): THREE.BufferGeometry | null {
+    if (!this.list.length) return null;
+    const out = this.list.length === 1 ? this.list[0] : mergeGeometries(this.list, false);
+    if (this.list.length > 1) this.list.forEach((g) => g.dispose());
+    this.list.length = 0;
+    if (!out) return null;
+    out.computeBoundingSphere();
+    return out;
+  }
+}
+
+/** Palette paint per authored material role (k_<role>); mirrors the procedural paints below. */
+function kitRoles(id: SoldierIdentity, pal: GearPalette): Record<string, Paint> {
+  const nylon = paint(pal.vest, SURF.nylon, 0.85);
+  const strap = paint(mix(pal.vest, 0x1c1c1a, 0.45), SURF.nylon, 0.9);
+  const dark = id.eyewear === "shades";
+  const cloth = paint([0xb8a98a, 0x6e6a50, 0x3a3a36, 0x9a8a68][(id.tone >> 3) & 3], SURF.nylon, 0.98);
+  const steel = paint(mix(pal.helmet, 0x3c4044, 0.6), SURF.hard, 0.42, 0.55);
+  return {
+    nylon,
+    nylonD: shade(nylon, 0.72),
+    molle: paint(pal.vest, SURF.molle, 0.85),
+    webbing: paint(mix(pal.vest, 0x1c1c1a, 0.18), SURF.nylon, 0.88),
+    strap,
+    elastic: paint(mix(pal.vest, 0x1c1c1a, 0.62), SURF.nylon, 0.95),
+    hat: paint(mix(pal.uniform, pal.helmet, 0.35), SURF[camoFor(pal.uniform)], 0.95),
+    hatband: shade(paint(mix(pal.uniform, pal.helmet, 0.35), SURF.nylon, 0.95), 0.8),
+    cloth,
+    clothD: shade(cloth, 0.86),
+    rubber: paint(0x1d1e1f, SURF.hard, 0.7),
+    plastic: paint(0x2a2c2d, SURF.hard, 0.5),
+    polymer: paint(0x242526, SURF.hard, 0.45),
+    hardware: paint(0x202122, SURF.hard, 0.55),
+    metal: paint(0x45484b, SURF.hard, 0.4, 0.7),
+    frame: paint(mix(pal.helmet, 0x202020, 0.5), SURF.hard, 0.6),
+    glass: paint(0x2b3a40, SURF.hard, 0.08, 0.6),
+    rim: paint(dark ? 0x1a1a1b : 0x2e2f30, SURF.hard, 0.35, dark ? 0.2 : 0.5),
+    lens: paint(0xffffff),
+    foam: paint(0x161617, SURF.nylon, 0.98),
+    steel,
+    steelD: shade(steel, 0.7),
+    trim: paint(mix(pal.accent, 0x8a6a2a, 0.3), SURF.hard, 0.35, 0.6),
+    leather: paint(mix(pal.vest, 0x3a2416, 0.65), SURF.nylon, 0.72),
+    ifak: paint(mix(pal.vest, 0x5a2420, 0.25), SURF.nylon, 0.85),
+    kneecap: paint(mix(pal.vest, 0x1d1e1f, 0.55), SURF.hard, 0.6),
+    radio: paint(0x262927, SURF.hard, 0.5),
+    accent: paint(mix(pal.accent, 0x6a1a14, 0.4), SURF.nylon, 0.8),
+  };
+}
+
+/**
+ * The authored kit for one LOD: same piece choices (and context offsets) as
+ * build(), each piece copied from the template with its palette paints.
+ */
+function authored(lib: KitLib, id: SoldierIdentity, pal: GearPalette, lod: 0 | 1) {
+  const parts = new Map<GearBone, PartList>();
+  const roles = kitRoles(id, pal);
+  const fallback = roles.nylon;
+  let lens: PartList | null = null;
+  const put = (bone: GearBone, piece: KitPieceName, m?: THREE.Matrix4) => {
+    const e = lib.get(piece);
+    if (!e) return;
+    let b = parts.get(bone);
+    if (!b) parts.set(bone, (b = new PartList()));
+    for (const p of e[lod]) b.add(p, roles[p.role] ?? fallback, m);
+  };
+  const vested = !!id.vest;
+  if (id.headgear === "boonie") put("Bip01_Head", "boonie");
+  if (id.goggles) put("Bip01_Head", id.balaclava || id.headgear !== "helmet" ? "goggles_eyes" : "goggles_helmet");
+  if (id.eyewear !== "none" && id.head !== "b") {
+    const kind = id.eyewear === "shades" ? "shades" : "glasses";
+    put("Bip01_Head", kind);
+    if (lod === 0) {
+      lens = new PartList();
+      for (const p of lib.get(`${kind}_lens`)?.[0] ?? []) lens.add(p, roles.lens);
+    }
+  }
+  if (id.shemagh) {
+    put("Bip01_Neck", "shemagh");
+    put("Bip01_Neck", vested ? "shemagh_tail_vest" : "shemagh_tail");
+  }
+  if (id.chestRig && !vested) put("Bip01_Spine2", "chest_rig");
+  if (id.pack !== "none") {
+    put("Bip01_Spine2", `pack_${id.pack}${vested ? "_vest" : ""}` as KitPieceName);
+    if (!vested) put("Bip01_Spine2", "pack_straps");
+  }
+  if (id.radio) {
+    const z = backZ_(vested, 1.28);
+    const zr = id.pack === "none" ? z - 0.02 : z - (id.pack === "assault" ? 0.17 : 0.075);
+    const xr = id.pack === "assault" ? 0.17 : 0.1;
+    put("Bip01_Spine2", "radio", T(xr, 1.27, zr));
+    put("Bip01_Spine2", "radio_mic", T(0.12, 1.36, vested ? 0.14 : 0.12, -0.3));
+  }
+  if (id.armour === "warden") {
+    put("Bip01_Spine2", "warden_chest");
+    put("Bip01_Spine2", "warden_back");
+    put("Bip01_Neck", "warden_gorget");
+    put("Bip01_L_UpperArm", "warden_pauldron_L");
+    put("Bip01_R_UpperArm", "warden_pauldron_R");
+    put("Bip01_L_Thigh", "warden_cuisse_L");
+    put("Bip01_R_Thigh", "warden_cuisse_R");
+    put("Bip01_Pelvis", "warden_tassets");
+    put("Bip01_Pelvis", "warden_belt");
+  }
+  if (id.pouches) {
+    put("Bip01_Pelvis", "belt_pouches");
+    put("Bip01_R_Thigh", "holster");
+  }
+  if (id.kneePads) {
+    put("Bip01_L_Calf", "kneepad_L");
+    put("Bip01_R_Calf", "kneepad_R");
+  }
+  return { parts, lens };
+}
+
+/** Back surface (z) of the torso at a height, with or without the plate carrier. */
+function backZ_(vested: boolean, y: number) {
+  const pts: [number, number][] = vested
+    ? [[0.98, -0.12], [1.08, -0.15], [1.2, -0.235], [1.3, -0.245], [1.38, -0.205], [1.46, -0.15]]
+    : [[0.98, -0.11], [1.08, -0.135], [1.2, -0.215], [1.3, -0.225], [1.38, -0.19], [1.46, -0.14]];
+  if (y <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (y <= pts[i][0]) {
+      const t = (y - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+      return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t;
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
 /** The uber-material kit for one LOD. lensB receives the clear / dark lenses (near LOD). */
 function build(id: SoldierIdentity, pal: GearPalette, lensB: GeoBuilder | null) {
   const parts = new Map<GearBone, GeoBuilder>();
@@ -191,20 +487,7 @@ function build(id: SoldierIdentity, pal: GearPalette, lensB: GeoBuilder | null) 
   const plastic = paint(0x2a2c2d, SURF.hard, 0.5);
   const metal = paint(0x45484b, SURF.hard, 0.4, 0.7);
   const vested = !!id.vest;
-  /** Back surface (z) of the torso at a height, with or without the plate carrier. */
-  const backZ = (y: number) => {
-    const pts: [number, number][] = vested
-      ? [[0.98, -0.12], [1.08, -0.15], [1.2, -0.235], [1.3, -0.245], [1.38, -0.205], [1.46, -0.15]]
-      : [[0.98, -0.11], [1.08, -0.135], [1.2, -0.215], [1.3, -0.225], [1.38, -0.19], [1.46, -0.14]];
-    if (y <= pts[0][0]) return pts[0][1];
-    for (let i = 1; i < pts.length; i++) {
-      if (y <= pts[i][0]) {
-        const t = (y - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
-        return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t;
-      }
-    }
-    return pts[pts.length - 1][1];
-  };
+  const backZ = (y: number) => backZ_(vested, y);
 
   // ---- Head ----------------------------------------------------------------
   if (id.headgear === "boonie") {
