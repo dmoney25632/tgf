@@ -1,9 +1,15 @@
 import * as THREE from "three";
 import { type GeoBuilder, type P2, type V3, extrude, shape, latheZ, rodGeo } from "./geo";
 import type { Surf, ViewmodelMaterials } from "./materials";
+import { addHandAnchor } from "./arms/anchor";
 
 /**
  * Gloved hands + forearms, posed procedurally around the object they hold.
+ *
+ * Every arm also leaves a hand anchor in its target group (arms/anchor.ts):
+ * the skinned first-person arms (arms/FpArms.ts) pose onto those and replace
+ * this geometry once loaded; the procedural arms are the fallback (loading,
+ * failure, kill switch) and are skipped when `b.armGeometry` is false.
  *
  * Hand-local frame (right hand):
  *   X — along the held object's axis, index finger → pinky
@@ -126,6 +132,8 @@ function foldTube(len: number, radius: (z: number, a: number) => number, around 
 /** Build a gloved hand + sleeve into the builder's current target. */
 export function buildArm(b: GeoBuilder, mats: ViewmodelMaterials, p: ArmPlacement, pose: HandPose) {
   b.arms.push({ target: b.target, p, pose });
+  addHandAnchor(b.target, p, pose);
+  if (!b.armGeometry) return;
   const was = b.armMode;
   b.armMode = true;
   try {

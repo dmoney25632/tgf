@@ -3,6 +3,7 @@ import type { GunSpec } from "./common";
 import { GeoBuilder } from "./geo";
 import { buildArm, type ArmPlacement, type HandPose } from "./hands";
 import type { ViewmodelMaterials } from "./materials";
+import { removeHandAnchors } from "./arms/anchor";
 import { closeSupportHand, fitRealGun, type RealFit, type RealGun, type RealPart, type RealTemplate } from "./realFit";
 
 /**
@@ -60,9 +61,11 @@ function rebuildArm(target: THREE.Object3D, src: GeoBuilder, mats: ViewmodelMate
     if (i >= 0) owned.splice(i, 1);
     mesh.geometry.dispose();
   }
+  removeHandAnchors(target);
   const b = new GeoBuilder(mats.render);
   b.isArm = src.isArm;
   b.armsOnly = src.armsOnly;
+  b.armGeometry = src.armGeometry;
   b.into(target);
   buildArm(b, mats, p, pose);
   b.finish(owned);
