@@ -23,7 +23,8 @@ const M1911: RealGun = { path: "/assets/weapons/m1911/model.gltf", rot: [0, 90, 
 export const REAL_GUNS: Partial<Record<ViewModelKind, RealGun>> = {
   m4a1: M4A1,
   // The same rifle re-finished: the closest licence-clean stand-in for an HK416 so far.
-  hk416: { ...M4A1, tint: 0xd2c8b4 },
+  // r4m's HK416 A7 (its spare magazine and loose rounds were stripped from the file).
+  hk416: { path: "/assets/weapons/hk416/model.gltf", rot: [0, -90, 0], offset: [0, -0.006, 0], parts: { mag: true } },
   // Rigged export (baked to its posed shape); a spare mag sits off to the side.
   akm: { path: "/assets/weapons/akm/model.gltf", rot: [0, 0, 0], offset: [0, -0.008, 0], drop: [{ axis: "x", below: -1.5 }], parts: { mag: true } },
   mp5: MP5,
@@ -40,6 +41,14 @@ export const REAL_GUNS: Partial<Record<ViewModelKind, RealGun>> = {
   sw629: { path: "/assets/weapons/sw629/model.gltf", rot: [16, 180, 0], offset: [0, 0.011, 0] },
   // Poly Haven "Service Pistol" (wooden-grip variant); its loose magazine is seated in the grip.
   m9: { path: "/assets/weapons/m9/model.gltf", rot: [0, 90, 0], offset: [0, 0.002, 0], parts: { mag: /magazine/, bolt: /slide/ }, seat: ["mag"] },
+  // A Glock 18 (the G17 plus a selector), rigged: baked to its rest pose, loose round stripped.
+  g17: { path: "/assets/weapons/g17/model.gltf", rot: [0, 180, 0], parts: { mag: /Object_18/, bolt: true } },
+  // Processed copies (decimated, metre scale, magazine as its own node). The G36's rail red dot was
+  // stripped so the eye runs along the carry handle; the PKP's optic and side mount are gone.
+  g36: { path: "/assets/weapons/g36/model.gltf", rot: [0, 0, 0], offset: [0, -0.016, 0], parts: { mag: /^mag$/ } },
+  // Its 100-round box sits across the gun, so it is wider than the rifles.
+  pkm: { path: "/assets/weapons/pkm/model.gltf", rot: [0, 0, 0], offset: [0, -0.032, 0], parts: { mag: /^mag$/ } },
+  m1014: { path: "/assets/weapons/m1014/model.gltf", rot: [0, 0, 0], offset: [0, 0.012, 0] },
 };
 
 const templates = new Map<ViewModelKind, Promise<RealTemplate | null>>();

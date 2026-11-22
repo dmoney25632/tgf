@@ -1,0 +1,12 @@
+Model Information:
+* title:	G36 with attachments
+* source:	https://sketchfab.com/3d-models/g36-with-attachments-de744d8804ce4231ba3c76f791980832
+* author:	Kelisei Ventura (https://sketchfab.com/frankestudios71)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "G36 with attachments" (https://sketchfab.com/3d-models/g36-with-attachments-de744d8804ce4231ba3c76f791980832) by Kelisei Ventura (https://sketchfab.com/frankestudios71) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/g36.glb; decimated, magazine split off, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG; the rail red dot removed.

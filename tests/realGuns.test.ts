@@ -56,7 +56,8 @@ for (const [kind, cfg] of Object.entries(REAL_GUNS) as [ViewModelKind, RealGun][
     const size = box.getSize(new THREE.Vector3());
     // Length along the bore, narrow across it.
     assert.ok(size.z > size.y && size.y > size.x, `axes: ${size.toArray().map((v) => v.toFixed(3))}`);
-    assert.ok(size.x < 0.13, `width ${size.x.toFixed(3)}`);
+    // A PK's 100-round box hangs across the gun.
+    assert.ok(size.x < (kind === "pkm" ? 0.24 : 0.13), `width ${size.x.toFixed(3)}`);
     // Its muzzle is the front: the real model's nose sits at the (bare) muzzle anchor.
     const muzzle = spec.boreMuzzle ?? spec.muzzle.position;
     assert.ok(Math.abs(box.min.z - muzzle.z) < 0.03, `nose ${box.min.z.toFixed(3)} vs muzzle ${muzzle.z.toFixed(3)}`);

@@ -1,0 +1,12 @@
+Model Information:
+* title:	PKP_pecheneg
+* source:	https://sketchfab.com/3d-models/pkp-pecheneg-ee7b308b1a7d45479776aa1ca57faf0f
+* author:	chipmunkman (https://sketchfab.com/chipmunkman)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "PKP_pecheneg" (https://sketchfab.com/3d-models/pkp-pecheneg-ee7b308b1a7d45479776aa1ca57faf0f) by chipmunkman (https://sketchfab.com/chipmunkman) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/pkm.glb; decimated, optic removed, ammunition box split off, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG; the leftover optic side mount removed.

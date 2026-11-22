@@ -63,6 +63,34 @@ Changes to the files:
 
 At runtime each model is re-oriented, scaled and fitted onto the procedural gun. Its magazine, pump or slide is split off to animate, and the Service Pistol's magazine is seated in the grip.
 
+## First-person gun models, third batch (CC BY 4.0)
+
+| Folder | Work | Author | License |
+|---|---|---|---|
+| `weapons/hk416/` | "HK 416 A7 (free download)" | [r4m](https://sketchfab.com/3d-models/hk-416-a7-free-download-a16768f0ffa24737a4fe324a411cfbd9) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/g17/` | "G18" | [IVA (dxmhl)](https://sketchfab.com/3d-models/g18-fdd5cdd7b31c49f2b16a868ebdf4a75f) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/g36/` | "G36 with attachments" | [Kelisei Ventura (frankestudios71)](https://sketchfab.com/3d-models/g36-with-attachments-de744d8804ce4231ba3c76f791980832) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/pkm/` | "PKP_pecheneg" | [chipmunkman](https://sketchfab.com/3d-models/pkp-pecheneg-ee7b308b1a7d45479776aa1ca57faf0f) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `weapons/m1014/` | "Shotgun BENELLI M4 Super 90 14\"" | [drcrazzie](https://sketchfab.com/3d-models/shotgun-benelli-m4-super-90-14-a4cb85ebf36c40f9af47dd3e38d340a2) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+
+Each folder holds `model.gltf`, `model.bin`, JPG textures and a `LICENSE.txt`. Each licence was checked against the Sketchfab API.
+
+Sources:
+
+- HK416: Patriqu/CosmicFPSLibgdx (the original Sketchfab export).
+- G18, used for the Glock 17: OpenSCCT/OpenSCCT (the original export).
+- G36, PKP and Benelli: birkmann/zugriff, which ships processed copies (decimated, magazine split off, 512 px textures, the PKP's optic removed) under the original licences.
+
+Changes to the files:
+
+- Textures re-encoded as JPG at 1024 px or less.
+- HK416: the spare magazine and loose rounds removed.
+- G18: the loose round removed.
+- G36: the rail red dot removed.
+- PKP: the leftover optic side mount removed.
+
+At runtime the G18's rig is baked to a static pose. The models are fitted onto the procedural gun the same way as the batches above.
+
 ## Environment additions (CC0)
 
 | Folder | Source | License |

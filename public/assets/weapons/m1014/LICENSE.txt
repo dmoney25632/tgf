@@ -1,0 +1,12 @@
+Model Information:
+* title:	Shotgun BENELLI M4 Super 90 14"
+* source:	https://sketchfab.com/3d-models/shotgun-benelli-m4-super-90-14-a4cb85ebf36c40f9af47dd3e38d340a2
+* author:	drcrazzie (https://sketchfab.com/drcrazzie)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "Shotgun BENELLI M4 Super 90 14"" (https://sketchfab.com/3d-models/shotgun-benelli-m4-super-90-14-a4cb85ebf36c40f9af47dd3e38d340a2) by drcrazzie (https://sketchfab.com/drcrazzie) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/benelli.glb; decimated, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG.
