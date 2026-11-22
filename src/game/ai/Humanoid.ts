@@ -687,6 +687,16 @@ export class Humanoid {
     this.actDur = 1.35;
   }
 
+  /**
+   * Ends a reload / throw early (a teammate swapped guns mid-reload): skips to
+   * the blend back to the carry pose, or drops it outright when `now`.
+   */
+  cancelAction(now = false) {
+    if (this.act === "none") return;
+    if (now) this.act = "none";
+    else this.actT = Math.max(this.actT, this.actDur * 0.86);
+  }
+
   /** Busy with a reload or a throw. */
   get acting() {
     return this.act !== "none";

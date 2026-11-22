@@ -1,11 +1,13 @@
 import { ByteReader, ByteWriter } from "./codec";
+import { packAction, unpackAction } from "./actions";
 import type { MissionEvent, MissionState } from "../missions/types";
 
 /**
  * Co-op wire protocol (host-authoritative survival).
  *
  * Rates (see NET below) and typical sizes, measured by tests/net.test.ts:
- *  - Player state, client → everyone, ≤20 Hz: 23 bytes binary
+ *  - Player state, client → everyone, ≤20 Hz: 23 bytes binary (+1 while
+ *    reloading / throwing, for teammates' avatars)
  *    (55 B JSON payload; hit claims add ~20 B each while firing).
  *  - Host snapshot, host → everyone, ≤12 Hz: 19 B header + 14 B per player +
  *    9–11 B per moving enemy (delta) / 19 B per enemy (keyframe, 1 per second).
@@ -472,6 +474,13 @@ export type PlayerStateMsg = {
   shots: number;
   /** Slot this player is reviving, NO_TARGET for none. */
   reviveTarget: number;
+  /**
+   * One-off action in progress (net/actions.ts: 0 none · 1 reload · 2 throw)
+   * and its 6-bit start counter. Sent as one trailing byte only while acting;
+   * older peers stop reading before it, older senders leave it out (= none).
+   */
+  act?: number;
+  actSeq?: number;
 };
 
 export function encodePlayerState(s: PlayerStateMsg): Uint8Array {
@@ -494,6 +503,7 @@ export function encodePlayerState(s: PlayerStateMsg): Uint8Array {
   w.u8(s.weapon);
   w.u8(Math.min(255, s.shots));
   w.u8(s.reviveTarget);
+  if (s.act) w.u8(packAction(s.act, s.actSeq ?? 0));
   return w.bytes();
 }
 
@@ -520,8 +530,14 @@ export function decodePlayerState(bytes: Uint8Array): PlayerStateMsg | null {
     weapon: r.u8(),
     shots: r.u8(),
     reviveTarget: r.u8(),
+    ...(r.remaining > 0 ? unpackActionWire(r.u8()) : { act: 0, actSeq: 0 }),
   };
 }
+
+const unpackActionWire = (b: number) => {
+  const { act, seq } = unpackAction(b);
+  return { act, actSeq: seq };
+};
 
 // ---------------------------------------------------------------------------
 // Side-channel gameplay events (JSON, piggy-backed on the periodic messages)

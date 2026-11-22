@@ -12,6 +12,7 @@ import type { TeamRow } from "../ui/SurvivalHUD";
 import { GRENADE, MELEE, WEAPONS, type WeaponDef, type WeaponId } from "../weapons/weapons";
 import { maxTier, UPGRADE_TRACKS, upgradeWeapon, type UpgradeLevels, type UpgradeTrackId } from "../weapons/upgrades";
 import { RemoteAvatar, RemoteEnemy } from "./avatars";
+import { ACT_NONE, ACT_RELOAD, ACT_THROW, ActionSender } from "./actions";
 import { fromBase64, toBase64 } from "./codec";
 import { HitValidator, type Vec } from "./hitValidation";
 import { ENEMY_TYPES, enemyTypeIndex, WEAPON_IDS, weaponIndex } from "./ids";
@@ -121,6 +122,8 @@ export class CoopSurvivalNet implements MissionNet {
   private stateAcc = 0;
   private stateSeq = 0;
   private lastShots = 0;
+  /** Local reload / grenade throw, sent on our state so teammates' avatars play it. */
+  private readonly localActions = new ActionSender();
   private localReady = false;
   private reviveTarget = NO_TARGET;
   private readonly claims: HitClaimWire[] = [];
@@ -344,7 +347,10 @@ export class CoopSurvivalNet implements MissionNet {
     if (p.last && ((msg.seq - p.last.seq) & 0xffff) > 0x8000) return; // stale
     const now = performance.now();
     if (this.role === "host" && (!p.connected || !p.heard)) this.encoder.forceKeyframe();
-    if (!p.connected) this.ctx.hud.killfeed(p.name, "", "RECONNECTED", false);
+    if (!p.connected) {
+      this.ctx.hud.killfeed(p.name, "", "RECONNECTED", false);
+      p.avatar?.actions.reset();
+    }
     // Movement estimate for the AI's accuracy model.
     if (p.last) {
       const dtS = Math.max(0.01, (msg.time - p.last.time) / 1000);
@@ -357,6 +363,7 @@ export class CoopSurvivalNet implements MissionNet {
     p.pos.set(msg.x, msg.y, msg.z);
     p.clock.observe(msg.time, now);
     p.avatar?.buffer.push(msg.time, [msg.x, msg.y, msg.z, msg.yaw, msg.pitch]);
+    p.avatar?.actions.observe(msg.time, msg.act ?? ACT_NONE, msg.actSeq ?? 0, msg.weapon);
     p.pendingShots = Math.min(30, p.pendingShots + msg.shots);
     p.shotsTotal += Math.min(60, msg.shots);
     if (this.role === "host") {
@@ -396,6 +403,8 @@ export class CoopSurvivalNet implements MissionNet {
     const now = performance.now();
     if (this.role === "client") this.drainSnapshots(now);
     else this.hostSimulate(dt);
+    // Every frame, so even a short action between two sends gets reported.
+    this.localActions.track(this.ctx.grenades.throwProgress >= 0 ? ACT_THROW : this.ctx.weapons.reloading ? ACT_RELOAD : ACT_NONE);
 
     // Liveness.
     for (const p of this.peers.values()) {
@@ -448,6 +457,7 @@ export class CoopSurvivalNet implements MissionNet {
       weapon: weaponIndex(ctx.weapons.active.def.id),
       shots: Math.max(0, shots - this.lastShots),
       reviveTarget: this.reviveTarget,
+      ...this.localActions.wire(),
     };
     this.lastShots = shots;
     const payload: StatePayload & { m: string } = { m: this.setup.matchId, b: toBase64(encodePlayerState(msg)) };

@@ -6,6 +6,7 @@ import { ENEMIES, OPERATORS, type EnemyDef, type EnemyType, type OperatorId } fr
 import { humanoidLook, sanitizeLook } from "../character";
 import { InterpBuffer } from "./interpolation";
 import { NET, STATE_DEAD } from "./protocol";
+import { ActionFollower } from "./actions";
 
 const NO_HIT: Hittable = {
   name: "teammate",
@@ -63,6 +64,8 @@ class NameTag {
 export class RemoteAvatar {
   readonly model: Humanoid;
   readonly buffer = new InterpBuffer(5, 48, [3]);
+  /** Their reloads / grenade throws, replayed on the body in step with the interpolated pose. */
+  readonly actions = new ActionFollower();
   private readonly tag = new NameTag();
   readonly position = new THREE.Vector3();
   yaw = 0;
@@ -110,6 +113,7 @@ export class RemoteAvatar {
     }
     this.prev.copy(this.position);
 
+    this.actions.apply(renderTime, this.model);
     if (s.dead && !this.wasDead) this.model.die(false);
     if (!s.dead && this.wasDead) this.model.revive();
     this.wasDead = s.dead;
