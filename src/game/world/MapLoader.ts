@@ -6,9 +6,9 @@ import type { ModelId } from "../assets/manifest";
 import { Atmosphere, type AtmosphereDef } from "../render/Atmosphere";
 import { SkyOcclusion } from "../render/SkyOcclusion";
 import { MaterialLibrary, setWorldWeather, type WeatherDef } from "../render/Materials";
-import { MeshBuilder } from "./MeshBuilder";
+import { MeshBuilder, beginBakeCapture, endBakeCapture } from "./MeshBuilder";
 import { WorldMaterials, type WorldMat } from "./WorldMaterials";
-import { qualityName, worldDetail } from "./quality";
+import { bakeDetail, qualityName, worldDetail } from "./quality";
 import { ModelPlacer } from "./Props";
 import { disposeProxy, shadowProxies, solidCaster, type ShadowSource } from "./ShadowProxy";
 import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
@@ -16,6 +16,9 @@ import { buildTerrain } from "./Terrain";
 import { Foliage } from "./Foliage";
 import { DRESSINGS, defaultDressing } from "./dressing/index";
 import { accelerateRaycast } from "./MeshRaycastGrid";
+import { MapLighting } from "./lighting/MapLighting";
+import { BlobShadows } from "../render/BlobShadows";
+import { installFlashLights, uninstallFlashLights } from "../render/FlashLights";
 
 /**
  * How a box is drawn (its collider is always the plain AABB):
@@ -115,6 +118,10 @@ export type LoadedMap = {
   atmosphere: Atmosphere;
   /** Interior volumes under roofs, where sky light is blocked. */
   sky: SkyOcclusion;
+  /** Baked sky occlusion / sun bounce for the static world (null when the preset bakes nothing). */
+  lighting: MapLighting | null;
+  /** Soft contact shadows under tracked objects: `blobs.track(soldier.root, { radius: 0.45 })`. */
+  blobs: BlobShadows;
   /** Rescales foliage density, shadow fit and dust for a preset. */
   setQuality(q: QualityPreset): void;
   /** Approximate static geometry counts (for perf budgeting/debug). */
@@ -180,6 +187,11 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   disposables.push(groundGeo);
 
   // ---- Boxes ----------------------------------------------------------------
+  // Every MeshBuilder used while building this map records its boxes as
+  // light-bake occluders (and subdivides big faces for per-vertex light).
+  const bake = bakeDetail(quality);
+  endBakeCapture();
+  const capture = bake ? beginBakeCapture(bake.maxEdge) : null;
   const builder = new MeshBuilder();
   const props = new ModelPlacer(builder);
   const kit = createStyleKit(builder, props);
@@ -251,6 +263,7 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
 
   // ---- Merge static geometry --------------------------------------------------
   const groups = builder.build((m) => wm.get(m));
+  endBakeCapture();
   let staticTris = 0;
   const clutter: THREE.Mesh[] = [];
   for (const [group, list] of groups) {
@@ -296,6 +309,38 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   props.start(root, groups);
   disposables.push(props);
 
+  // ---- Lighting: bake, flash lights, blob shadows ----------------------------
+  let lighting: MapLighting | null = null;
+  if (bake && capture) {
+    const gi = new MapLighting({
+      id: def.id,
+      root,
+      boxes: capture.boxes,
+      ground: plan.terrain.height,
+      groundColor: def.groundColor,
+      hemiSky: atmosphere.hemi.color,
+      hemiGround: atmosphere.hemi.groundColor,
+      sun: atmosphere.sunDirection,
+      detail: bake,
+    });
+    lighting = gi;
+    disposables.push(gi);
+    atmosphere.sunListeners.push(() => gi.start());
+    atmosphere.frameHooks.push(() => gi.update());
+    gi.setQuality(quality, atmosphere.farCascadeExtent);
+    gi.start();
+  }
+  const flashes = installFlashLights(scene, quality.flashLights);
+  disposables.push({ dispose: () => uninstallFlashLights(flashes) });
+  atmosphere.frameHooks.push(() => flashes.update());
+  const blobs = new BlobShadows(scene, 48, (x, z, maxY) => {
+    const y = collision.floorAt(x, z, maxY);
+    return y > 0 ? y : plan.terrain.height(x, z);
+  });
+  blobs.setOpacity(quality.shadows ? 0.4 : 0.6);
+  disposables.push(blobs);
+  atmosphere.frameHooks.push((cam) => blobs.update(cam));
+
   let clutterDistance = worldDetail(qualityName(quality)).clutterDistance;
   const cellCentre = new THREE.Vector3();
   atmosphere.frameHooks.push((cam) => {
@@ -307,6 +352,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   });
   const setQuality = (q: QualityPreset) => {
     atmosphere.setQuality(q);
+    lighting?.setQuality(q, atmosphere.farCascadeExtent);
+    blobs.setOpacity(q.shadows ? 0.4 : 0.6);
     foliage.setQuality(q);
     const name = qualityName(q);
     clutterDistance = worldDetail(name).clutterDistance;
@@ -328,6 +375,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
     sun: atmosphere.sun,
     atmosphere,
     sky,
+    lighting,
+    blobs,
     setQuality,
     stats() {
       let drawables = 0;

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { QualityPreset } from "../config";
+import { installLightingChunks } from "./BakedLighting";
 
 /**
  * Sky, fog, sun/ambient lighting and the per-frame atmosphere update
@@ -262,9 +263,22 @@ export class Atmosphere {
   private readonly lampLights: THREE.PointLight[] = [];
   private maxLampLights = 4;
   private readonly lampOrder: Lamp[] = [];
+  /**
+   * Far shadow cascade: a black directional light that only owns a second,
+   * wide shadow map (see render/BakedLighting's light-loop patch). Re-rendered
+   * every few frames or when the view moves to a new snapped position.
+   */
+  readonly sunFar: THREE.DirectionalLight;
+  private farExtent = 0;
+  private farInterval = 8;
+  private lastFarKey = "";
+  private readonly farCenter = new THREE.Vector3();
+  /** Called after the sun is re-aimed (HDRI azimuth): baked lighting re-bakes. */
+  readonly sunListeners: (() => void)[] = [];
 
   constructor(private readonly scene: THREE.Scene, def: AtmosphereDef, mapHalf: number) {
     installHeightFog();
+    installLightingChunks();
     def = {
       ...def,
       sunIntensity: def.sunIntensity * LIGHT_BALANCE.sun,
@@ -316,6 +330,17 @@ export class Atmosphere {
     Object.assign(this.sun.shadow.camera, { left: -mapHalf, right: mapHalf, top: mapHalf, bottom: -mapHalf, near: 1, far: 260 });
     this.sun.position.copy(this.sunDir).multiplyScalar(100);
     scene.add(this.sun, this.sun.target);
+    // After the sun in the scene: three keeps light order (among casters), and
+    // the light-loop patch expects the sun at index 0.
+    this.sunFar = new THREE.DirectionalLight(0x000000, 0);
+    this.sunFar.name = "sun-far-cascade";
+    this.sunFar.castShadow = false;
+    this.sunFar.visible = false;
+    this.sunFar.shadow.bias = -0.0006;
+    this.sunFar.shadow.normalBias = 0.09;
+    this.sunFar.shadow.radius = 1.6;
+    this.sunFar.shadow.autoUpdate = false;
+    scene.add(this.sunFar, this.sunFar.target);
 
     scene.userData.ihAtmosphere = this;
     this.prevOnBeforeRender = scene.onBeforeRender;
@@ -333,8 +358,34 @@ export class Atmosphere {
     if (!q.dustMotes && this.dust) this.removeDust();
     this.shadowInterval = Math.max(1, Math.round(q.shadowInterval));
     this.lastFitPos.set(1e9, 0, 0);
+    this.setFarCascade(q);
     this.maxLampLights = q.maxLocalLights;
     this.syncLampPool();
+  }
+
+  /** Second shadow cascade per preset (0 extent = single cascade, light hidden). */
+  private setFarCascade(q: QualityPreset) {
+    const far = q.shadows && q.shadowFarExtent > q.shadowExtent ? q.shadowFarExtent : 0;
+    const l = this.sunFar;
+    this.farExtent = far;
+    this.farInterval = Math.max(1, Math.round(q.shadowFarInterval));
+    l.visible = l.castShadow = far > 0;
+    if (!far) return;
+    // Never larger than the near map (mobile presets shrink that one).
+    const size = Math.max(256, Math.min(q.shadowFarMapSize, q.shadowMapSize));
+    if (l.shadow.mapSize.x !== size) {
+      l.shadow.mapSize.set(size, size);
+      l.shadow.map?.dispose();
+      l.shadow.map = null;
+    }
+    Object.assign(l.shadow.camera, { left: -far, right: far, top: far, bottom: -far, near: 1, far: 480 });
+    l.shadow.camera.updateProjectionMatrix();
+    this.lastFarKey = "";
+  }
+
+  /** Far-cascade half-size in use (0 = single cascade). */
+  get farCascadeExtent() {
+    return this.farExtent;
   }
 
   /** Unit vector toward the sun (world space). */
@@ -459,6 +510,7 @@ export class Atmosphere {
    */
   private updateShadow(camera: THREE.Camera, renderer: THREE.WebGLRenderer | undefined, frame: number) {
     const sm = renderer?.shadowMap;
+    this.updateFarCascade(camera, sm, frame);
     if (!sm || this.shadowInterval <= 1) {
       if (sm) sm.autoUpdate = true;
       this.fitShadow(camera);
@@ -476,6 +528,58 @@ export class Atmosphere {
     }
   }
 
+  /**
+   * Far cascade: centred ahead of the camera on a coarse world grid, so the
+   * map (and its matrix) only change when the player has moved ~8 % of its
+   * size, then snapped to whole texels like the near one: no shimmer, and
+   * re-rendered rarely (every farInterval frames for moving soldiers/vehicles).
+   */
+  private updateFarCascade(camera: THREE.Camera, sm: THREE.WebGLShadowMap | undefined, frame: number) {
+    const far = this.farExtent;
+    if (!far || !sm) return;
+    camera.getWorldDirection(this.fwd);
+    this.fwd.y = 0;
+    if (this.fwd.lengthSq() < 1e-6) this.fwd.set(0, 0, -1);
+    this.fwd.normalize();
+    const step = far * 0.08;
+    const cx = Math.round((camera.position.x + this.fwd.x * far * 0.45) / step);
+    const cz = Math.round((camera.position.z + this.fwd.z * far * 0.45) / step);
+    const key = `${cx},${cz}`;
+    const moved = key !== this.lastFarKey;
+    if (!moved && frame % this.farInterval !== 0) return;
+    if (moved) {
+      this.lastFarKey = key;
+      this.farCenter.set(cx * step, 0, cz * step);
+      this.aimShadow(this.sunFar, this.farCenter, far, 220);
+    }
+    this.sunFar.shadow.needsUpdate = true;
+    // Caching the near map (shadowInterval > 1) turns the global auto update off.
+    if (!sm.autoUpdate) sm.needsUpdate = true;
+  }
+
+  /**
+   * Aims a directional light's shadow box at `center` (y ignored), snapped
+   * to whole texels in light space so static edges don't crawl.
+   */
+  private aimShadow(light: THREE.DirectionalLight, center: THREE.Vector3, extent: number, back: number) {
+    const c = this.center.copy(center);
+    c.y = 0;
+    const L = this.sunDir;
+    this.right.set(0, 1, 0).cross(L);
+    if (this.right.lengthSq() < 1e-6) this.right.set(1, 0, 0);
+    this.right.normalize();
+    this.up.crossVectors(L, this.right).normalize();
+    const texel = (extent * 2) / Math.max(1, light.shadow.mapSize.x);
+    const r = Math.round(c.dot(this.right) / texel) * texel;
+    const u = Math.round(c.dot(this.up) / texel) * texel;
+    const l = c.dot(L);
+    c.set(0, 0, 0).addScaledVector(this.right, r).addScaledVector(this.up, u).addScaledVector(L, l);
+    light.target.position.copy(c);
+    light.position.copy(c).addScaledVector(L, back);
+    light.updateMatrixWorld();
+    light.target.updateMatrixWorld();
+  }
+
   /** Extra per-frame work (e.g. foliage tile culling), run with the main camera. */
   readonly frameHooks: ((camera: THREE.Camera) => void)[] = [];
 
@@ -490,29 +594,19 @@ export class Atmosphere {
     this.fwd.y = 0;
     if (this.fwd.lengthSq() < 1e-6) this.fwd.set(0, 0, -1);
     this.fwd.normalize();
-    this.center.copy(camera.position).addScaledVector(this.fwd, this.extent * 0.4);
-    this.center.y = 0;
-    // Light-space basis.
-    const L = this.sunDir;
-    this.right.set(0, 1, 0).cross(L);
-    if (this.right.lengthSq() < 1e-6) this.right.set(1, 0, 0);
-    this.right.normalize();
-    this.up.crossVectors(L, this.right).normalize();
-    const texel = (this.extent * 2) / Math.max(1, sun.shadow.mapSize.x);
-    const r = Math.round(this.center.dot(this.right) / texel) * texel;
-    const u = Math.round(this.center.dot(this.up) / texel) * texel;
-    const l = this.center.dot(L);
-    this.center.set(0, 0, 0).addScaledVector(this.right, r).addScaledVector(this.up, u).addScaledVector(L, l);
-    sun.target.position.copy(this.center);
-    sun.position.copy(this.center).addScaledVector(L, 110);
-    sun.updateMatrixWorld();
-    sun.target.updateMatrixWorld();
+    this.fitPoint.copy(camera.position).addScaledVector(this.fwd, this.extent * 0.4);
+    this.aimShadow(sun, this.fitPoint, this.extent, 110);
   }
+
+  private readonly fitPoint = new THREE.Vector3();
 
   /** Re-aims the sun to a new azimuth (keeps elevation). */
   setSunAzimuth(azimuth: number) {
     const horiz = Math.hypot(this.sunDir.x, this.sunDir.z);
     this.sunDir.set(Math.cos(azimuth) * horiz, this.sunDir.y, Math.sin(azimuth) * horiz).normalize();
+    this.lastFarKey = "";
+    this.lastFitPos.set(1e9, 0, 0);
+    for (const fn of this.sunListeners) fn();
   }
 
   /** Switches from the procedural sky to an HDRI background. */
@@ -536,7 +630,10 @@ export class Atmosphere {
     this.removeDust();
     this.lamps.length = 0;
     this.syncLampPool();
-    this.scene.remove(this.sky, this.hemi, this.sun, this.sun.target);
+    this.scene.remove(this.sky, this.hemi, this.sun, this.sun.target, this.sunFar, this.sunFar.target);
+    this.sunFar.shadow.map?.dispose();
+    this.sunFar.dispose();
+    this.sunListeners.length = 0;
     this.sky.geometry.dispose();
     this.skyMat.dispose();
     this.sun.dispose();

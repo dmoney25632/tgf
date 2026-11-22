@@ -41,6 +41,8 @@ const POST = {
   /** Extra sharpening per unit of resolution lost to dynamic resolution (upscale blur). */
   sharpenUpscale: 0.3,
   shafts: 0.3,
+  /** Screen-space contact-shadow reach toward the sun (m). */
+  contactLength: 0.6,
   /** Eye adaptation: 0 = fixed exposure, 1 = everything ends up mid-grey. */
   adaptStrength: 0.5,
   adaptMin: 0.5,
@@ -151,6 +153,8 @@ uniform float cameraFar;
 uniform float radius;
 uniform float intensity;
 uniform float bias;
+uniform vec3 sunView;
+uniform float contactLength;
 varying vec2 vUv;
 float viewZ( vec2 uv ) { return perspectiveDepthToViewZ( texture2D( tDepth, uv ).x, cameraNear, cameraFar ); }
 vec3 viewPos( vec2 uv, float z ) { return vec3( ( uv * 2.0 - 1.0 ) / projXY * -z, z ); }
@@ -189,7 +193,34 @@ void main() {
 	}
 	float ao = max( 0.0, 1.0 - sum * intensity / float( AO_SAMPLES ) );
 	ao = mix( ao, 1.0, smoothstep( 45.0, 90.0, -z ) );
-	gl_FragColor = vec4( ao, -z, 0.0, 1.0 );
+	float contact = 1.0;
+	#if CONTACT_STEPS > 0
+	// Screen-space contact shadows: a short march toward the sun through the
+	// depth buffer. Grounds feet, prop bases and crevices the shadow map's
+	// texels (and its bias) are too coarse for. Only surfaces facing the sun.
+	if ( dot( N, sunView ) > 0.05 && -z < 40.0 ) {
+		float len = contactLength * ( 1.0 + 0.015 * -z );
+		float jit = fract( noise * 0.7071 );
+		vec3 O = P + N * ( 0.015 + 0.002 * -z );
+		float occ = 0.0;
+		for ( int i = 0; i < CONTACT_STEPS; i ++ ) {
+			float t = ( float( i ) + jit ) / float( CONTACT_STEPS );
+			t *= t;
+			vec3 S = O + sunView * ( len * t + 0.02 );
+			if ( S.z > -0.05 ) break;
+			vec2 suv = ( S.xy * projXY / -S.z ) * 0.5 + 0.5;
+			if ( suv.x < 0.0 || suv.y < 0.0 || suv.x > 1.0 || suv.y > 1.0 ) break;
+			float dz = viewZ( suv ) - S.z;
+			// In front of the ray point, but not by more than a plausible thickness.
+			if ( dz > 0.01 + 0.003 * -S.z && dz < 0.35 + 0.02 * -S.z ) {
+				occ = 1.0 - t;
+				break;
+			}
+		}
+		contact = 1.0 - occ * ( 1.0 - smoothstep( 25.0, 40.0, -z ) );
+	}
+	#endif
+	gl_FragColor = vec4( ao, -z, contact, 1.0 );
 }`;
 
 /** Depth-aware 5x5 blur of the AO buffer (removes the spiral noise). */
@@ -199,18 +230,20 @@ varying vec2 vUv;
 void main() {
 	ivec2 c = ivec2( gl_FragCoord.xy );
 	ivec2 size = textureSize( tAO, 0 ) - 1;
-	vec2 center = texelFetch( tAO, c, 0 ).rg;
+	vec3 center = texelFetch( tAO, c, 0 ).rgb;
 	float tol = 0.04 * center.g + 0.04;
-	float sum = 0.0, wsum = 0.0;
+	float sum = 0.0, csum = 0.0, wsum = 0.0;
 	for ( int y = -2; y <= 2; y ++ ) {
 		for ( int x = -2; x <= 2; x ++ ) {
-			vec2 s = texelFetch( tAO, clamp( c + ivec2( x, y ), ivec2( 0 ), size ), 0 ).rg;
+			vec3 s = texelFetch( tAO, clamp( c + ivec2( x, y ), ivec2( 0 ), size ), 0 ).rgb;
 			float w = max( 0.0, 1.0 - abs( s.g - center.g ) / tol );
 			sum += s.r * w;
+			csum += s.b * w;
 			wsum += w;
 		}
 	}
-	gl_FragColor = vec4( sum / max( wsum, 1e-4 ), center.g, 0.0, 1.0 );
+	wsum = max( wsum, 1e-4 );
+	gl_FragColor = vec4( sum / wsum, center.g, csum / wsum, 1.0 );
 }`;
 
 /** Bright sky pixels around the sun (occluders = anything with depth). */
@@ -359,8 +392,14 @@ void main() {
 		// Viewmodel pixels (depth was cleared for them) keep no world AO;
 		// brightly sun-lit surfaces show less of it (AO is mostly ambient).
 		float vm = step( texture2D( tDepth, vUv ).x, 0.99999 );
-		float lit = smoothstep( 0.6, 3.5, dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ) );
+		float lum = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
+		float lit = smoothstep( 0.6, 3.5, lum );
 		col *= mix( ao, 1.0, max( vm, lit * 0.6 ) );
+		#ifdef USE_CONTACT
+			// Contact shadows only remove sunlight: weight by how sun-lit the pixel looks.
+			float cs = texture2D( tAO, vUv ).b;
+			col *= mix( 1.0, cs, ( 1.0 - vm ) * 0.7 * smoothstep( 0.12, 0.9, lum ) );
+		#endif
 	#endif
 	#ifdef USE_DOF
 		// Aim-down-sights depth of field, for free: the bloom chain already holds a
@@ -675,7 +714,12 @@ export class RenderPipeline {
   }
 
   setQuality(q: QualityPreset) {
-    const shadowsChanged = !this.quality || this.quality.shadows !== q.shadows || this.quality.shadowMapSize !== q.shadowMapSize;
+    const shadowsChanged =
+      !this.quality ||
+      this.quality.shadows !== q.shadows ||
+      this.quality.shadowMapSize !== q.shadowMapSize ||
+      this.quality.shadowFarExtent !== q.shadowFarExtent ||
+      this.quality.shadowFarMapSize !== q.shadowFarMapSize;
     this.quality = q;
     if (q.hdri) this.requestHdri();
 
@@ -781,14 +825,17 @@ export class RenderPipeline {
           radius: { value: POST.aoRadius },
           intensity: { value: POST.aoIntensity },
           bias: { value: POST.aoBias },
+          sunView: { value: new THREE.Vector3(0, 1, 0) },
+          contactLength: { value: POST.contactLength },
         },
-        { AO_SAMPLES: q.aoSamples },
+        { AO_SAMPLES: q.aoSamples, CONTACT_STEPS: Math.max(0, Math.round(q.contactShadows)) },
       );
       this.aoBlurMat.uniforms.tAO.value = this.post.ao!.texture;
     }
 
     const defines: Record<string, string> = {};
     if (ao) defines.USE_AO = "";
+    if (ao && q.contactShadows > 0) defines.USE_CONTACT = "";
     if (q.bloom) defines.USE_BLOOM = "";
     if (q.godRays) defines.USE_SHAFTS = "";
     if (this.adapt) defines.USE_ADAPT = "";
@@ -998,6 +1045,10 @@ export class RenderPipeline {
         u.projXY.value.set(pm[0], pm[5]);
         u.cameraNear.value = this.camera.near;
         u.cameraFar.value = this.camera.far;
+        const sd = getAtmosphere(this.scene)?.sunDirection;
+        if (sd) u.sunView.value.copy(sd);
+        else u.sunView.value.subVectors(this.sun.position, this.sun.target.position).normalize();
+        u.sunView.value.transformDirection(this.camera.matrixWorldInverse);
         this.pass(this.aoMat, p.ao);
         this.pass(this.aoBlurMat, p.aoBlur);
       }

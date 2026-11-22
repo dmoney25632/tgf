@@ -190,6 +190,24 @@ export type QualityPreset = {
   targetFrameMs: number;
   /** Shadowless point lights shared by registered lamps (nearest win). */
   maxLocalLights: number;
+  /**
+   * Second (far) shadow cascade half-size (m); 0 = single cascade. The near
+   * cascade (shadowExtent) stays small and crisp around the player.
+   */
+  shadowFarExtent: number;
+  /** Far-cascade shadow map edge (px). */
+  shadowFarMapSize: number;
+  /** Re-render the far cascade every N frames (it also refreshes when the view moves far). */
+  shadowFarInterval: number;
+  /** Screen-space contact-shadow steps toward the sun (post path); 0 = off. */
+  contactShadows: number;
+  /** Pooled point lights for muzzle flashes / explosions on nearby surfaces (render/FlashLights). */
+  flashLights: number;
+  /**
+   * Baked world lighting at map load (world/quality.ts bakeDetail):
+   * "off", "sky" (sky occlusion + baked sun shadows), "full" (+ one sun bounce).
+   */
+  lightBake: "off" | "sky" | "full";
 };
 
 export const QUALITY: Record<QualityName, QualityPreset> = {
@@ -212,6 +230,12 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     foliageDensity: 0.3,
     grassDistance: 32,
     shadowExtent: 30,
+    shadowFarExtent: 0,
+    shadowFarMapSize: 512,
+    shadowFarInterval: 8,
+    contactShadows: 0,
+    flashLights: 1,
+    lightBake: "sky",
     hdri: false,
     dustMotes: false,
     aoSamples: 0,
@@ -238,7 +262,14 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     anisotropy: 8,
     foliageDensity: 0.65,
     grassDistance: 50,
-    shadowExtent: 36,
+    // Near cascade: crisp around the player; the far one covers the rest.
+    shadowExtent: 26,
+    shadowFarExtent: 100,
+    shadowFarMapSize: 1024,
+    shadowFarInterval: 8,
+    contactShadows: 6,
+    flashLights: 2,
+    lightBake: "full",
     hdri: true,
     dustMotes: true,
     aoSamples: 8,
@@ -265,7 +296,13 @@ export const QUALITY: Record<QualityName, QualityPreset> = {
     anisotropy: 16,
     foliageDensity: 1,
     grassDistance: 70,
-    shadowExtent: 46,
+    shadowExtent: 30,
+    shadowFarExtent: 130,
+    shadowFarMapSize: 2048,
+    shadowFarInterval: 6,
+    contactShadows: 10,
+    flashLights: 3,
+    lightBake: "full",
     hdri: true,
     dustMotes: true,
     aoSamples: 10,

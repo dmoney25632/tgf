@@ -43,6 +43,55 @@ const FAR_REMAP: Partial<Record<WorldMat, WorldMat>> = {
   rubble: "concrete",
   canvas: "cloth",
 };
+/**
+ * Light-bake capture. While a capture is active (MapLoader opens one for
+ * the duration of a map build), every MeshBuilder records the boxes it
+ * draws as occluders for the bake, and subdivides large box faces so
+ * per-vertex lighting has enough vertices to land on.
+ */
+export type CapturedBox = {
+  cx: number; cy: number; cz: number;
+  hx: number; hy: number; hz: number;
+  /** Local axes in world space (row-major), absent when axis aligned. */
+  axes?: number[];
+  /** Linear albedo estimate (tint x typical texture brightness). */
+  r: number; g: number; b: number;
+  group: string;
+  mat: WorldMat;
+};
+export type BakeCapture = {
+  /** Longest edge (m) a box face may keep before it is subdivided; 0 = never. */
+  maxEdge: number;
+  boxes: CapturedBox[];
+};
+let capture: BakeCapture | null = null;
+/** Starts recording occluders (and subdividing faces) for the light bake. */
+export function beginBakeCapture(maxEdge: number): BakeCapture {
+  capture = { maxEdge, boxes: [] };
+  return capture;
+}
+export function endBakeCapture() {
+  const c = capture;
+  capture = null;
+  return c;
+}
+/** Overlay / cut-out materials that don't block light in the bake. */
+const NON_OCCLUDING = new Set<WorldMat>(["decal", "chainlink", "frond", "glow", "signs"]);
+/** Typical linear albedo of the textures under a white tint. */
+const TEXTURE_ALBEDO = 0.55;
+/** Per-axis subdivision cap. */
+const MAX_SEGMENTS = 32;
+const subdividedUnits = new Map<string, THREE.BufferGeometry>();
+function subdividedUnit(sx: number, sy: number, sz: number) {
+  const key = `${sx},${sy},${sz}`;
+  let g = subdividedUnits.get(key);
+  if (!g) {
+    g = new THREE.BoxGeometry(1, 1, 1, sx, sy, sz).toNonIndexed();
+    subdividedUnits.set(key, g);
+  }
+  return g;
+}
+
 export const clutterGroup = (x: number, z: number) => `clutter@${Math.floor(x / CLUTTER_CELL)},${Math.floor(z / CLUTTER_CELL)}`;
 
 type Bucket = { group: string; mat: WorldMat; pos: number[]; nor: number[]; uv: number[]; col: number[]; ao: number[] };
@@ -59,6 +108,7 @@ const _e = new THREE.Euler();
 const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _t = new THREE.Vector3();
+const _rot = new THREE.Matrix4();
 
 /**
  * Accumulates static geometry into one merged mesh per (group, material).
@@ -149,7 +199,42 @@ export class MeshBuilder {
     _e.set(opts.rotX ?? 0, opts.rotY ?? 0, opts.rotZ ?? 0);
     _q.setFromEuler(_e);
     _mat.compose(_p.set(x, y, z), _q, _s.set(w, h, d));
-    this.add(this.unit, _mat, mat, tint, opts);
+    let unit = this.unit;
+    const group = opts.group ?? "decor";
+    if (capture) {
+      const far = group.startsWith("far");
+      if (!far) this.capture(capture, mat, group, x, y, z, w, h, d, tint);
+      const e = capture.maxEdge;
+      // Big faces get a grid of vertices for the per-vertex bake (not backdrop,
+      // proxies or clutter: never seen up close / never drawn).
+      if (e > 0 && !far && !group.startsWith("proxy") && !group.startsWith("clutter") && Math.max(Math.abs(w), Math.abs(h), Math.abs(d)) > e * 1.25) {
+        const seg = (len: number) => Math.min(MAX_SEGMENTS, Math.max(1, Math.round(len / e)));
+        const sx = seg(Math.abs(w)), sy = seg(Math.abs(h)), sz = seg(Math.abs(d));
+        if (sx * sy * sz > 1) unit = subdividedUnit(sx, sy, sz);
+      }
+    }
+    this.add(unit, _mat, mat, tint, opts);
+  }
+
+  private capture(c: BakeCapture, mat: WorldMat, group: string, x: number, y: number, z: number, w: number, h: number, d: number, tint: THREE.ColorRepresentation) {
+    if (NON_OCCLUDING.has(mat)) return;
+    const dims = [Math.abs(w), Math.abs(h), Math.abs(d)].sort((a, b) => a - b);
+    // Rods, battens and wires (two small dimensions) barely occlude: skip them.
+    if (dims[1] < 0.1 || dims[2] < 0.25) return;
+    // Color.set() decodes sRGB hex into the linear working space.
+    _col.set(tint);
+    const k = TEXTURE_ALBEDO;
+    const box: CapturedBox = {
+      cx: x, cy: y, cz: z, hx: Math.abs(w) / 2, hy: Math.abs(h) / 2, hz: Math.abs(d) / 2,
+      r: Math.min(0.8, _col.r * k), g: Math.min(0.8, _col.g * k), b: Math.min(0.8, _col.b * k),
+      group, mat,
+    };
+    if (_q.x !== 0 || _q.y !== 0 || _q.z !== 0) {
+      // Columns of the rotation = local axes in world space.
+      const e = _rot.makeRotationFromQuaternion(_q).elements;
+      box.axes = [e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10]];
+    }
+    c.boxes.push(box);
   }
 
   /** Box given by min corner (feet) + size, like MapBox. */
