@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { solveHand, type ArmsTemplate, type Side, type SideRest } from "../../weapons/viewmodel/arms/rig";
+import type { HandAnchorData } from "../../weapons/viewmodel/arms/anchor";
+import type { HandPose } from "../../weapons/viewmodel/hands";
 
 /**
  * World-space pose helpers for an arbitrary bone hierarchy (the Rocketbox
@@ -121,4 +124,68 @@ export function solveTwoBone(
   _c.subVectors(_e, _b).normalize();
   swingWorld(lower, _f, _c);
   if (endQ) setWorldQuat(end, endQ);
+}
+
+// ---------------------------------------------------------------------------
+// Gripping hands: the first-person arms' finger solver (viewmodel/arms/rig.ts
+// solveHand: the hand on a hand anchor, fingers wrapped joint by joint around
+// the held object) run on a soldier's own Rocketbox hand. Both rigs are
+// Biped skeletons, so only the rest pose differs.
+// ---------------------------------------------------------------------------
+
+const FINGERS = 5;
+
+/**
+ * The slice of an fp ArmsTemplate solveHand reads (hand frame, finger chains,
+ * tips), built from a soldier skeleton's bind pose. `bind(name)`: the bone's
+ * bind matrix in skeleton space; `local(name)`: its rest local position /
+ * rotation. Null when the skeleton lacks finger bones.
+ */
+export function gripTemplate(bind: (n: string) => THREE.Matrix4 | undefined, local: (n: string) => THREE.Object3D | undefined): ArmsTemplate | null {
+  const sides = {} as Record<Side, SideRest>;
+  for (const S of ["R", "L"] as const) {
+    const p = `Bip01_${S}_`;
+    const handW = bind(p + "Hand");
+    if (!handW) return null;
+    const fingers: SideRest["fingers"] = [];
+    const tips: THREE.Vector3[] = [];
+    for (let f = 0; f < FINGERS; f++) {
+      const names = [`${p}Finger${f}`, `${p}Finger${f}1`, `${p}Finger${f}2`];
+      const chain = names.map((n) => local(n));
+      const W = names.map((n) => bind(n));
+      if (chain.some((c) => !c) || W.some((w) => !w)) return null;
+      fingers.push(chain.map((c) => ({ index: -1, pos: c!.position.clone(), quat: c!.quaternion.clone() })));
+      // Tip: one distal length on along the middle -> distal direction, in the distal bone's frame.
+      const o1 = new THREE.Vector3().setFromMatrixPosition(W[1]!);
+      const o2 = new THREE.Vector3().setFromMatrixPosition(W[2]!);
+      const dir = o2.clone().sub(o1);
+      const len = dir.length() * 0.95;
+      const inv = new THREE.Matrix4().copy(W[2]!).invert();
+      tips.push(o2.clone().addScaledVector(dir.normalize(), len).applyMatrix4(inv));
+    }
+    // Anatomical hand frame, exactly as rig.ts makeTemplate builds it.
+    const wrist = new THREE.Vector3().setFromMatrixPosition(handW);
+    const k1 = new THREE.Vector3().setFromMatrixPosition(bind(`${p}Finger1`)!);
+    const k4 = new THREE.Vector3().setFromMatrixPosition(bind(`${p}Finger4`)!);
+    const mid = k1.clone().add(k4).multiplyScalar(0.5);
+    const Z = mid.clone().sub(wrist).normalize();
+    const across = k4.clone().sub(k1).normalize();
+    const Y = S === "R" ? new THREE.Vector3().crossVectors(Z, across) : new THREE.Vector3().crossVectors(across, Z);
+    Y.addScaledVector(Z, -Y.dot(Z)).normalize();
+    const X = new THREE.Vector3().crossVectors(Y, Z);
+    const anat = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(mid);
+    const handFromAnat = anat.invert().multiply(handW);
+    sides[S] = { side: S, fingers, tips, handFromAnat } as SideRest;
+  }
+  return { sides } as ArmsTemplate;
+}
+
+/** Hand anchor data for solveHand from a gun-frame anchor: the placement is the identity (the frame is the anchor itself). */
+export function gripAnchor(side: Side, pose: HandPose): HandAnchorData {
+  return { side, pose, placement: { at: [0, 0, 0], axis: [side === "R" ? 1 : -1, 0, 0], palm: [0, -1, 0], elbow: [0, 0, 0], left: side === "L" }, elbow: new THREE.Vector3() };
+}
+
+/** Hand bone transform in anchor space + the 15 finger rotations (cached on the anchor per template). */
+export function gripSolve(t: ArmsTemplate, d: HandAnchorData) {
+  return solveHand(t, d);
 }

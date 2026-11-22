@@ -4,10 +4,11 @@ import type { HitPart } from "../core/types";
 import type { EffectsPool } from "../effects/EffectsPool";
 import type { Sfx } from "../audio/Sfx";
 import type { CollisionWorld } from "../world/Collision";
-import { ENEMIES, SQUAD, type EnemyType } from "../survival/config";
+import { ENEMIES, SQUAD, type AgentWeapon, type EnemyType } from "../survival/config";
 import { Agent, type AgentSpec } from "./Agent";
 import { attachJuggernautArmor, disposeJuggernautArmor } from "./heavy/JuggernautArmor";
 import { tickStagger } from "./heavy/Juggernaut";
+import { setSoldierFloor } from "./soldier/MocapBody";
 import type { CoverPoint, NavGrid } from "./NavGrid";
 import type { Combatant } from "./types";
 
@@ -29,6 +30,17 @@ export type AgentEvents = {
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /**
+ * Rounds an AI soldier fires before it reloads (the configs carry no
+ * magazine size): belt-fed (long bursts) 100, slow single shots (shotgun,
+ * bolt / marksman) 6-8, everything else a 30-round magazine.
+ */
+export function aiMagSize(w: Pick<AgentWeapon, "rpm" | "burst">) {
+  if (w.burst[1] >= 16) return 100;
+  if (w.rpm < 120) return w.burst[1] <= 1 && w.rpm < 90 ? 6 : 8;
+  return 30;
+}
+
+/**
  * AI director for every soldier on the field: pooled enemies by type and the
  * friendly squad. Thinks at 5 Hz per agent (staggered), moves and animates
  * every frame, budgets A* searches, picks cover, and resolves AI gunfire with
@@ -39,6 +51,8 @@ export class AgentManager {
   readonly squad: Agent[] = [];
   private readonly pools = new Map<string, Agent[]>();
   private readonly lasers = new Map<Agent, THREE.Mesh>();
+  /** Rounds left in each agent's magazine (filled on first use). */
+  private readonly rounds = new Map<Agent, number>();
   private nextId = 1;
   private time = 0;
   /** A* time spent this frame (ms). */
@@ -86,7 +100,10 @@ export class AgentManager {
     private readonly player: Combatant,
     private readonly listener: THREE.Vector3,
     private readonly events: AgentEvents,
-  ) {}
+  ) {
+    // Dropped magazines land on the real floor.
+    setSoldierFloor((x, z, maxY) => this.world.floorAt(x, z, maxY));
+  }
 
   // ---------------------------------------------------------------------------
   // Spawning / pooling
@@ -252,6 +269,7 @@ export class AgentManager {
         if (laser) laser.visible = false;
         if (ag.deathTimer > this.corpseTime) {
           ag.deactivate();
+          this.rounds.delete(ag); // a fresh magazine when the agent is reused
           this.active.splice(i, 1);
           this.pool(ag.spec.role).push(ag);
         }
@@ -688,6 +706,8 @@ export class AgentManager {
       ag.engageTime = Math.max(0, ag.engageTime - dt * 2);
       if (ag.burstLeft > 0 && !wantFire) ag.burstLeft = 0;
       ag.pauseTimer = Math.max(ag.pauseTimer - dt, 0);
+      // A lull with a half-empty magazine: top it up.
+      if (!ag.hasLos && (this.rounds.get(ag) ?? Infinity) < aiMagSize(ag.spec.weapon) / 2) this.reload(ag);
     }
 
     ag.model.update(dt, ag.moveSpeed, ag.crouched, ag.aimPitch, faceTarget || wantFire || suppressing);
@@ -826,8 +846,27 @@ export class AgentManager {
   // Shooting
   // ---------------------------------------------------------------------------
 
+  /** Rounds spent: an empty magazine starts a reload (the soldier plays it; no firing until it ends). */
+  private spend(ag: Agent) {
+    const left = (this.rounds.get(ag) ?? aiMagSize(ag.spec.weapon)) - 1;
+    this.rounds.set(ag, left);
+    if (left <= 0) this.reload(ag);
+  }
+
+  private reload(ag: Agent) {
+    if (ag.model.acting) return;
+    ag.model.reload();
+    ag.burstLeft = 0;
+    this.rounds.set(ag, aiMagSize(ag.spec.weapon));
+  }
+
   private trigger(ag: Agent, dt: number, suppress: boolean) {
     const w = ag.spec.weapon;
+    // Mid reload / throw: hands are busy.
+    if (ag.model.acting) {
+      ag.burstLeft = 0;
+      return;
+    }
     if (ag.burstLeft <= 0) {
       ag.pauseTimer -= dt;
       if (ag.pauseTimer > 0) return;
@@ -839,6 +878,7 @@ export class AgentManager {
       if (suppress) this.suppressShot(ag);
       else this.shoot(ag);
       ag.burstLeft--;
+      if (ag.model.acting) ag.burstLeft = 0; // ran dry
       ag.fireTimer += 60 / w.rpm;
       if (ag.burstLeft === 0) ag.pauseTimer = rand(w.burstPause[0], w.burstPause[1]);
     }
@@ -871,6 +911,7 @@ export class AgentManager {
     const dist = muzzle.distanceTo(this.b);
     if (dist > w.range) return;
     ag.model.fire();
+    this.spend(ag);
     this.net?.onShot(ag); // [coop]
 
     const hit = Math.random() < this.hitChance(ag, t, dist);
@@ -915,6 +956,7 @@ export class AgentManager {
     if (len0 < 1e-3) return;
     this.d.multiplyScalar(1 / len0);
     ag.model.fire();
+    this.spend(ag);
     const far = this.world.raycast(muzzle.x, muzzle.y, muzzle.z, this.d.x, this.d.y, this.d.z, w.range);
     const len = far === Infinity ? w.range : Math.min(far, w.range);
     this.e.copy(this.d).multiplyScalar(len).add(muzzle);
@@ -944,7 +986,7 @@ export class AgentManager {
     const t = ag.target;
     const w = ag.spec.weapon;
     if (ag.pauseTimer > 0) ag.pauseTimer -= dt;
-    if (!t || !ag.hasLos || ag.pauseTimer > 0) {
+    if (!t || !ag.hasLos || ag.pauseTimer > 0 || ag.model.acting) {
       ag.aimCharge = ag.aimCharge > 0 ? Math.max(0, ag.aimCharge - dt) : -1;
       if (laser) laser.visible = ag.aimCharge > 0;
       if (ag.aimCharge <= 0) {

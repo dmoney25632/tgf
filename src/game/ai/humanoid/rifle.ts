@@ -2,7 +2,10 @@ import * as THREE from "three";
 import { cyl, ellipsoid, GeoBuilder, paint, profile, rbox, shade, T, type Paint } from "./geo";
 import { SURF } from "./materials";
 import type { Kit } from "./kit";
-import type { ThirdPersonKind } from "../../weapons/weapons";
+import type { ThirdPersonKind, ViewModelKind } from "../../weapons/weapons";
+import type { HandPose } from "../../weapons/viewmodel/hands";
+import type { ReloadStyle } from "../../weapons/viewmodel/common";
+import { loadScene, versionedUrl } from "../../assets/AssetLoader";
 
 /**
  * Third-person weapons. Frame: origin at the butt plate centre, +Z toward
@@ -270,6 +273,11 @@ function m82(b: GeoBuilder, p: Pal): Part {
 /** Third-person family for each enemy kit. */
 const KIT_GUN: Record<string, ThirdPersonKind> = { rusher: "shotgun", heavy: "lmg", warden: "lmg", sniper: "bolt" };
 
+/** The weapon family a soldier carries: its own (teammates) or its kit's. */
+export function gunFamily(kit: Kit, tp?: ThirdPersonKind): ThirdPersonKind {
+  return tp ?? KIT_GUN[kit] ?? "carbine";
+}
+
 /**
  * Build (uncached) a weapon. `tp` picks the family (teammates show their
  * primary); without it the enemy kit decides. Cached by the caller.
@@ -281,7 +289,7 @@ export function buildGun(kit: Kit, accent: number, vest: number, tp?: ThirdPerso
   let s: Part;
   let kick = 1;
   const pivot = new THREE.Vector3(-0.09, 0.385, 0.1);
-  const fam = tp ?? KIT_GUN[kit] ?? "carbine";
+  const fam = gunFamily(kit, tp);
   switch (fam) {
     case "shotgun":
       s = shotgun(b, p);
@@ -331,4 +339,116 @@ export function buildGun(kit: Kit, accent: number, vest: number, tp?: ThirdPerso
       s = carbine(b, p);
   }
   return { ...s, geo: b.merge()!, kick, pivot };
+}
+
+// ---------------------------------------------------------------------------
+// Real third-person guns: decimated, atlas-baked copies of the first-person
+// models (art/blender/tpguns), in the GunSpec frame above. The procedural
+// spec stays the fallback (and the far LOD); its pivot / kick / leftUnder
+// per family are kept, the real model brings its own grips, magazine and
+// muzzle. Kill switch: localStorage "tgf.tpguns" = "procedural".
+// ---------------------------------------------------------------------------
+
+/** Family default when a soldier's exact weapon is unknown (enemy kits). */
+export const TP_FAMILY_MODEL: Record<ThirdPersonKind, ViewModelKind | null> = {
+  carbine: "m4a1", ak: "akm", bullpup: "aug", smg: "mp5", p90: "p90", lmg: "m249", pkm: "pkm",
+  shotgun: "r870", bolt: "m24", svd: "svd", m82: "m82", pistol: null,
+};
+
+/** The third-person model a soldier carries: its weapon's own model when it has one, else its family's. */
+export function tpModelFor(fam: ThirdPersonKind, model?: ViewModelKind): ViewModelKind | null {
+  return fam === "pistol" ? null : (model ?? TP_FAMILY_MODEL[fam]);
+}
+
+/** A hand anchor (viewmodel/arms/anchor.ts frame) in the gun frame, with the pose that wraps the fingers. */
+export type TpAnchor = { m: number[]; pose: HandPose; side: "L" | "R" };
+
+/** One gun's entry in public/assets/weapons/tp/guns.json (written by art/blender/tpguns/build.mjs). */
+export type TpGunInfo = {
+  kind: ViewModelKind;
+  reload: ReloadStyle;
+  length: number;
+  muzzle: [number, number, number];
+  gripR: TpAnchor;
+  gripL: TpAnchor;
+  /** Magazine well (top centre of the magazine) and the support hand's grab on it, gun frame. */
+  mag: { well: [number, number, number]; grab: TpAnchor | null } | null;
+  tris: { tris: number; magTris: number; lod1Tris: number };
+};
+
+export type TpGun = {
+  kind: ViewModelKind;
+  info: TpGunInfo;
+  /** Near / mid geometries (gun frame). */
+  body: [THREE.BufferGeometry, THREE.BufferGeometry];
+  /** Magazine (gun frame, separate so reloads can take it out), or null. */
+  mag: THREE.BufferGeometry | null;
+  material: THREE.Material;
+  gripR: THREE.Matrix4;
+  gripL: THREE.Matrix4;
+  magGrab: THREE.Matrix4 | null;
+  muzzle: THREE.Vector3;
+  well: THREE.Vector3 | null;
+};
+
+export type TpFile = { guns: Record<string, TpGunInfo>; alias: Record<string, string> };
+
+const TP_BASE = "/assets/weapons/tp/";
+let tpSource: Promise<{ scene: THREE.Object3D; file: TpFile } | null> | null = null;
+const tpGuns = new Map<ViewModelKind, Promise<TpGun | null>>();
+
+function tpDisabled() {
+  try {
+    return typeof window === "undefined" || window.localStorage?.getItem("tgf.tpguns") === "procedural";
+  } catch {
+    return false;
+  }
+}
+
+/** Builds a TpGun from the loaded tp scene + guns.json (pure; node tests and the render harness use it directly). */
+export function makeTpGun(scene: THREE.Object3D, file: TpFile, want: ViewModelKind): TpGun | null {
+  const kind = (file.guns[want] ? want : file.alias[want]) as ViewModelKind | undefined;
+  const info = kind && file.guns[kind];
+  if (!kind || !info) return null;
+  const mesh = (name: string) => {
+    let found: THREE.Mesh | null = null;
+    scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!found && m.isMesh && (o.name === name || o.parent?.name === name)) found = m;
+    });
+    return found as THREE.Mesh | null;
+  };
+  const near = mesh(kind);
+  if (!near) return null;
+  const mid = mesh(`${kind}_lod1`) ?? near;
+  const mag = mesh(`${kind}_mag`);
+  const material = near.material as THREE.MeshStandardMaterial;
+  material.side = THREE.FrontSide;
+  const m4 = (a: TpAnchor) => new THREE.Matrix4().fromArray(a.m);
+  return {
+    kind,
+    info,
+    body: [near.geometry, mid.geometry],
+    mag: mag && info.mag ? mag.geometry : null,
+    material,
+    gripR: m4(info.gripR),
+    gripL: m4(info.gripL),
+    magGrab: info.mag?.grab ? m4(info.mag.grab) : null,
+    muzzle: new THREE.Vector3(...info.muzzle),
+    well: info.mag ? new THREE.Vector3(...info.mag.well) : null,
+  };
+}
+
+/** Loads (once) and returns the real third-person gun for a model; null if missing, disabled or failed. */
+export function loadTpGun(kind: ViewModelKind | null): Promise<TpGun | null> {
+  if (!kind || tpDisabled()) return Promise.resolve(null);
+  let p = tpGuns.get(kind);
+  if (p) return p;
+  tpSource ??= Promise.all([
+    loadScene(TP_BASE + "model.gltf"),
+    fetch(versionedUrl(TP_BASE + "guns.json")).then((r) => (r.ok ? (r.json() as Promise<TpFile>) : null)).catch(() => null),
+  ]).then(([scene, file]) => (scene && file ? { scene, file } : null));
+  p = tpSource.then((s) => (s ? makeTpGun(s.scene, s.file, kind) : null)).catch(() => null);
+  tpGuns.set(kind, p);
+  return p;
 }

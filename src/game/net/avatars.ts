@@ -83,7 +83,7 @@ export class RemoteAvatar {
     const c = op.colors;
     // Custom character look when the player saved one; teammates carry their operator's primary in third person.
     const base = look ? humanoidLook(sanitizeLook(look)) : { uniform: c.sleeve, vest: c.vest, helmet: c.helmet, accent: c.accent, skin: 0xb08a6a, kit: "standard" as const, scale: 1 };
-    this.model = new Humanoid(NO_HIT, { ...base, gun: WEAPONS[op.primary]?.tp });
+    this.model = new Humanoid(NO_HIT, { ...base, gun: WEAPONS[op.primary]?.tp, gunModel: WEAPONS[op.primary]?.model });
     this.model.root.visible = false;
     this.tag.sprite.position.set(0, 2.15, 0);
     this.model.root.add(this.tag.sprite);

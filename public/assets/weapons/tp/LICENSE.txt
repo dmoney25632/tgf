@@ -1,0 +1,167 @@
+Third-person soldier guns: decimated, re-textured derivatives of the first-person models
+in public/assets/weapons/<kind>/ (built by art/blender/tpguns/build.mjs). Each keeps its source's licence:
+
+== m4a1 ==
+Model Information:
+* title:	M4A1
+* source:	https://sketchfab.com/3d-models/m4a1-33107f38b23c45cc8103768c0e961cdf
+* author:	TORI106 (https://sketchfab.com/TORI106)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "M4A1" (https://sketchfab.com/3d-models/m4a1-33107f38b23c45cc8103768c0e961cdf) by TORI106 (https://sketchfab.com/TORI106) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== hk416 ==
+Model Information:
+* title:	HK 416 A7 (free download)
+* source:	https://sketchfab.com/3d-models/hk-416-a7-free-download-a16768f0ffa24737a4fe324a411cfbd9
+* author:	r4m (https://sketchfab.com/r4m)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "HK 416 A7 (free download)" (https://sketchfab.com/3d-models/hk-416-a7-free-download-a16768f0ffa24737a4fe324a411cfbd9) by r4m (https://sketchfab.com/r4m) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained via github.com/Patriqu/CosmicFPSLibgdx (assets/models). Changes: textures re-encoded from PNG to 1024 px JPG; the spare magazine and loose rounds removed.
+
+== akm ==
+Model Information:
+* title:	Ak47
+* source:	https://sketchfab.com/3d-models/ak47-831519a097d84e079fd8bc4b15e5b57d
+* author:	wburton (https://sketchfab.com/wburton95)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Ak47" (https://sketchfab.com/3d-models/ak47-831519a097d84e079fd8bc4b15e5b57d) by wburton (https://sketchfab.com/wburton95) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== mp5 ==
+Model Information:
+* title:	MP5 | PBR | High Poly
+* source:	https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529
+* author:	Stein Games (https://sketchfab.com/jvitor17)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "MP5 | PBR | High Poly" (https://sketchfab.com/3d-models/mp5-pbr-high-poly-60ec470e41ff47368c792dd6caa74529) by Stein Games (https://sketchfab.com/jvitor17) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== m24 ==
+Model Information:
+* title:	M24 Bounty Hunter Sniper Rifle
+* source:	https://sketchfab.com/3d-models/m24-bounty-hunter-sniper-rifle-d40e74e2259549f5b025807163f1028c
+* author:	Naudaff3D (https://sketchfab.com/Naudaff3D)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "M24 Bounty Hunter Sniper Rifle" (https://sketchfab.com/3d-models/m24-bounty-hunter-sniper-rifle-d40e74e2259549f5b025807163f1028c) by Naudaff3D (https://sketchfab.com/Naudaff3D) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== svd ==
+Model Information:
+* title:	Dragunov SVD
+* source:	https://sketchfab.com/3d-models/dragunov-svd-e3520e52a0d547b6b7c7ff2726161702
+* author:	Vintar (https://sketchfab.com/vintar)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Dragunov SVD" (https://sketchfab.com/3d-models/dragunov-svd-e3520e52a0d547b6b7c7ff2726161702) by Vintar (https://sketchfab.com/vintar) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== r870 ==
+Model Information:
+* title:	Remington870 Shotgun
+* source:	https://sketchfab.com/3d-models/remington870-shotgun-a4852997660a43839c30e36dfca5a3e7
+* author:	Trip (https://sketchfab.com/Triptonic)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Remington870 Shotgun" (https://sketchfab.com/3d-models/remington870-shotgun-a4852997660a43839c30e36dfca5a3e7) by Trip (https://sketchfab.com/Triptonic) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== m249 ==
+Model Information:
+* title:	M249 Machine Gun
+* source:	https://sketchfab.com/3d-models/m249-machine-gun-bf0105376a2d4c37926f3ce95316460d
+* author:	Kendrick Russell (https://sketchfab.com/Buce)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "M249 Machine Gun" (https://sketchfab.com/3d-models/m249-machine-gun-bf0105376a2d4c37926f3ce95316460d) by Kendrick Russell (https://sketchfab.com/Buce) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+== g36 ==
+Model Information:
+* title:	G36 with attachments
+* source:	https://sketchfab.com/3d-models/g36-with-attachments-de744d8804ce4231ba3c76f791980832
+* author:	Kelisei Ventura (https://sketchfab.com/frankestudios71)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "G36 with attachments" (https://sketchfab.com/3d-models/g36-with-attachments-de744d8804ce4231ba3c76f791980832) by Kelisei Ventura (https://sketchfab.com/frankestudios71) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/g36.glb; decimated, magazine split off, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG; the rail red dot removed.
+
+== p90 ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== aug ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== scarl ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== m82 ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== m16a4 ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== uzi ==
+Original work for this project (art/blender/assets), same licence as the game.
+
+== pkm ==
+Model Information:
+* title:	PKP_pecheneg
+* source:	https://sketchfab.com/3d-models/pkp-pecheneg-ee7b308b1a7d45479776aa1ca57faf0f
+* author:	chipmunkman (https://sketchfab.com/chipmunkman)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "PKP_pecheneg" (https://sketchfab.com/3d-models/pkp-pecheneg-ee7b308b1a7d45479776aa1ca57faf0f) by chipmunkman (https://sketchfab.com/chipmunkman) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/pkm.glb; decimated, optic removed, ammunition box split off, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG; the leftover optic side mount removed.
+
+== m1014 ==
+Model Information:
+* title:	Shotgun BENELLI M4 Super 90 14"
+* source:	https://sketchfab.com/3d-models/shotgun-benelli-m4-super-90-14-a4cb85ebf36c40f9af47dd3e38d340a2
+* author:	drcrazzie (https://sketchfab.com/drcrazzie)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "Shotgun BENELLI M4 Super 90 14"" (https://sketchfab.com/3d-models/shotgun-benelli-m4-super-90-14-a4cb85ebf36c40f9af47dd3e38d340a2) by drcrazzie (https://sketchfab.com/drcrazzie) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Obtained as the processed copy in github.com/birkmann/zugriff (assets/models/benelli.glb; decimated, 512 px textures; asset licence unchanged per its CREDITS.md). Changes: converted to glTF + JPG.

@@ -5,14 +5,16 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { buildBody, STD_LOOKS, withQuality, type BodyBuild, type FaceSpec, type HitDims, type LookDef } from "./humanoid/body";
 import { disposeHeads, FACE_IDS, faceIdentity, faceMaterial, onHeadReady, type FaceLook } from "./humanoid/head";
 import { disposeMaterials, eliteMaterial, ghillieMaterial, hitboxMaterial, lensMaterial, uberMaterial } from "./humanoid/materials";
-import { buildGun, type GunSpec } from "./humanoid/rifle";
+import { buildGun, gunFamily, loadTpGun, tpModelFor, type GunSpec, type TpGun } from "./humanoid/rifle";
+import type { ViewModelKind } from "../weapons/weapons";
 import { BONES, HAND_SOCKET, RIG, solveArm, type BoneName } from "./humanoid/rig";
 import { disposeSoldierMaterials, mocapWanted, onSoldiersReady, soldierLodDistances, withAvatars, type SoldierAvatar, type SoldierLibrary } from "./soldier/assets";
 import { disposeSoldierGear } from "./soldier/gear";
 import { npcIdentity, partSources, playerIdentity, type AvatarId, type SoldierIdentity } from "./soldier/identity";
 import { MocapBody, type DriveState, type ProcRig } from "./soldier/MocapBody";
 
-export type HumanoidLook = LookDef;
+/** gunModel: the exact weapon (WeaponDef.model) for its real third-person model; the family's default otherwise. */
+export type HumanoidLook = LookDef & { gunModel?: ViewModelKind };
 
 // ---------------------------------------------------------------------------
 // Rendering: every soldier is a few SkinnedMeshes over one rigid skeleton
@@ -51,6 +53,13 @@ const geoCache = new Map<string, SoldierGeo>();
 const gunCache = new Map<string, GunSpec>();
 /** Rifle-only skinned geometry (gun bone), drawn next to the mocap body. */
 const gunOnlyCache = new Map<string, THREE.BufferGeometry>();
+/** Real third-person gun geometry, rigidly skinned to the gun bone (per geometry). */
+const tpSkinCache = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
+function tpSkinned(g: THREE.BufferGeometry) {
+  let s = tpSkinCache.get(g);
+  if (!s) tpSkinCache.set(g, (s = skinMerge([[GUN_BONE, g]])));
+  return s;
+}
 const boxCache = new Map<string, THREE.BoxGeometry>();
 const IDENTITY = new THREE.Matrix4();
 const IDENTITIES = Array.from({ length: BONES.length + 1 }, () => IDENTITY);
@@ -387,7 +396,16 @@ export class Humanoid {
   private mocapDt = 0;
   private mocapTick = 0;
   private elite = false;
-  private readonly drive: DriveState = { speed: 0, crouch: 0, aim: 0, aimPitch: 0, moveF: 1, moveS: 0, down: 0 };
+  private readonly drive: DriveState = { speed: 0, crouch: 0, aim: 0, aimPitch: 0, moveF: 1, moveS: 0, down: 0, kick: 0, action: "none", actionT: 0 };
+
+  // Real third-person gun (near / mid LOD with the mocap body; the procedural rifle stays the fallback and the far LOD).
+  private tp: TpGun | null = null;
+  private tpMeshes: THREE.SkinnedMesh[] = [];
+  private procGuns: THREE.Object3D[] = [];
+  // One-off actions (reload, grenade throw): kind, elapsed and length (s).
+  private act: "none" | "reload" | "throw" = "none";
+  private actT = 0;
+  private actDur = 1;
 
   constructor(owner: Hittable, look: HumanoidLook) {
     this.scale = look.scale;
@@ -526,6 +544,8 @@ export class Humanoid {
     // Every kit (and the players' own characters) gets the motion-captured
     // body once its avatars have loaded; until then (and on Low) it stays procedural.
     if (mocapWanted()) {
+      // ... holding the real model of its weapon (its family's default for enemy kits).
+      void loadTpGun(tpModelFor(gunFamily(kit, look.gun), look.gunModel)).then((g) => g && this.useTpGun(g));
       const ids = Object.values(partSources(this.identity)).filter((x): x is AvatarId => !!x);
       onSoldiersReady((lib) =>
         withAvatars(ids, (avatars) => {
@@ -594,9 +614,10 @@ export class Humanoid {
     const [dMid, dFar] = soldierLodDistances();
     const levels = this.lod.levels;
     const near = body.near;
-    near.add(skinnedGun(0));
     const mid = body.mid;
-    mid.add(skinnedGun(1));
+    this.procGuns = [skinnedGun(0), skinnedGun(1)];
+    near.add(this.procGuns[0]);
+    mid.add(this.procGuns[1]);
     for (const [i, obj, dist] of [[0, near, 0], [1, mid, dMid]] as const) {
       this.lod.remove(levels[i].object);
       levels[i].object = obj;
@@ -609,6 +630,66 @@ export class Humanoid {
     body.setElite(this.elite);
     if (this.death >= 0) body.die(false);
     for (const f of this.follows) this.followMocap(f);
+    if (this.tp) this.mountTp();
+  }
+
+  /** The real third-person gun has loaded: shown with the mocap body (now, or when it attaches). */
+  useTpGun(g: TpGun) {
+    if (this.tp === g) return;
+    this.tp = g;
+    // Tracers and flashes leave from the real muzzle.
+    this.muzzle.position.copy(g.muzzle);
+    if (this.mocap) this.mountTp();
+  }
+
+  /** Swaps the procedural rifle in the near / mid levels for the real model and hands the mocap body its anchors. */
+  private mountTp() {
+    const g = this.tp, body = this.mocap;
+    if (!g || !body) return;
+    for (const m of this.tpMeshes) m.removeFromParent();
+    this.tpMeshes = [];
+    const skinned = (geo: THREE.BufferGeometry) => {
+      const m = new THREE.SkinnedMesh(tpSkinned(geo), g.material);
+      m.bind(this.skeleton, IDENTITY);
+      m.boundingSphere = CULL;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.tpMeshes.push(m);
+      return m;
+    };
+    const mags: THREE.Object3D[] = [];
+    for (const [lod, group] of [[0, body.near], [1, body.mid]] as const) {
+      this.procGuns[lod]?.removeFromParent();
+      group.add(skinned(g.body[lod]));
+      if (g.mag) {
+        const m = skinned(g.mag);
+        mags.push(m);
+        group.add(m);
+      }
+    }
+    body.setWeapon(this.gun, g, mags);
+  }
+
+  /** Reloads (visual): magazine out and a fresh one in, or rounds thumbed in for tube-fed guns. Ignored while busy or down. */
+  reload() {
+    if (this.act !== "none" || this.death >= 0 || this.down > 0.05) return;
+    const style = this.tp?.info.reload;
+    this.act = "reload";
+    this.actT = 0;
+    this.actDur = style === "shell" ? 3.0 : style === "box" ? 3.4 : 2.4;
+  }
+
+  /** Throws a grenade off-hand (visual), the gun held in the strong hand. Ignored while busy or down. */
+  throwGrenade() {
+    if (this.act !== "none" || this.death >= 0 || this.down > 0.05) return;
+    this.act = "throw";
+    this.actT = 0;
+    this.actDur = 1.35;
+  }
+
+  /** Busy with a reload or a throw. */
+  get acting() {
+    return this.act !== "none";
   }
 
   /** Who the motion-captured body is (parts, kit, build). */
@@ -650,6 +731,7 @@ export class Humanoid {
   die(fromBehind: boolean) {
     if (this.death >= 0) return;
     this.death = 0;
+    this.act = "none";
     this.pitchSign = fromBehind ? 1 : -1;
     this.rollSign = Math.random() < 0.5 ? 1 : -1;
     const r = Math.random();
@@ -684,6 +766,7 @@ export class Humanoid {
     if (this.gun.parent !== this.b.spine) this.b.spine.add(this.gun);
     this.gun.scale.set(1, 1, 1);
     this.hasPrev = false;
+    this.act = "none";
     this.mocap?.revive();
     // A downed squadmate gets up (keeps its pose and blends out); a pooled /
     // respawned model snaps to standing.
@@ -863,10 +946,33 @@ export class Humanoid {
     const gx = aimRX * a + lowRX * low + carryRX * carry;
     const gy = -torsoYaw * (a + low * 0.6) + 0.28 * low + 0.75 * carry + moving * 0.03 * sinP;
     const gz = -0.18 * low - 0.45 * carry + moving * 0.04 * sinP;
+    // Actions: a reload brings the rifle in under the eyes, canted so the
+    // well faces the support hand; a throw drops it to the strong side, one-handed.
+    if (this.act !== "none") {
+      this.actT += dt;
+      if (this.actT >= this.actDur || db > 0.05) this.act = "none";
+    }
+    const au = this.act === "none" ? 0 : this.actT / this.actDur;
+    const wr = this.act === "reload" ? smooth(0, 0.12, au) * (1 - smooth(0.86, 1, au)) : 0;
+    const wt = this.act === "throw" ? smooth(0, 0.12, au) * (1 - smooth(0.8, 1, au)) : 0;
+    const wa = wr + wt;
+    const apx = wa > 0 ? (pv.x + 0.06) * wr + (pv.x - 0.05) * wt : 0;
+    const apy = wa > 0 ? (pv.y - 0.11) * wr + (pv.y - 0.2) * wt : 0;
+    const apz = wa > 0 ? (pv.z + 0.05) * wr + (pv.z + 0.1) * wt : 0;
+    const arx = wa > 0 ? (0.12 - torsoPitch * 0.6) * wr + (1.0 - torsoPitch * 0.3) * wt : 0;
+    const ary = wa > 0 ? (0.4 - torsoYaw * 0.6) * wr + (0.15 - torsoYaw * 0.3) * wt : 0;
+    const arz = wa > 0 ? 0.55 * wr - 0.2 * wt : 0;
+    const keep = 1 - wa;
     // Downed: rifle across the lap.
-    this.gun.position.set(lerp(gpx, -0.14, db), lerp(gpy, -0.02, db), lerp(gpz, 0.12, db) - kv * 0.035);
-    this.gun.rotation.set(lerp(gx, 0.1 - (DN_PP + dnSpine), db), lerp(gy, 0.55, db), lerp(gz, -0.35, db));
+    this.gun.position.set(lerp(gpx * keep + apx, -0.14, db), lerp(gpy * keep + apy, -0.02, db), lerp(gpz * keep + apz, 0.12, db) - kv * 0.035);
+    this.gun.rotation.set(lerp(gx * keep + arx, 0.1 - (DN_PP + dnSpine), db), lerp(gy * keep + ary, 0.55, db), lerp(gz * keep + arz, -0.35, db));
     this.gun.updateMatrix();
+    // The real gun's butt in the mocap body's shoulder (computed by the body).
+    if (this.mocap && this.tp) {
+      this.gun.position.add(this.v1.copy(this.mocap.gunFix).applyQuaternion(this.gun.quaternion));
+      this.gun.updateMatrix();
+      this.mocap.gunApplied.copy(this.mocap.gunFix);
+    }
 
     // ---- Arms: IK onto the weapon (left hand to the wound when downed) ----------
     const L1 = RIG.upperArm, L2 = RIG.foreArm;
@@ -897,6 +1003,9 @@ export class Humanoid {
       d.moveF = this.moveF;
       d.moveS = this.moveS;
       d.down = db;
+      d.kick = kv;
+      d.action = this.act;
+      d.actionT = au;
       this.mocap.update(this.mocapDt, d, this.root);
       this.mocapDt = 0;
     }
