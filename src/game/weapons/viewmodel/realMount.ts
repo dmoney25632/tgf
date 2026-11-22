@@ -40,6 +40,7 @@ export function mountRealGun(spec: GunSpec, b: GeoBuilder, t: RealTemplate, cfg:
     root.updateMatrixWorld(true);
     target.attach(part);
   }
+  mountGlass(fit.object, root, toGun, cfg, mats, owned);
   let hand: [ArmPlacement, HandPose] | undefined;
   if (!cfg.keepHand && !spec.handgun) {
     const arms = b.arms.filter((a) => a.target === spec.leftArm);
@@ -68,5 +69,44 @@ function rebuildArm(target: THREE.Object3D, src: GeoBuilder, mats: ViewmodelMate
   b.armGeometry = src.armGeometry;
   b.into(target);
   buildArm(b, mats, p, pose);
+  b.finish(owned);
+}
+
+/**
+ * Art-pipeline guns ship optic glass as a mesh named `lens` (baked, it would be an
+ * opaque disc): swap it for the viewmodel's see-through glass and add the reticle.
+ */
+function mountGlass(real: THREE.Object3D, root: THREE.Object3D, toGun: (o: THREE.Object3D) => THREE.Matrix4, cfg: RealGun, mats: ViewmodelMaterials, owned: { dispose(): void }[]) {
+  const lenses: THREE.Mesh[] = [];
+  real.updateMatrixWorld(true);
+  real.traverse((o) => (o as THREE.Mesh).isMesh && /^lens/.test(o.name || o.parent?.name || "") && lenses.push(o as THREE.Mesh));
+  if (!lenses.length) return;
+  const b = new GeoBuilder(mats.render);
+  b.into(root);
+  const box = new THREE.Box3();
+  for (const mesh of lenses) {
+    // Plain float copy (the source may be quantized / indexed) placed in gun space.
+    const src = mesh.geometry.attributes.position;
+    const idx = mesh.geometry.index;
+    const n = idx ? idx.count : src.count;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const v = idx ? idx.getX(i) : i;
+      pos.set([src.getX(v), src.getY(v), src.getZ(v)], i * 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.applyMatrix4(toGun(mesh));
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    box.union(g.boundingBox!);
+    b.add(mats.lens, g);
+    mesh.removeFromParent();
+  }
+  if (cfg.reticle) {
+    const c = box.getCenter(new THREE.Vector3());
+    const r = cfg.reticle === "red" ? 0.0007 : 0.0009;
+    b.add(cfg.reticle === "red" ? mats.reticleRed : mats.reticleAmber, new THREE.CircleGeometry(r, 12), new THREE.Matrix4().makeTranslation(c.x, c.y, box.min.z + 0.0015));
+  }
   b.finish(owned);
 }

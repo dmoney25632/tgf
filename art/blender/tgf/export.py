@@ -66,19 +66,19 @@ def render_previews(objs, out_dir, name, size=768, samples=24):
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     bg.inputs["Color"].default_value = (0.32, 0.33, 0.35, 1)
-    bg.inputs["Strength"].default_value = 0.6
+    bg.inputs["Strength"].default_value = 0.25
 
     lo, hi = sc.bounds(objs)
     c = (lo + hi) / 2
     r = max((hi - lo).length, 0.05)
 
     key = bpy.data.objects.new("key", bpy.data.lights.new("key", "AREA"))
-    key.data.energy = 120 * r * r
+    key.data.energy = 55 * r * r
     key.data.size = r
     key.location = c + Vector((r, -r, r * 1.2))
     s.collection.objects.link(key)
     rim = bpy.data.objects.new("rim", bpy.data.lights.new("rim", "AREA"))
-    rim.data.energy = 60 * r * r
+    rim.data.energy = 28 * r * r
     rim.data.size = r
     rim.location = c + Vector((-r * 1.2, r, r * 0.6))
     s.collection.objects.link(rim)

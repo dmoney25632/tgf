@@ -87,8 +87,12 @@ def bake_object(obj, out_dir, size=1024, samples=16):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
 
+    # Base colour straight from the shader input via emission: Cycles' DIFFUSE colour pass is
+    # albedo * (1 - metallic), which baked every metal part near-black.
     base = _image(f"{obj.name}_baseColor", size, "sRGB")
-    _bake("DIFFUSE", obj, base, pass_filter={"COLOR"})
+    s = _swap_inputs(obj, "Base Color")
+    _bake("EMIT", obj, base)
+    _restore(s)
 
     rough = _image(f"{obj.name}_r", size, "Non-Color")
     s = _swap_inputs(obj, "Roughness")

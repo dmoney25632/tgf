@@ -40,6 +40,7 @@ def pbr(name, preset=None, base=None, metallic=None, roughness=None, wear=None, 
     wear = p[3] if wear is None else wear
 
     m = bpy.data.materials.new(name)
+    m["tgf_preset"] = preset or ""
     m.use_nodes = True
     nt = m.node_tree
     nt.nodes.clear()

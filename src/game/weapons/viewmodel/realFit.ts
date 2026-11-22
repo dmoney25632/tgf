@@ -36,6 +36,8 @@ export type RealGun = {
   tint?: number;
   /** Leave the support hand as built (no closing onto the real handguard). */
   keepHand?: boolean;
+  /** Glowing reticle on the optic axis, centred on the `lens` mesh's front glass (red dot / holo: red; prism: amber). */
+  reticle?: "red" | "amber";
 };
 
 /** `muzzle`: centre of the front-most vertices (the bore line), in template space. */

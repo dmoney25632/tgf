@@ -47,6 +47,14 @@ export const REAL_GUNS: Partial<Record<ViewModelKind, RealGun>> = {
   // stripped so the eye runs along the carry handle; the PKP's optic and side mount are gone.
   g36: { path: "/assets/weapons/g36/model.gltf", rot: [0, 0, 0], offset: [0, -0.016, 0], parts: { mag: /^mag$/ } },
   // Its 100-round box sits across the gun, so it is wider than the rifles.
+  // Built in Blender by the art pipeline (art/blender/assets/<id>.py, +Y front so no rotation).
+  // Proportions match the built guns closely; nudges put each sight on the eye line.
+  p90: { path: "/assets/weapons/p90/model.gltf", rot: [0, 0, 0], offset: [0, -0.007, 0], parts: { mag: /^mag$/ } },
+  aug: { path: "/assets/weapons/aug/model.gltf", rot: [0, 0, 0], parts: { mag: /^mag$/ } },
+  scarl: { path: "/assets/weapons/scarl/model.gltf", rot: [0, 0, 0], reticle: "red", parts: { mag: /^mag$/ } },
+  m82: { path: "/assets/weapons/m82/model.gltf", rot: [0, 0, 0], offset: [0, -0.008, 0], parts: { mag: /^mag$/ } },
+  // Real A2 stock runs ~7 cm longer than the built one: keep true size (muzzle-aligned) so the mag and optic land on their anchors.
+  m16a4: { path: "/assets/weapons/m16a4/model.gltf", rot: [0, 0, 0], scale: 1.086, reticle: "amber", parts: { mag: /^mag$/ } },
   // Built in Blender by the art pipeline (art/blender/assets/uzi.py): +Y front, so no rotation.
   // The procedural Uzi has its stock extended (0.57 m) and this one folded (0.40 m), so the length fit
   // would blow it up 1.44x: scale it back near true size and slide it so the mag sits in the grip hand and the taller real sights sit on the eye line.

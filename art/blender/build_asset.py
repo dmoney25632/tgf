@@ -37,6 +37,40 @@ def args():
     return p.parse_args(argv)
 
 
+def split_glass(objs):
+    """Optic glass ships as its own unbaked mesh named `lens`: the game swaps in
+    see-through glass and a reticle (baked, it would be an opaque disc)."""
+    import bpy
+
+    parts = []
+    for o in scene.meshes(objs):
+        idx = [i for i, sl in enumerate(o.material_slots) if sl.material and sl.material.get("tgf_preset") == "glass_lens"]
+        if not idx:
+            continue
+        bpy.ops.object.select_all(action="DESELECT")
+        o.select_set(True)
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="DESELECT")
+        for i in idx:
+            o.active_material_index = i
+            bpy.ops.object.material_slot_select()
+        bpy.ops.mesh.separate(type="SELECTED")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        parts += [s for s in bpy.context.selected_objects if s is not o]
+    if not parts:
+        return None
+    lens = scene.join(parts, "lens")
+    mat = bpy.data.materials.new("lens")
+    mat.use_nodes = True
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Base Color"].default_value = (0.05, 0.07, 0.08, 1)
+    bsdf.inputs["Roughness"].default_value = 0.05
+    lens.data.materials.clear()
+    lens.data.materials.append(mat)
+    return lens
+
+
 def main():
     a = args()
     scene.reset()
@@ -48,12 +82,13 @@ def main():
     objs = res["objects"]
 
     export.apply_modifiers(objs)
+    lens = split_glass(objs)
     out_dir = os.path.dirname(a.out)
     if res.get("bake", True):
         tex_dir = os.path.join(a.previews, "_bake", a.id)
         for o in scene.meshes(objs):
             bake.bake_object(o, tex_dir, size=res.get("bake_size", 1024))
-    ship = list(objs)
+    ship = list(objs) + ([lens] if lens else [])
     for i, ratio in enumerate(res.get("lods", [])):
         for o in scene.meshes(objs):
             ship.append(export.add_lod(o, ratio, f"lod{i + 1}"))

@@ -67,7 +67,8 @@ export function buildAR(k: Kit, variant: ArVariant): GunSpec {
   const railTop = -0.034;
   const furn = variant === "m4a1" ? m.polymerTan : m.polymer;
   const gripMat = variant === "m4a1" ? m.gripTan : m.grip;
-  const barrelEnd = variant === "m16a4" ? -0.74 : variant === "hk416" ? -0.43 : -0.505;
+  // M16A4: 20" barrel; muzzle ~0.55 m ahead of the magazine as on the real rifle.
+  const barrelEnd = variant === "m16a4" ? -0.54 : variant === "hk416" ? -0.43 : -0.505;
   const hgEnd = variant === "m16a4" ? -0.39 : variant === "hk416" ? -0.37 : -0.4;
   b.into(g.root);
 
@@ -133,8 +134,8 @@ export function buildAR(k: Kit, variant: ArVariant): GunSpec {
   // Barrel, gas block / front sight, muzzle device.
   barrel(k, m.blued, -0.115, barrelEnd, yb, 0.0098, 0.0083);
   if (variant === "m16a4") {
-    frontTower(k, m.steel, -0.5, yb, -0.014);
-    b.cyl(m.steel, 0.0026, -0.49, -0.12, 0, yb + 0.013, 8);
+    frontTower(k, m.steel, -0.41, yb, -0.014);
+    b.cyl(m.steel, 0.0026, -0.4, -0.12, 0, yb + 0.013, 8);
     flashHider(k, m.steel, barrelEnd, yb, 0.0108, 0.056);
     g.muzzle.position.set(0, yb, barrelEnd - 0.06);
   } else if (variant === "hk416") {

@@ -8,6 +8,46 @@
       "out": "public/assets/weapons/uzi/model.gltf",
       "license": "Original work (TGF project)",
       "author": "TGF art pipeline"
+    },
+    {
+      "id": "p90",
+      "kind": "weapon",
+      "script": "art/blender/assets/p90.py",
+      "out": "public/assets/weapons/p90/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
+    },
+    {
+      "id": "aug",
+      "kind": "weapon",
+      "script": "art/blender/assets/aug.py",
+      "out": "public/assets/weapons/aug/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
+    },
+    {
+      "id": "scarl",
+      "kind": "weapon",
+      "script": "art/blender/assets/scarl.py",
+      "out": "public/assets/weapons/scarl/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
+    },
+    {
+      "id": "m82",
+      "kind": "weapon",
+      "script": "art/blender/assets/m82.py",
+      "out": "public/assets/weapons/m82/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
+    },
+    {
+      "id": "m16a4",
+      "kind": "weapon",
+      "script": "art/blender/assets/m16a4.py",
+      "out": "public/assets/weapons/m16a4/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
     }
   ]
 }
