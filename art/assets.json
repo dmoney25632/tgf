@@ -1,0 +1,13 @@
+{
+  "$comment": "Assets built by the Blender art pipeline (npm run art:build). See art/README.md.",
+  "assets": [
+    {
+      "id": "uzi",
+      "kind": "weapon",
+      "script": "art/blender/assets/uzi.py",
+      "out": "public/assets/weapons/uzi/model.gltf",
+      "license": "Original work (TGF project)",
+      "author": "TGF art pipeline"
+    }
+  ]
+}

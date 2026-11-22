@@ -47,6 +47,10 @@ export const REAL_GUNS: Partial<Record<ViewModelKind, RealGun>> = {
   // stripped so the eye runs along the carry handle; the PKP's optic and side mount are gone.
   g36: { path: "/assets/weapons/g36/model.gltf", rot: [0, 0, 0], offset: [0, -0.016, 0], parts: { mag: /^mag$/ } },
   // Its 100-round box sits across the gun, so it is wider than the rifles.
+  // Built in Blender by the art pipeline (art/blender/assets/uzi.py): +Y front, so no rotation.
+  // The procedural Uzi has its stock extended (0.57 m) and this one folded (0.40 m), so the length fit
+  // would blow it up 1.44x: scale it back near true size and slide it so the mag sits in the grip hand and the taller real sights sit on the eye line.
+  uzi: { path: "/assets/weapons/uzi/model.gltf", rot: [0, 0, 0], scale: 0.62, offset: [0, -0.018, -0.02], parts: { mag: /^mag$/ } },
   pkm: { path: "/assets/weapons/pkm/model.gltf", rot: [0, 0, 0], offset: [0, -0.032, 0], parts: { mag: /^mag$/ } },
   m1014: { path: "/assets/weapons/m1014/model.gltf", rot: [0, 0, 0], offset: [0, 0.012, 0] },
 };

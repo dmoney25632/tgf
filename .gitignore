@@ -48,3 +48,8 @@ next-env.d.ts
 
 # local agent settings
 .claude/settings.local.json
+
+# Blender art pipeline previews / bake scratch
+/art/previews/
+*.blend1
+__pycache__/
