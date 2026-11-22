@@ -16,6 +16,8 @@ import type { MissionResult } from "../missions/types";
 /** Engine → React notifications. */
 export type EngineEvent =
   | { type: "shop"; open: boolean }
+  /** Full-screen map opened (pointer released) or closed (React re-locks). */
+  | { type: "map"; open: boolean; via?: "pad" }
   | { type: "end"; summary: MatchSummary }
   | { type: "phase"; phase: string; wave: number };
 

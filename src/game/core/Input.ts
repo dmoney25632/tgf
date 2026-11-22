@@ -318,7 +318,8 @@ export class Input {
     this.setPad("KeyH", down(PAD.LEFT));
     this.setPad("KeyB", down(PAD.RIGHT));
     this.setPad("KeyV", down(PAD.R3));
-    this.setPad("Tab", down(PAD.UP) || down(PAD.VIEW));
+    this.setPad("Tab", down(PAD.UP));
+    this.setPad("KeyM", down(PAD.VIEW));
     this.setPad("KeyN", down(PAD.DOWN));
 
     // Sprint: click L3 to latch; stops when you stop pushing forward, aim or fire.

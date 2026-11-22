@@ -66,6 +66,18 @@ export function SettingsPanel({ settings: s, onChange, dev, tab, onTab }: Props)
               hint="Steps down a preset by itself if the frame rate stays low, so play stays smooth."
             />
             <ToggleRow label="FPS counter" value={s.showFps} onChange={(v) => onChange({ showFps: v })} />
+            <ToggleRow
+              label="Rotating minimap"
+              value={s.minimapRotate}
+              onChange={(v) => onChange({ minimapRotate: v })}
+              hint="On: the minimap turns with you, forward is up. Off: north is always up."
+            />
+            <ToggleRow
+              label="Radar assist"
+              value={s.radarAssist}
+              onChange={(v) => onChange({ radarAssist: v })}
+              hint="Always show hostiles and incoming squads on the minimap. Otherwise buy the Radar Uplink at an armory in Survival."
+            />
           </>
         )}
 

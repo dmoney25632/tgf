@@ -13,6 +13,7 @@ import type { WaveManager } from "../survival/WaveManager";
 import type { DifficultyId } from "../survival/config";
 import type { HelicopterManager } from "../vehicles/HelicopterManager";
 import type { MissionEvent, MissionState } from "../missions/types";
+import type { MapBlip } from "../ui/Minimap";
 
 /**
  * What the co-op layer needs from a game mode. SurvivalGameMode and
@@ -55,6 +56,8 @@ export type SurvivalBridge = {
   crateUsed: boolean[];
   /** Records a kill credited to the local player (summary counters). */
   countKill(type: EnemyType, part: HitPart, source: string): void;
+  /** Client: the host announced a squad arriving at (x, z) in `eta` s (minimap + alert). */
+  incoming?(x: number, z: number, label: string, heavy: boolean, eta: number): void;
 };
 
 /**
@@ -90,6 +93,12 @@ export interface SurvivalNet {
   onBuy(id: string, price: number): void;
   collectTargets(out: THREE.Object3D[]): void;
   teamRows(out: TeamRow[]): void;
+  /** Minimap: teammates (and, on clients with radar, replicated hostiles). */
+  mapBlips?(out: MapBlip[], radar: boolean): void;
+  /** Host: tell clients a squad is incoming (radar marker + alert). */
+  squadIncoming?(x: number, z: number, label: string, heavy: boolean, eta: number): void;
+  /** Host: show this wave banner on clients too (wave intro, holdout complete). */
+  waveBanner?(title: string, sub: string, color: string): void;
   dispose(): void;
 }
 

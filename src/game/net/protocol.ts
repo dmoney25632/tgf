@@ -574,7 +574,12 @@ export type HostEvent =
   /** Discrete mission event (objective, radio line, checkpoint, retry, detonation, extraction). */
   | { k: "mev"; e: MissionEvent }
   /** Host gunships, ~4 Hz: [x×10, y×10, z×10, yaw×100, health, maxHealth, state 0 idle · 1 flying · 2 dying] per slot. */
-  | { k: "air"; h: [number, number, number, number, number, number, number][] };
+  | { k: "air"; h: [number, number, number, number, number, number, number][] }
+  // ---- Survival waves (added later; older clients skip unknown kinds) ----
+  /** Wave banner (intro / holdout complete) with its colour. */
+  | { k: "wv"; t: string; s: string; c: string }
+  /** Squad incoming at (x, z) in `eta` s; `h` = heavy / boss. */
+  | { k: "sq"; x: number; z: number; l: string; h: boolean; eta: number };
 
 /** `h`: the host's own player state (same encoding as StatePayload.b). */
 export type SnapshotPayload = { b: string; e?: HostEvent[]; h?: string };

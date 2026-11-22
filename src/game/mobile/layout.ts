@@ -24,7 +24,9 @@ export type TouchButtonDef = {
   /** Tap toggles instead of hold (aim down sights). */
   toggle?: boolean;
   /** Only shown while the HUD offers it (survival prompts / ready-up). */
-  context?: "interact" | "ready";
+  context?: "interact" | "ready" | "map";
+  /** Pinned to the left edge at its own size (ignores the button-size setting and left-handed mirroring). */
+  fixed?: "left";
   /** Horizontally centred (contextual pills); `x` is then ignored. */
   center?: boolean;
 };
@@ -44,6 +46,8 @@ export const TOUCH_BUTTONS: readonly TouchButtonDef[] = [
   { id: "score", code: "Tab", label: "SCORE", size: 40, x: 56, y: 8, top: true },
   { id: "usePill", code: "KeyF", label: "TAP TO USE", size: 46, x: 0, y: 0, center: true, context: "interact" },
   { id: "ready", code: "KeyN", label: "READY", size: 40, x: 0, y: 64, top: true, center: true, context: "ready" },
+  // Invisible tap target over the minimap (top-left, ui/Minimap.ts) that opens the full map.
+  { id: "map", code: "KeyM", label: "MAP", size: 100, x: 10, y: 8, top: true, fixed: "left", context: "map" },
 ];
 
 /** Ids the left-fire setting can hide. */

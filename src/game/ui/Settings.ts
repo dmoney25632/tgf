@@ -28,6 +28,7 @@ export const ACTIONS = [
   { id: "swap", label: "Switch weapon", code: "KeyQ" },
   { id: "scoreboard", label: "Scoreboard", code: "Tab" },
   { id: "readyUp", label: "Ready up", code: "KeyN" },
+  { id: "map", label: "Map (full screen)", code: "KeyM" },
 ] as const;
 
 export type ActionId = (typeof ACTIONS)[number]["id"];
@@ -70,6 +71,11 @@ export type GameSettings = {
   padDeadzone: number;
   aimAssist: boolean;
   vibration: boolean;
+  // HUD
+  /** Minimap turns with you (forward is up); off = north up. */
+  minimapRotate: boolean;
+  /** Assist: hostiles always on the minimap (otherwise bought as the Radar upgrade in Survival). */
+  radarAssist: boolean;
   // Keyboard
   bindings: Bindings;
 };
@@ -96,6 +102,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   padDeadzone: 0.12,
   aimAssist: true,
   vibration: true,
+  minimapRotate: true,
+  radarAssist: false,
   bindings: DEFAULT_BINDINGS,
 };
 
@@ -135,6 +143,8 @@ export function sanitizeSettings(raw: Partial<GameSettings> | null | undefined, 
     padDeadzone: clamp(r.padDeadzone, 0.02, 0.35, d.padDeadzone),
     aimAssist: bool(r.aimAssist, d.aimAssist),
     vibration: bool(r.vibration, d.vibration),
+    minimapRotate: bool(r.minimapRotate, d.minimapRotate),
+    radarAssist: bool(r.radarAssist, d.radarAssist),
     bindings,
   };
 }
