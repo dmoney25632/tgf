@@ -79,6 +79,11 @@ function avatarShade(orm: Tex, U: Record<string, { value: THREE.Color | THREE.Ve
   const o = [0, 0, 0];
   return (col: number[], u: number, v: number, geo: THREE.BufferGeometry, a: number, b: number, d: number, w0: number, w1: number, w2: number) => {
     sample(orm, u, v, o);
+    // Head donors map their one-part atlas onto the head quadrant.
+    if ((U.uHeadOnly?.value as number) > 0.5) {
+      u = 0.5 + u * 0.5;
+      v *= 0.5;
+    }
     const R = o[0] / 255, Bm = o[2] / 255;
     let c = [toLin(col[0]), toLin(col[1]), toLin(col[2])];
     const top = v < 0.5, right = u > 0.5, head = top && right;

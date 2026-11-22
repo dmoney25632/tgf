@@ -10,7 +10,7 @@ import { solveTwoBone, wpos, wquat } from "../src/game/ai/soldier/ik";
 
 const DIR = new URL("../public/assets/characters/soldiers/", import.meta.url);
 const meta = JSON.parse(fs.readFileSync(new URL("soldiers.json", DIR), "utf8")) as {
-  avatars: Record<string, { sex: string; cap: boolean; parts: string[]; tris: Record<string, [number, number]>; gains: number[] }>;
+  avatars: Record<string, { sex: string; cap: boolean; headOnly?: boolean; parts: string[]; tris: Record<string, [number, number]>; gains: number[] }>;
   clips: Record<LocoClip | "hitChest" | "hitHead" | "death", ClipInfo>;
 };
 
@@ -110,13 +110,15 @@ test("two-bone IK reaches the target, bends toward the pole, sets the end rotati
   assert.ok(tip.z > 0.5 && Math.abs(tip.y - 1.4) < 0.01);
 });
 
-test("soldier bundle: eight avatars of swappable parts within the triangle budget, all clips present", () => {
+test("soldier bundle: eight avatars of swappable parts plus head donors within the triangle budget, all clips present", () => {
   const ids = Object.keys(meta.avatars);
-  assert.deepEqual(ids.sort(), ["a", "b", "c", "d", "e", "f", "g", "h"]);
+  assert.deepEqual(ids.sort(), ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"]);
   let firstJoints: string | null = null;
   for (const id of ids) {
     const a = meta.avatars[id];
-    assert.ok(a.parts.includes("body") && a.parts.includes("head"), id);
+    // Head donors (headOnly) ship the head alone; every other avatar has a body too.
+    if (a.headOnly) assert.deepEqual(a.parts, ["head"], id);
+    else assert.ok(a.parts.includes("body") && a.parts.includes("head"), id);
     let t0 = 0, t1 = 0;
     for (const p of a.parts) {
       const [lod0, lod1] = a.tris[p];

@@ -10,7 +10,7 @@
  * theirs from their saved look: gear variant + skin tone.
  */
 
-export const AVATAR_IDS = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
+export const AVATAR_IDS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"] as const;
 export type AvatarId = (typeof AVATAR_IDS)[number];
 export type Part = "body" | "head" | "helmet" | "equipment";
 
@@ -29,6 +29,15 @@ export const AVATARS: Record<AvatarId, { sex: "m" | "f"; cap: boolean; parts: re
   // Military_Female_01 / 02.
   g: { sex: "f", cap: false, parts: ["body", "head", "helmet", "equipment"], tone: 0xa07756, knees: true },
   h: { sex: "f", cap: false, parts: ["body", "head", "helmet", "equipment"], tone: 0x724d31, knees: true },
+  // Head donors (face only; worn on any male uniform): Business_Male_04 / 05,
+  // Sports_Male_01 / 04, Construction_Male_03 / 08, Medical_Male_04.
+  i: { sex: "m", cap: false, parts: ["head"], tone: 0xb87d61, knees: false },
+  j: { sex: "m", cap: false, parts: ["head"], tone: 0x80573c, knees: false },
+  k: { sex: "m", cap: false, parts: ["head"], tone: 0xae7f63, knees: false },
+  l: { sex: "m", cap: false, parts: ["head"], tone: 0x9d6e57, knees: false },
+  m: { sex: "m", cap: false, parts: ["head"], tone: 0x513324, knees: false },
+  n: { sex: "m", cap: false, parts: ["head"], tone: 0x8c5e40, knees: false },
+  o: { sex: "m", cap: false, parts: ["head"], tone: 0x926a54, knees: false },
 };
 
 export type Kit = "standard" | "rusher" | "heavy" | "sniper" | "warden";
@@ -109,21 +118,25 @@ const pick = <T>(r: number, list: readonly T[]) => list[Math.min(list.length - 1
 
 /**
  * Face order NPC ids walk through: never the same face twice in a row,
- * helmet heads twice as often as cap heads, one woman in six.
+ * bare-headed faces (military and donor heads) about three times as often
+ * as cap heads, one woman in six.
  */
-export const FACE_ORDER: readonly AvatarId[] = ["b", "d", "a", "g", "c", "e", "a", "b", "f", "c", "h", "d"];
+export const FACE_ORDER: readonly AvatarId[] = ["b", "i", "d", "a", "g", "m", "c", "e", "k", "a", "n", "h", "b", "f", "j", "c", "g", "l", "d", "o", "e", "h", "c", "f"];
 
 const HELMET_HEADS_M: readonly AvatarId[] = ["a", "b", "c"];
+/** Male faces that take any headgear: the helmet avatars' plus the head donors. */
+const FACES_M: readonly AvatarId[] = ["a", "b", "c", "i", "j", "k", "l", "m", "n", "o"];
 const CAP_HEADS: readonly AvatarId[] = ["d", "e", "f"];
 const VESTS_M: readonly AvatarId[] = ["a", "b", "c"];
 const BODIES_M: readonly AvatarId[] = ["a", "b", "c", "d", "e", "f"];
 const FEMALE: readonly AvatarId[] = ["g", "h"];
 
 function base(head: AvatarId): SoldierIdentity {
+  const has = (p: Part) => AVATARS[head].parts.includes(p);
   return {
-    body: head,
+    body: has("body") ? head : "b", // head donors: npcIdentity picks the uniform
     head,
-    helmet: AVATARS[head].cap ? null : head,
+    helmet: has("helmet") ? head : null,
     vest: AVATARS[head].parts.includes("equipment") ? head : null,
     headgear: AVATARS[head].cap ? "cap" : "helmet",
     balaclava: false,
@@ -154,7 +167,7 @@ export function npcIdentity(seed: number, kit: Kit): SoldierIdentity {
   const i = ((seed % FACE_ORDER.length) + FACE_ORDER.length) % FACE_ORDER.length;
   let head: AvatarId = FACE_ORDER[i];
   // Kits with a fixed silhouette take a matching face from the same walk.
-  if (kit === "rusher" || kit === "heavy" || kit === "sniper") head = HELMET_HEADS_M[i % 3];
+  if (kit === "rusher" || kit === "heavy" || kit === "sniper") head = FACES_M[i % FACES_M.length];
   if (kit === "warden") head = CAP_HEADS[i % 3];
   const female = AVATARS[head].sex === "f";
   const id = base(head);

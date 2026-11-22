@@ -1,24 +1,33 @@
 // Builds public/assets/characters/soldiers/* from the downloaded Rocketbox
-// military avatars (MIT) and (optionally) the Quaternius Universal
-// Animation Library (CC0).
+// military avatars (MIT), a few civilian Rocketbox heads (MIT) as extra
+// faces, and (optionally) the Quaternius Universal Animation Library (CC0).
 //
 //   SOLDIER_WORK=<scratch> node scripts/soldiers/build.mjs public/assets/characters/soldiers
 //
 // <scratch>/dl/<Avatar_Name>/ holds each avatar's FBX + TGA textures
-// (scripts/soldiers/fetch_rb.sh). Per avatar it writes soldier_<id>.gltf +
-// .bin (one shared skin, parts body / head / helmet / equipment, each with a
-// simplified *_lod1 twin; canonical joint order, so male parts swap between
-// male skeletons and female parts between female ones) and an atlas set:
-// _color.jpg (2048), _color_1k.jpg, _normal.jpg (1024),
-// _orm.jpg (1024: R team-tint mask, G roughness, B skin mask). The head part
-// carries uv1 masks (x beard, y balaclava eye band). Then run
-// `npm run assets:ktx2 -- --write`, which meshopt-packs the glTFs, derives
-// the soldier_<id>_1k.gltf twins and adds KTX2 copies of the textures.
+// (2048 px per material; scripts/soldiers/fetch_rb.sh). Per avatar it writes
+// soldier_<id>.gltf + .bin (one shared skin, parts body / head / helmet /
+// equipment, each with a simplified *_lod1 twin; canonical joint order, so
+// male parts swap between male skeletons and female parts between female
+// ones) and an atlas set of 2 x 2 part quadrants: _color.jpg (2048),
+// _color_1k.jpg (Medium), _normal.jpg (1024) and _orm.jpg (1024: R team-tint
+// mask, G roughness, B skin mask; computed at 2048 and box-filtered, so the
+// mask edges are antialiased). Eyeballs get a wet (low) roughness and stay out
+// of the skin mask. The head part carries uv1 masks (x beard, y balaclava eye
+// band). Head donors (`headOnly`) ship the head part alone with a one-part
+// atlas at the same texel density (colour 1024, normal / ORM 512).
+// Why normal / ORM stay at 1024: a 2048 normal atlas (1024 px per part, from
+// the 2048 px sources) renders identically at 1 m and beyond (Rocketbox's
+// normal maps carry no detail past ~512 px per part) yet costs +2 MB KTX2
+// per avatar; fine detail comes from the runtime detail normal instead
+// (pores / weave, src/game/ai/soldier/assets.ts). Set NRM = 2048 to compare.
+// Then run `npm run assets:ktx2 -- --write`, which meshopt-packs the glTFs,
+// derives the soldier_<id>_1k.gltf twins and adds KTX2 copies of the textures.
 // anims.glb is rebuilt only when the UAL download is present.
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { THREE, writePNG, downsample } from "./lib.mjs";
-import { loadAvatar, buildAtlas, headMasks, rasterUV, triComponents, PARTS } from "./avatar.mjs";
+import { loadAvatar, buildAtlas, headMasks, rasterUV, triComponents, eyeTris, clearStraps, PARTS } from "./avatar.mjs";
 import { render } from "./render.mjs";
 
 const NM = "/Users/dayton/dev/tgf/node_modules";
@@ -49,7 +58,24 @@ export const AVATARS = [
   { id: "f", name: "Military_Male_06", prefix: "sm021", sex: "m", cap: true },
   { id: "g", name: "Military_Female_01", prefix: "sf003", sex: "f" },
   { id: "h", name: "Military_Female_02", prefix: "sf004", sex: "f" },
+  // Head donors (face variety): civilian men with short, card-free hair. Every
+  // Rocketbox male shares the same head / eye bind positions, so the head
+  // part drops onto any male soldier's skeleton unchanged.
+  { id: "i", name: "Business_Male_04", prefix: "m015", sex: "m", headOnly: true },
+  { id: "j", name: "Business_Male_05", prefix: "m016", sex: "m", headOnly: true },
+  { id: "k", name: "Sports_Male_01", prefix: "m021", sex: "m", headOnly: true },
+  { id: "l", name: "Sports_Male_04", prefix: "m026", sex: "m", headOnly: true },
+  // Construction heads are modelled to sit under a hard hat: they fit helmets well.
+  { id: "m", name: "Construction_Male_03", prefix: "m102", sex: "m", headOnly: true },
+  { id: "n", name: "Construction_Male_08", prefix: "m108", sex: "m", headOnly: true },
+  { id: "o", name: "Medical_Male_04", prefix: "m162", sex: "m", headOnly: true },
 ];
+/** Head donors' neck below this (m) sits inside any collar: dropped. */
+const NECK_CUT = 1.43;
+/** Eyeball roughness (wet cornea highlight). */
+const EYE_ROUGH = 0.1;
+/** Normal / ORM atlas size (px) of a full avatar (head donors: half). */
+const NRM = 1024;
 
 const jpg = (png, out, q) => execFileSync("sips", ["-s", "format", "jpeg", "-s", "formatOptions", String(q), png, "--out", out], { stdio: "ignore" });
 const srgb2lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
@@ -83,6 +109,28 @@ async function writeGltf(group, base) {
   fs.writeFileSync(`${OUT}/${base}.gltf`, JSON.stringify(json));
 }
 
+/** Copy of `g` holding only the vertices `idx` uses (re-indexed). */
+function compact(g, idx) {
+  const used = new Map(), order = [];
+  for (const vi of idx) if (!used.has(vi)) { used.set(vi, order.length); order.push(vi); }
+  const out = new THREE.BufferGeometry();
+  for (const [k, attr] of Object.entries(g.attributes)) {
+    const n = attr.itemSize, arr = new attr.array.constructor(order.length * n);
+    order.forEach((vi, i) => { for (let c = 0; c < n; c++) arr[i * n + c] = attr.array[vi * n + c]; });
+    out.setAttribute(k, new THREE.BufferAttribute(arr, n, attr.normalized));
+  }
+  out.setIndex(new THREE.BufferAttribute(new Uint16Array(Array.from(idx, (vi) => used.get(vi))), 1));
+  out.userData = { ...g.userData };
+  return out;
+}
+
+/** Helmet parts of the male helmet avatars (a, b, c), loaded once. */
+let helmetsM = null;
+function maleHelmets() {
+  helmetsM ??= AVATARS.filter((a) => a.sex === "m" && !a.cap && !a.headOnly).map((a) => loadAvatar(`${S}/dl/${a.name}`, `${a.name}.fbx`, a.prefix).parts.helmet);
+  return helmetsM;
+}
+
 await MeshoptSimplifier.ready;
 const meta = fs.existsSync(`${OUT}/soldiers.json`) ? JSON.parse(fs.readFileSync(`${OUT}/soldiers.json`, "utf8")) : { avatars: {}, clips: {} };
 const newAvatars = {};
@@ -90,8 +138,25 @@ for (const av of AVATARS) {
   if (ONLY && !ONLY.has(av.id)) { newAvatars[av.id] = meta.avatars[av.id]; continue; }
   const dir = `${S}/dl/${av.name}`;
   const A = loadAvatar(dir, `${av.name}.fbx`, av.prefix);
+  if (av.headOnly) {
+    // Head part only: trim the neck to the collar line and move its UVs from
+    // the head quadrant to the whole (one-part) atlas.
+    for (const p of Object.keys(A.parts)) if (p !== "head") delete A.parts[p];
+    const g = A.parts.head, pos = g.attributes.position, uv = g.attributes.uv;
+    const keep = [];
+    for (let t = 0; t < g.index.count; t += 3) {
+      const tri = [0, 1, 2].map((k) => g.index.getX(t + k));
+      if (tri.some((i) => pos.getY(i) >= NECK_CUT)) keep.push(...tri);
+    }
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2 - 1, uv.getY(i) * 2);
+    A.parts.head = compact(g, keep);
+    // Their jaws were never fitted to a chin strap: tuck them behind every male helmet's.
+    const push = clearStraps(A.parts.head, maleHelmets(), A.face);
+    console.log(`${av.id}: chin tucked behind the helmet straps (max ${(push * 1000).toFixed(1)} mm)`);
+  }
   const head = A.parts.head;
   headMasks(head, A.face);
+  const eyes = eyeTris(head, A.face);
 
   // Cap island (cap heads): head triangles in components that sit above the brows.
   const eyeY = (A.face.eyeL.y + A.face.eyeR.y) / 2;
@@ -121,17 +186,7 @@ for (const av of AVATARS) {
     const idx = new Uint32Array(g.index.array);
     const target = Math.floor((idx.length * ratio) / 3) * 3;
     const [lod1Idx] = MeshoptSimplifier.simplify(idx, g.attributes.position.array, 3, target, 0.02, part === "head" ? [] : ["LockBorder"]);
-    // Compact the LOD1 vertex set.
-    const used = new Map(), order = [];
-    for (const vi of lod1Idx) if (!used.has(vi)) { used.set(vi, order.length); order.push(vi); }
-    const g1 = new THREE.BufferGeometry();
-    for (const [k, attr] of Object.entries(g.attributes)) {
-      const n = attr.itemSize, arr = new attr.array.constructor(order.length * n);
-      order.forEach((vi, i) => { for (let c = 0; c < n; c++) arr[i * n + c] = attr.array[vi * n + c]; });
-      g1.setAttribute(k, new THREE.BufferAttribute(arr, n, attr.normalized));
-    }
-    g1.setIndex(new THREE.BufferAttribute(new Uint16Array(Array.from(lod1Idx, (vi) => used.get(vi))), 1));
-    A.parts[part + "_lod1"] = g1;
+    A.parts[part + "_lod1"] = compact(g, lod1Idx);
     tris[part] = [g.index.count / 3, lod1Idx.length / 3];
   }
   const group = new THREE.Group();
@@ -147,49 +202,58 @@ for (const av of AVATARS) {
   await writeGltf(group, `soldier_${av.id}`);
 
   // ---- Textures ---------------------------------------------------------------
-  const col = buildAtlas(dir, av.prefix, "color", 1024);
-  writePNG(`${TMP}/c.png`, col.data, col.width, col.height);
+  // Full avatars: 2 x 2 part quadrants of 1024 px (2048 atlas). Head donors: the
+  // head alone at 1024 px (the same texel density). *_1k: half size.
+  const one = av.headOnly;
+  const atlas = (kind, fb) => (one ? buildAtlas(dir, av.prefix, kind, 1024, fb, { head: [0, 0] }, 1) : buildAtlas(dir, av.prefix, kind, 1024, fb));
+  const col = atlas("color");
+  const W = col.width;
+  writePNG(`${TMP}/c.png`, col.data, W, W);
   jpg(`${TMP}/c.png`, `${OUT}/soldier_${av.id}_color.jpg`, 82);
   const col1 = downsample(col, 2);
   writePNG(`${TMP}/c1.png`, col1.data, col1.width, col1.height);
   jpg(`${TMP}/c1.png`, `${OUT}/soldier_${av.id}_color_1k.jpg`, 84);
-  const nrm = downsample(buildAtlas(dir, av.prefix, "normal", 1024), 2);
+  const nf = W / (one ? NRM / 2 : NRM); // normal / ORM downscale from the colour atlas
+  const nrm = one ? buildAtlas(dir, av.prefix, "normal", W / nf, undefined, { head: [0, 0] }, 1) : buildAtlas(dir, av.prefix, "normal", W / nf / 2);
   writePNG(`${TMP}/n.png`, nrm.data, nrm.width, nrm.height);
   jpg(`${TMP}/n.png`, `${OUT}/soldier_${av.id}_normal.jpg`, 88);
-  const spec = downsample(buildAtlas(dir, av.prefix, "specular", 1024, [40, 40, 40, 255]), 2);
+  const spec = atlas("specular", [40, 40, 40, 255]);
 
-  // ORM-style mask texture at 1024: R team-tint mask, G roughness, B skin mask.
-  const W = 1024;
+  // ORM-style mask texture: R team-tint mask, G roughness, B skin mask.
   const capMask = new Uint8Array(W * W);
   if (av.cap) rasterUV(capMask, W, head, isCap, 2);
+  const eyeMask = new Uint8Array(W * W);
+  rasterUV(eyeMask, W, head, (t) => eyes[t] === 1, 1);
   // Boots never count as skin (khaki suede reads warm and saturated).
   const feet = new Uint8Array(W * W);
-  const body = A.parts.body;
-  rasterUV(feet, W, body, (t) => [0, 1, 2].every((k) => body.attributes.position.getY(body.index.array[t * 3 + k]) < 0.3), 1);
   // Bare skin on the body is only ever forearms / hands (patches, flags and the tan undershirt are warm too).
   const zone = new Uint8Array(W * W);
-  const bp = body.attributes.position;
-  rasterUV(zone, W, body, (t) => [0, 1, 2].every((k) => { const i = body.index.array[t * 3 + k]; return Math.abs(bp.getX(i)) > 0.33; }), 1);
+  const body = A.parts.body;
+  if (body) {
+    const bp = body.attributes.position;
+    rasterUV(feet, W, body, (t) => [0, 1, 2].every((k) => bp.getY(body.index.array[t * 3 + k]) < 0.3), 1);
+    rasterUV(zone, W, body, (t) => [0, 1, 2].every((k) => { const i = body.index.array[t * 3 + k]; return Math.abs(bp.getX(i)) > 0.33; }), 1);
+  }
   const headSkin = new Uint8Array(W * W); // head-skin island (not eyes / cap / sunglasses get sorted by colour)
-  rasterUV(headSkin, W, head, (t) => !isCap(t), 1);
+  rasterUV(headSkin, W, head, (t) => !isCap(t) && !eyes[t], 1);
   const orm = new Uint8Array(W * W * 4);
   const sum = [0, 0, 0, 0], cnt = [0, 0, 0, 0];
   const skinAcc = { body: [0, 0, 0, 0], head: [0, 0, 0, 0] };
-  const quadOf = (x, y) => (y < W / 2 ? (x < W / 2 ? 0 : 1) : x < W / 2 ? 2 : 3); // body, head, helmet, equipment
+  const quadOf = (x, y) => (one ? 1 : y < W / 2 ? (x < W / 2 ? 0 : 1) : x < W / 2 ? 2 : 3); // body, head, helmet, equipment
   for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
     const o = (y * W + x) * 4;
-    const p = o; // col1 has the same size
-    const r = col1.data[p], gg = col1.data[p + 1], b = col1.data[p + 2];
+    const r = col.data[o], gg = col.data[o + 1], b = col.data[o + 2];
     const [hue, sat, val] = hsv(r, gg, b);
     const q = quadOf(x, y);
     const warm = hue >= 2 && hue <= 48 ? 1 : 0;
     // Skin: warm and saturated enough; dark skin is allowed (low value), khaki boots are not (low saturation).
     let skin = feet[y * W + x] || !zone[y * W + x] ? 0 : warm * sm(0.2, 0.32, sat) * sm(18, 40, val);
-    if (q === 1) skin = headSkin[y * W + x] && !capMask[y * W + x] ? Math.max(skin, warm * sm(0.12, 0.2, sat) * sm(10, 25, val)) : 0;
+    if (q === 1) skin = headSkin[y * W + x] && !capMask[y * W + x] && !eyeMask[y * W + x] ? Math.max(skin, warm * sm(0.12, 0.2, sat) * sm(10, 25, val)) : 0;
     const mask = q === 1 ? capMask[y * W + x] / 255 : 1 - skin;
     const sp = spec.data[o] / 255;
+    const rough = q === 1 && eyeMask[y * W + x] && !headSkin[y * W + x] ? EYE_ROUGH : THREE.MathUtils.clamp(0.95 - sp * 0.9, 0.3, 0.95);
     orm[o] = Math.round(mask * 255);
-    orm[o + 1] = Math.round(THREE.MathUtils.clamp(0.95 - sp * 0.9, 0.3, 0.95) * 255);
+    orm[o + 1] = Math.round(rough * 255);
     orm[o + 2] = Math.round(skin * 255);
     orm[o + 3] = 255;
     if (mask > 0.9) { sum[q] += 0.2126 * srgb2lin(r) + 0.7152 * srgb2lin(gg) + 0.0722 * srgb2lin(b); cnt[q]++; }
@@ -198,17 +262,21 @@ for (const av of AVATARS) {
       s[0] += srgb2lin(r); s[1] += srgb2lin(gg); s[2] += srgb2lin(b); s[3]++;
     }
   }
-  writePNG(`${TMP}/o.png`, orm, W, W);
+  const ormOut = nf > 1 ? downsample({ data: orm, width: W, height: W }, nf) : { data: orm, width: W };
+  writePNG(`${TMP}/o.png`, ormOut.data, ormOut.width, ormOut.width);
   jpg(`${TMP}/o.png`, `${OUT}/soldier_${av.id}_orm.jpg`, 88);
-  // Tint gain per quadrant so that the camo's mean luminance maps to the tint colour.
-  const gains = sum.map((s, i) => (cnt[i] > 200 ? +(cnt[i] / s).toFixed(3) : 0));
+  // Tint gain per quadrant so that the camo's mean luminance maps to the tint colour
+  // (pixel counts at the 1024 px scale the thresholds were tuned for).
+  const px = (W / 1024) ** 2 * (one ? 4 : 1);
+  const gains = sum.map((s, i) => (cnt[i] > 200 * px ? +(cnt[i] / s).toFixed(3) : 0));
   const mean = (s) => (s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : [0.5, 0.35, 0.25]);
   const skinHex = (s) => mean(s).map(lin2srgb).reduce((h, c) => h * 256 + Math.min(255, c), 0);
-  if (skinAcc.body[3] < 2000) skinAcc.body = skinAcc.head; // gloved: no bare skin to match
+  if (skinAcc.body[3] < 2000 * px) skinAcc.body = skinAcc.head; // gloved: no bare skin to match
   const top = new THREE.Box3().setFromBufferAttribute(head.attributes.position).max.y;
   newAvatars[av.id] = {
     sex: av.sex,
     cap: !!av.cap,
+    ...(one ? { headOnly: true } : {}),
     parts: Object.keys(tris),
     tris,
     gains,

@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { loadScene, versionedUrl } from "../../assets/AssetLoader";
+import { sssLightsChunk } from "../humanoid/materials";
+import { camoTexture, fabricNormalTexture } from "../humanoid/textures";
 import type { QualityName } from "../../config";
 import { AVATAR_IDS, type AvatarId, type Part } from "./identity";
 import type { ClipInfo, LocoClip } from "./locomotion";
@@ -9,6 +11,7 @@ import type { ClipInfo, LocoClip } from "./locomotion";
 /**
  * Motion-captured soldier assets (see public/assets/characters/soldiers/):
  * eight Rocketbox military avatars (MIT), each split into swappable parts
+ * (plus seven civilian Rocketbox heads, MIT, as extra faces: `headOnly`)
  * (body, head, helmet, equipment, plus simplified *_lod1 twins) over one
  * canonical Biped joint order, so a soldier can wear one avatar's uniform,
  * another's face and a third's helmet; and the Quaternius Universal
@@ -28,6 +31,8 @@ type HitClips = LocoClip | "hitChest" | "hitHead" | "death";
 export type AvatarMeta = {
   sex: "m" | "f";
   cap: boolean;
+  /** Head donor: ships the head part alone, on a one-part atlas (the shader maps it to the head quadrant). */
+  headOnly?: boolean;
   parts: Part[];
   tris: Partial<Record<Part, [number, number]>>;
   gains: [number, number, number, number];
@@ -201,8 +206,8 @@ export function avatarFromScene(id: AvatarId, scene: THREE.Object3D, meta: Avata
   scene.traverse((o) => {
     if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshes.set(o.name, o as THREE.SkinnedMesh);
   });
-  const body = meshes.get("body");
-  if (!body) throw new Error(`soldier_${id}: no body`);
+  const body = meshes.get(meta.headOnly ? "head" : "body");
+  if (!body) throw new Error(`soldier_${id}: no ${meta.headOnly ? "head" : "body"}`);
   const sk = body.skeleton;
   const parts: SoldierAvatar["parts"] = {};
   for (const part of ["body", "head", "helmet", "equipment"] as const) {
@@ -257,7 +262,17 @@ export function partsGeometry(a: SoldierAvatar, parts: Part[], lod: 0 | 1) {
 // head = the patrol cap, helmet = helmet, equipment = vest); its blue
 // channel masks bare skin, re-tinted from the photographed tone to the
 // soldier's. The head part's uv1 carries a beard mask (x) and the eye band
-// a balaclava leaves open (y).
+// a balaclava leaves open (y). Head donors' one-part atlas is mapped onto the
+// head quadrant (uHeadOnly), so every rule below applies unchanged.
+//
+// High quality only (a define, so Medium / Low compile none of it): skin
+// (the ORM blue mask) gets a skin specular (F0 0.028, roughness 0.4..0.62),
+// wrapped, red-shifted diffuse at the terminator (the procedural soldiers'
+// subsurface approximation, humanoid/materials sssLightsChunk: no extra
+// pass) and pores; cloth gets a fibre weave and a grazing sheen. The detail
+// normals tile the shared procedural noise / weave textures the gear already
+// uses, so they cost no download and no extra texture memory. Eyeballs are
+// wet on every tier: the build gives them a low roughness in the ORM map.
 // ---------------------------------------------------------------------------
 const mats = new Map<string, THREE.MeshStandardMaterial>();
 const ELITE = new THREE.Color(0x6a1010);
@@ -276,7 +291,8 @@ const ratio = (from: number, to: number) => {
 };
 
 export function soldierMaterial(a: SoldierAvatar, look: { uniform: number; vest: number; helmet: number }, face: FaceLook, elite: boolean) {
-  const key = `${a.id}|${look.uniform}|${look.vest}|${look.helmet}|${elite ? 1 : 0}|${face.tone}|${face.beard}|${face.balaclava ? face.knit : -1}`;
+  const hq = quality === "high";
+  const key = `${a.id}|${look.uniform}|${look.vest}|${look.helmet}|${elite ? 1 : 0}|${face.tone}|${face.beard}|${face.balaclava ? face.knit : -1}|${hq ? 1 : 0}`;
   let m = mats.get(key);
   if (m) return m;
   const tint = (c: number, e: number) => {
@@ -294,6 +310,7 @@ export function soldierMaterial(a: SoldierAvatar, look: { uniform: number; vest:
     envMapIntensity: 0.6,
   });
   m.name = `soldier_${key}`;
+  if (hq) m.defines = { IH_HQ: "" };
   const g = a.meta.gains;
   const u = {
     uTintBody: { value: tint(look.uniform, 0.15) },
@@ -305,17 +322,21 @@ export function soldierMaterial(a: SoldierAvatar, look: { uniform: number; vest:
     uBeard: { value: face.beard },
     uKnit: { value: new THREE.Color(face.knit) },
     uBalaclava: { value: face.balaclava ? 1 : 0 },
+    uHeadOnly: { value: a.meta.headOnly ? 1 : 0 },
   };
+  // Detail normals need the normal map's tangent frame (High loads the 2k glTF, which has one).
+  const detail = hq && !!a.maps.normal;
+  const hqU = detail ? { uPores: { value: camoTexture() }, uWeave: { value: fabricNormalTexture() } } : {};
   m.userData.soldier = u; // read by scripts/soldiers/assemble.ts (offline preview)
   m.onBeforeCompile = (s) => {
-    Object.assign(s.uniforms, u);
+    Object.assign(s.uniforms, u, hqU);
     s.vertexShader = s.vertexShader
       .replace("#include <common>", "#include <common>\n#ifndef USE_UV1\nattribute vec2 uv1;\n#endif\nvarying vec2 vFaceMask;")
       .replace("#include <uv_vertex>", "#include <uv_vertex>\nvFaceMask = uv1;");
     s.fragmentShader = s.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nuniform vec3 uTintBody;\nuniform vec3 uTintVest;\nuniform vec3 uTintHelmet;\nuniform vec4 uGain;\nuniform vec3 uSkinHead;\nuniform vec3 uSkinBody;\nuniform float uBeard;\nuniform vec3 uKnit;\nuniform float uBalaclava;\nvarying vec2 vFaceMask;\nfloat ihKnit = 0.0;\nfloat ihHash( vec2 p ) { return fract( sin( dot( p, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ); }",
+        "#include <common>\nuniform vec3 uTintBody;\nuniform vec3 uTintVest;\nuniform vec3 uTintHelmet;\nuniform vec4 uGain;\nuniform vec3 uSkinHead;\nuniform vec3 uSkinBody;\nuniform float uBeard;\nuniform vec3 uKnit;\nuniform float uBalaclava;\nuniform float uHeadOnly;\nvarying vec2 vFaceMask;\nfloat ihKnit = 0.0;\nfloat ihSkin = 0.0;\nfloat ihCloth = 0.0;\nvec2 ihUv = vec2( 0.0 );\n// Read by sssLightsChunk (High).\nfloat hmSssAmt = 0.0;\nfloat hmSheen = 0.0;\n#ifdef IH_HQ\nuniform sampler2D uPores;\nuniform sampler2D uWeave;\n#endif\nfloat ihHash( vec2 p ) { return fract( sin( dot( p, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ); }",
       )
       .replace(
         "#include <map_fragment>",
@@ -323,8 +344,10 @@ export function soldierMaterial(a: SoldierAvatar, look: { uniform: number; vest:
 #if defined( USE_MAP ) && defined( USE_ROUGHNESSMAP )
 {
   vec3 orm = texture2D( roughnessMap, vRoughnessMapUv ).rgb;
-  bool top = vMapUv.y < 0.5; // glTF UVs: v grows down the atlas
-  bool right = vMapUv.x > 0.5;
+  // Atlas-space UV: head donors' one-part atlas sits in the head quadrant.
+  ihUv = uHeadOnly > 0.5 ? vec2( 0.5, 0.0 ) + vMapUv * 0.5 : vMapUv;
+  bool top = ihUv.y < 0.5; // glTF UVs: v grows down the atlas
+  bool right = ihUv.x > 0.5;
   bool head = top && right;
   vec3 tint = top ? ( right ? uTintHelmet : uTintBody ) : ( right ? uTintVest : uTintHelmet );
   float gain = top ? ( right ? uGain.y : uGain.x ) : ( right ? uGain.w : uGain.z );
@@ -334,21 +357,56 @@ export function soldierMaterial(a: SoldierAvatar, look: { uniform: number; vest:
   diffuseColor.rgb *= mix( vec3( 1.0 ), head ? uSkinHead : uSkinBody, orm.b );
   if ( head ) {
     // Facial hair: stubble dots growing into a beard.
-    float n = ihHash( floor( vMapUv * 1400.0 ) );
+    float n = ihHash( floor( ihUv * 1400.0 ) );
     float b = vFaceMask.x * uBeard;
     float hair = b * smoothstep( 0.25, 0.75, n + b * 0.6 );
     diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.16, 0.13, 0.11 ), clamp( hair * 1.4, 0.0, 0.92 ) * orm.b );
     // Balaclava: knit everywhere but the eye band.
     ihKnit = uBalaclava * ( 1.0 - smoothstep( 0.35, 0.75, vFaceMask.y ) );
-    float rib = 0.82 + 0.18 * sin( vMapUv.x * 2600.0 ) * ( 0.7 + 0.3 * ihHash( floor( vMapUv * 700.0 ) ) );
+    float rib = 0.82 + 0.18 * sin( ihUv.x * 2600.0 ) * ( 0.7 + 0.3 * ihHash( floor( ihUv * 700.0 ) ) );
     diffuseColor.rgb = mix( diffuseColor.rgb, uKnit * rib, ihKnit );
   }
+  ihSkin = orm.b * ( 1.0 - ihKnit );
+  // Fabric: the uniform, vest and helmet cover; on the head only the cap / balaclava.
+  ihCloth = ( 1.0 - orm.b ) * ( head ? max( orm.r, ihKnit ) : 1.0 );
+  hmSssAmt = ihSkin;
+  hmSheen = ihCloth * 0.8;
 }
 #endif`,
       )
-      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, 0.98, ihKnit );");
+      .replace(
+        "#include <roughnessmap_fragment>",
+        `#include <roughnessmap_fragment>
+roughnessFactor = mix( roughnessFactor, 0.98, ihKnit );
+#ifdef IH_HQ
+// Skin: a satin, oily sheen (not plastic, not chalk), slightly glossier where the scan says so.
+roughnessFactor = mix( roughnessFactor, clamp( roughnessFactor * 0.8, 0.4, 0.62 ), ihSkin );
+#endif`,
+      );
+    if (hq) {
+      s.fragmentShader = s.fragmentShader
+        .replace("#include <lights_physical_pars_fragment>", sssLightsChunk())
+        .replace(
+          "#include <lights_physical_fragment>",
+          // Skin's dielectric F0 is ~0.028 (IOR 1.4), not the generic 0.04.
+          "#include <lights_physical_fragment>\nmaterial.specularColor = mix( material.specularColor, vec3( 0.028 ), ihSkin );\nmaterial.specularColorBlended = mix( material.specularColorBlended, vec3( 0.028 ), ihSkin );",
+        );
+      if (detail)
+        s.fragmentShader = s.fragmentShader.replace(
+          "#include <normal_fragment_maps>",
+          THREE.ShaderChunk.normal_fragment_maps.replace(
+            "mapN.xy *= normalScale;",
+            `mapN.xy *= normalScale;
+	// Detail normals in atlas space (~1 tile per 2 cm of skin, a ~1.5 mm weave): pores and
+	// fine creases from two taps of the noise atlas on skin, a ripstop weave on fabric.
+	vec2 ihPore = ( texture2D( uPores, ihUv * 24.0 ).ag - 0.5 ) * 0.5 + ( texture2D( uPores, ihUv * 9.0 + 0.5 ).ga - 0.5 ) * 0.3;
+	vec2 ihWeave = texture2D( uWeave, ihUv * 64.0 ).xy * 2.0 - 1.0;
+	mapN.xy += ihPore * ihSkin * 0.6 + ihWeave * ihCloth * 0.45;`,
+          ),
+        );
+    }
   };
-  m.customProgramCacheKey = () => "iron-horizon-soldier-v2";
+  m.customProgramCacheKey = () => (hq ? (detail ? "iron-horizon-soldier-v3-hq" : "iron-horizon-soldier-v3-hq-flat") : "iron-horizon-soldier-v3");
   mats.set(key, m);
   return m;
 }

@@ -165,10 +165,13 @@ export function headMasks(geo, face) {
   geo.setAttribute("uv1", new THREE.BufferAttribute(M, 2));
 }
 
-/** RGBA atlas (2 x 2 quadrants of `size` px) from per-material images. */
-export function buildAtlas(dir, prefix, kind, size, fallback = [128, 128, 255, 255]) {
-  const S = size * 2, out = new Uint8Array(S * S * 4);
-  for (const [name, [qx, qy]] of Object.entries(QUAD)) {
+/**
+ * RGBA atlas (grid x grid cells of `size` px; default the 2 x 2 part
+ * quadrants) from per-material images, box-filtered from the 2048 px sources.
+ */
+export function buildAtlas(dir, prefix, kind, size, fallback = [128, 128, 255, 255], layout = QUAD, grid = 2) {
+  const S = size * grid, out = new Uint8Array(S * S * 4);
+  for (const [name, [qx, qy]] of Object.entries(layout)) {
     let img = null;
     for (const f of [`${prefix}_${name}_${kind}_acu.tga`, `${prefix}_${name}_${kind}.tga`]) {
       try { img = loadTGA(`${dir}/${f}`); break; } catch { /* next */ }
@@ -214,3 +217,86 @@ export function rasterUV(mask, W, geo, pick, grow = 1) {
 }
 
 export { triComponents };
+
+/**
+ * Head triangles on the eyeballs (their own small mesh islands centred on
+ * the eye bones): per-triangle flags, for the wet-eye roughness and to keep
+ * them out of the skin mask.
+ */
+export function eyeTris(geo, face) {
+  const pos = geo.attributes.position, idx = geo.index.array;
+  const comp = triComponents(idx, pos.count);
+  const box = new Map();
+  for (let t = 0; t < comp.length; t++) {
+    let b = box.get(comp[t]);
+    if (!b) box.set(comp[t], (b = new THREE.Box3()));
+    for (let k = 0; k < 3; k++) b.expandByPoint(new THREE.Vector3().fromBufferAttribute(pos, idx[t * 3 + k]));
+  }
+  const eye = new Map();
+  for (const [c, b] of box) {
+    const ctr = b.getCenter(new THREE.Vector3()), sz = b.getSize(new THREE.Vector3());
+    eye.set(c, Math.max(sz.x, sz.y, sz.z) < 0.05 && [face.eyeL, face.eyeR].some((e) => e && Math.hypot(ctr.x - e.x, ctr.y - e.y) < 0.012));
+  }
+  return Uint8Array.from(comp, (c) => (eye.get(c) ? 1 : 0));
+}
+
+/**
+ * Tucks a head behind helmet chin straps / cups: every jaw / chin vertex
+ * (below the eyes, in front of the ears) that a ray from inside the skull finds in front of (or within `margin` of)
+ * any of the helmets' lower triangles moves inward along that ray, with a
+ * smooth falloff onto its neighbours (shared per position, so UV seams stay
+ * closed). For head donors, whose jaws were never fitted to a strap.
+ * Returns the largest push (m).
+ */
+export function clearStraps(geo, helmets, face, margin = 0.003, rings = 4) {
+  const pos = geo.attributes.position, n = pos.count;
+  const ctr = new THREE.Vector3(0, (face.eyeL.y + face.eyeR.y) / 2 - 0.02, 0.01);
+  const tris = [];
+  for (const g of helmets) {
+    const hp = g.attributes.position, idx = g.index.array;
+    for (let t = 0; t < idx.length; t += 3) {
+      const T = [0, 1, 2].map((k) => new THREE.Vector3().fromBufferAttribute(hp, idx[t + k]));
+      if (Math.max(T[0].y, T[1].y, T[2].y) < ctr.y) tris.push(T);
+    }
+  }
+  const ray = new THREE.Ray(), hit = new THREE.Vector3(), v = new THREE.Vector3();
+  const need = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(pos, i);
+    // Jaw and chin only: ears and the hair behind them sit under the side straps and
+    // ear hardware on purpose, and pushing them in deforms the ear.
+    if (v.y > ctr.y - 0.03 || v.z < face.eyeL.z - 0.045) continue;
+    const len = v.distanceTo(ctr);
+    ray.set(ctr, v.clone().sub(ctr).normalize());
+    let tmin = Infinity;
+    for (const [a, b, c] of tris) if (ray.intersectTriangle(a, b, c, false, hit)) tmin = Math.min(tmin, hit.distanceTo(ctr));
+    need[i] = Math.max(0, len - (tmin - margin));
+  }
+  // Same displacement for coincident vertices (UV seams), then a soft falloff ring.
+  const key = (i) => `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;
+  const groups = new Map();
+  for (let i = 0; i < n; i++) { const k = key(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
+  const share = (d) => { for (const g of groups.values()) { let m = 0; for (const i of g) m = Math.max(m, d[i]); for (const i of g) d[i] = m; } };
+  const nb = Array.from({ length: n }, () => new Set());
+  const idx = geo.index.array;
+  for (let t = 0; t < idx.length; t += 3) for (let k = 0; k < 3; k++) { nb[idx[t + k]].add(idx[t + (k + 1) % 3]); nb[idx[t + k]].add(idx[t + (k + 2) % 3]); }
+  let d = need.slice();
+  share(d);
+  for (let r = 0; r < rings; r++) {
+    const next = d.slice();
+    for (let i = 0; i < n; i++) { let m = 0; for (const j of nb[i]) m = Math.max(m, d[j]); next[i] = Math.max(d[i], m * 0.55); }
+    share(next);
+    d = next;
+  }
+  let worst = 0;
+  for (let i = 0; i < n; i++) {
+    if (!d[i]) continue;
+    v.fromBufferAttribute(pos, i);
+    const dir = v.clone().sub(ctr).normalize();
+    v.addScaledVector(dir, -Math.min(d[i], 0.03));
+    pos.setXYZ(i, v.x, v.y, v.z);
+    worst = Math.max(worst, d[i]);
+  }
+  pos.needsUpdate = true;
+  return worst;
+}
