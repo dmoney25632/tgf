@@ -142,6 +142,42 @@ export function patchKitMaterial(mat: THREE.MeshStandardMaterial) {
   return mat;
 }
 
+/** One material for standalone kit meshes (interactive door leaves): the atlas, AO in the vertex colours. */
+export function kitMeshMaterial(atlas: THREE.MeshStandardMaterial) {
+  const m = atlas.clone();
+  m.vertexColors = true;
+  m.side = THREE.FrontSide;
+  return m;
+}
+
+/**
+ * A kit door leaf as a real mesh (raycastable, swings on a DoorSystem pivot): hinge at the
+ * origin, leaf along +X, up +Y, thickness centred on Z, scaled to `w` x `h`. The tint is baked
+ * into the vertex colours where the kit's mask allows it (painted timber, not the iron).
+ */
+export function kitDoorLeaf(geos: KitGeometry, mat: THREE.Material, piece: KitPiece, w: number, h: number, tint: Tint) {
+  const src = geos.get(piece)?.atlas;
+  if (!src) return null;
+  const g = src.clone();
+  g.scale(w / KIT_SIZE.leaf.w, h / KIT_SIZE.leaf.h, 1);
+  const c = g.getAttribute("color") as THREE.BufferAttribute;
+  const t = new THREE.Color(tint);
+  const rgb = new Float32Array(c.count * 3);
+  for (let i = 0; i < c.count; i++) {
+    const a = c.getW(i);
+    rgb[i * 3] = c.getX(i) * (1 + (t.r - 1) * a);
+    rgb[i * 3 + 1] = c.getY(i) * (1 + (t.g - 1) * a);
+    rgb[i * 3 + 2] = c.getZ(i) * (1 + (t.b - 1) * a);
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(rgb, 3));
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.name = "doorLeaf";
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
+
 /** Piece geometry per material kind, LOD0 and (when shipped) LOD1, from the kit glTF. */
 export type KitGeometry = Map<string, Partial<Record<Kind, THREE.BufferGeometry>>>;
 
@@ -212,6 +248,7 @@ export class ArchKitLayer {
   private dirty = true;
   /** Rendered triangles at the current LOD state (stats). */
   triangles = 0;
+  private readonly loadHooks: ((geos: KitGeometry, atlas: THREE.MeshStandardMaterial | null) => void)[] = [];
   private trisOf = new Map<string, number>();
 
   constructor(quality: QualityName) {
@@ -445,11 +482,20 @@ export class ArchKitLayer {
   attachScene(group: THREE.Object3D, scene: THREE.Object3D) {
     const { geos, atlas } = kitGeometry(scene);
     this.instantiate(group, geos, atlas);
+    for (const f of this.loadHooks.splice(0)) f(geos, atlas);
     // The batches own copies; the parsed scene stays cached for the next map.
     for (const e of geos.values()) for (const g of Object.values(e)) g?.dispose();
     this.loaded = true;
     this.dirty = true;
     this.showFallback(this.quality === "low");
+  }
+
+  /**
+   * Runs `f` with the kit's piece geometry when it loads (never on Low or a failed load). The
+   * geometries are disposed right after: copy what you keep (see `kitDoorLeaf`).
+   */
+  whenLoaded(f: (geos: KitGeometry, atlas: THREE.MeshStandardMaterial | null) => void) {
+    this.loadHooks.push(f);
   }
 
   /** The kit file is missing or broken: the box stand-ins take over. */

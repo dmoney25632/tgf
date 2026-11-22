@@ -178,7 +178,7 @@ export class GameEngine {
     const climb = mapDef.climb;
     this.player.climbRules = { disabled: climb?.disabled, bound: climb?.bound ?? mapDef.size / 2 - 1, maxY: climb?.maxY ?? Infinity };
     this.doorPrompt = new DoorPrompt(container);
-    if (this.map.doors) this.map.doors.onSwing = (_i, _open, at) => this.sfx.impact(at, "wood");
+    if (this.map.doors) this.map.doors.onSwing = (i, open, at, secs, style) => this.sfx.door(at, open, secs, !!style && /metal|steel|iron/.test(style), i);
     this.hud = new HUD(container);
     this.hud.onHurt = (amount) => this.input.rumble(Math.min(1, amount / 45), 0.35, 140);
     this.hud.setFpsVisible(this.settings.showFps);

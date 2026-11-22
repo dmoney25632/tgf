@@ -485,6 +485,11 @@ export class Sfx {
    * lowpass → equal-power panner → dry) with a reverb send. `rank` is how
    * audible it is (for stealing); defaults to `level`.
    */
+  /** The voice the last `voice()` call granted (to cut it short later). */
+  private lastVoice: Voice | null = null;
+  /** Each door's current swing sound: reversing a door cuts the old one (no close thud on a door that reopened). */
+  private readonly doorVoices = new Map<number, Voice>();
+
   private voice(cat: string, at: number, dur: number, level: number, route: Route, rank = level): Layers | null {
     const ctx = this.ctx!;
     const v: Voice = { id: 0, out: null, nodes: [], sources: [], pending: 0, dead: false };
@@ -492,6 +497,7 @@ export class Sfx {
     if (!grant) return null;
     v.id = grant.id;
     for (const s of grant.stolen) this.fade(s);
+    this.lastVoice = v;
 
     const out = ctx.createGain();
     out.gain.value = level;
@@ -1042,6 +1048,51 @@ export class Sfx {
         break;
       default:
         L.noise(now, { type: "bandpass", freq: surface === "sand" ? 500 : 1300, q: 1 }, 0.7, 0.0008, 0.06);
+    }
+  }
+
+  /**
+   * A door swinging: latch release, a stick-slip hinge creak through the swing, and on closing
+   * the leaf meeting the frame (thud + latch) when the swing ends `secs` from now.
+   */
+  door(at: V3, open: boolean, secs: number, metal = false, key = -1) {
+    const now = this.now();
+    if (now === null) return;
+    const prev = this.doorVoices.get(key);
+    if (prev) {
+      this.doorVoices.delete(key);
+      this.fade(prev);
+    }
+    const dist = this.distanceTo(at);
+    const audible = FOLEY * distanceGain(dist, 3, 1.3);
+    if (audible < 0.004) return;
+    const swing = Math.max(0.12, secs);
+    const L = this.voice("door", now, swing + 0.35, FOLEY, { pos: at, dist, ref: 3, rolloff: 1.3, send: 0.4 }, audible);
+    if (!L) return;
+    if (key >= 0 && this.lastVoice) this.doorVoices.set(key, this.lastVoice);
+    const pitch = metal ? 1.6 : 1;
+    // Latch: handle / bolt slipping out of the keeper.
+    if (open) {
+      L.noise(now, { type: "bandpass", freq: 3400 * pitch, q: 5 }, 0.35, 0.0006, 0.018);
+      L.noise(now + 0.03, { type: "bandpass", freq: 1900 * pitch, q: 3 }, 0.25, 0.0008, 0.03);
+    }
+    // Hinge creak: a run of tiny stick-slip grains whose pitch wanders up then down.
+    const start = now + (open ? 0.06 : 0.02);
+    const len = swing * (0.55 + L.rand() * 0.3);
+    const base = (metal ? 900 : 520) * (0.85 + L.rand() * 0.3);
+    for (let t = 0; t < len; t += 0.011 + L.rand() * 0.012) {
+      const k = t / len;
+      const f = base * (1 + 0.45 * Math.sin(Math.PI * k) + 0.08 * (L.rand() - 0.5));
+      const v = 0.12 * Math.sin(Math.PI * Math.min(1, k * 1.4)) * (0.5 + L.rand() * 0.7);
+      L.noise(start + t, { type: "bandpass", freq: f, q: 9 }, v, 0.0006, 0.014);
+    }
+    if (!open) {
+      // Leaf into the frame: a body thud, the rattle of the leaf, the latch snapping home.
+      const end = now + swing;
+      L.noise(end, { type: "lowpass", freq: metal ? 520 : 260, to: 90, over: 0.16, q: 0.8 }, 0.9, 0.002, 0.16);
+      L.noise(end, { type: "bandpass", freq: metal ? 1500 : 820, q: 1.6 }, 0.35, 0.001, 0.05);
+      if (metal) L.tone(end, "triangle", 310, 290, 0.2, 0.18, 0.002, 0.25);
+      L.noise(end + 0.025, { type: "bandpass", freq: 3600 * pitch, q: 6 }, 0.4, 0.0005, 0.015);
     }
   }
 

@@ -303,3 +303,26 @@ test("archkit: box styles draw cover with the kit on every map (sandbags, crates
   }
   assert.ok(total > 100, `kit cover across maps: ${total}`);
 });
+
+test("archkit: interactive door leaves from the kit: hinge at the origin, scaled to the door, tint only where masked", async () => {
+  const { kitDoorLeaf } = await import("../src/game/world/architecture/archkit");
+  // A 1.0 x 2.15 leaf running +X from the hinge; first half tintable (painted), second half iron.
+  const g = new THREE.BoxGeometry(1, 2.15, 0.045).translate(0.5, 1.075, 0);
+  const n = g.getAttribute("position").count;
+  const c = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) c.set([0.8, 0.8, 0.8, g.getAttribute("position").getX(i) < 0.5 ? 1 : 0], i * 4);
+  g.setAttribute("color", new THREE.BufferAttribute(c, 4));
+  const geos = new Map([["door_leaf_panel", { atlas: g }]]);
+  const leaf = kitDoorLeaf(geos, new THREE.MeshStandardMaterial(), "door_leaf_panel", 1.6, 2.4, 0x804020)!;
+  const box = leaf.geometry.boundingBox!;
+  assert.ok(Math.abs(box.min.x) < 1e-6 && Math.abs(box.max.x - 1.6) < 1e-6, "hinge at x=0, width 1.6");
+  assert.ok(Math.abs(box.max.y - 2.4) < 1e-6, "height 2.4");
+  const col = leaf.geometry.getAttribute("color");
+  const pos = leaf.geometry.getAttribute("position");
+  const t = new THREE.Color(0x804020);
+  for (let i = 0; i < col.count; i++) {
+    const tinted = pos.getX(i) < 0.8;
+    assert.ok(Math.abs(col.getX(i) - 0.8 * (tinted ? t.r : 1)) < 1e-5, `vertex ${i} tint`);
+  }
+  assert.equal(kitDoorLeaf(geos, new THREE.MeshStandardMaterial(), "door_leaf_metal", 1, 2, 0xffffff), null, "missing piece: keep the placeholder");
+});

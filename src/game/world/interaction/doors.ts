@@ -163,8 +163,8 @@ export class DoorSystem implements DynamicHooks {
   authority = true;
   /** Client → host toggle requests: [doorIndex, open 0/1]. */
   readonly requests: [number, number][] = [];
-  /** Sound / feedback hook: a door started moving. */
-  onSwing?: (index: number, open: boolean, at: THREE.Vector3) => void;
+  /** Sound / feedback hook: a door started moving; `secs` until it finishes the swing (the latch). */
+  onSwing?: (index: number, open: boolean, at: THREE.Vector3, secs: number, style?: string) => void;
   private clock = 0;
   private readonly blockers: THREE.Box3[] = [];
   private readonly scratch: THREE.Box3[] = [];
@@ -319,7 +319,7 @@ export class DoorSystem implements DynamicHooks {
     this.version++;
     if (this.onSwing) {
       leafCentre(d.def, d.def.swing * ease(d.amount), _c);
-      this.onSwing(i, open, this.tmpV.set(_c.x, (d.def.y ?? 0) + 1.1, _c.z));
+      this.onSwing(i, open, this.tmpV.set(_c.x, (d.def.y ?? 0) + 1.1, _c.z), Math.abs(target - d.amount) * DOOR.swingTime, d.def.style);
     }
   }
 

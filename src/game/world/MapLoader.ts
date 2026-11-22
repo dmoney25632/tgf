@@ -12,7 +12,7 @@ import { bakeDetail, qualityName, worldDetail } from "./quality";
 import { ModelPlacer } from "./Props";
 import { disposeProxy, shadowProxies, solidCaster, type ShadowSource } from "./ShadowProxy";
 import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
-import { attachArchKit, finishArchKit } from "./architecture/archkit";
+import { attachArchKit, finishArchKit, kitDoorLeaf, kitMeshMaterial, type ArchKitLayer } from "./architecture/archkit";
 import { buildTerrain } from "./Terrain";
 import { Foliage } from "./Foliage";
 import { DRESSINGS, defaultDressing } from "./dressing/index";
@@ -396,6 +396,23 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   if (doors) {
     sky.patchScene(doors.root);
     disposables.push(doors);
+    // With the kit: real kit leaves (panel / plank / metal) replace the placeholder slabs once it loads.
+    const kitLayer = root.getObjectByName("archkit")?.userData.archkit as ArchKitLayer | undefined;
+    kitLayer?.whenLoaded((geos, atlas) => {
+      if (!atlas || !def.doors) return;
+      const mat = kitMeshMaterial(atlas);
+      disposables.push(mat);
+      def.doors.forEach((d, i) => {
+        const st = d.style ?? "";
+        const piece = /metal|steel|iron/.test(st) ? "door_leaf_metal" : /plank|barn|board/.test(st) ? "door_leaf_plank" : "door_leaf_panel";
+        const leaf = kitDoorLeaf(geos, mat, piece, d.w, d.h, d.color ?? 0x6a4a30);
+        if (!leaf) return;
+        leaf.userData.surface = piece === "door_leaf_metal" ? "metal" : "wood";
+        disposables.push(leaf.geometry);
+        doors.setLeaf(i, leaf);
+      });
+      sky.patchScene(doors.root);
+    });
   }
 
   return {
