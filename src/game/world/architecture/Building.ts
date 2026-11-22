@@ -7,6 +7,7 @@ import {
   type Blast, type Opening, type Tint,
 } from "./kit";
 import { grimeOf, holeRects } from "./grime";
+import { archKitOf, KIT_SIZE } from "./archkit";
 import { cornerTrim, corbels, doorSurround, facadeCable, glazeOpening, glazeShop, wallClutter, windowSurround, worldFit, type CornerStyle } from "./facade";
 
 /** Sun-faded plaster colours common to the region (tints over the plaster photo texture). */
@@ -116,6 +117,11 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
   const r2 = rnd(s.seed * 31 + 7);
   const glazed = !s.ruin && (s.glazed ?? !!s.hollow);
   const far = group.startsWith("far");
+  // Modular kit (when the dressing attached one): window / door units, sills, lintels, shutters,
+  // bars, steps, balconies. The boxes they replace go to the kit's fallback group (hidden while
+  // the kit draws); raycast / collision groups are never touched.
+  const kit = group === "decor" && detail ? archKitOf(B) : undefined;
+  const kg = kit ? kit.fallback(group) : group;
   const grime = grimeOf(B);
   // Fine mouldings (quoins, corbels, hoods) are skipped on the low preset when the map says so.
   const fine = grime ? grime.quality !== "low" : true;
@@ -219,36 +225,49 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
       }
       if (glazed && (w.kind === "win" || w.kind === "balcony")) glazeOpening(B, f, o, r2, damage, !s.hollow, group, T);
       if (!detail && !full) continue;
+      const K = o.arch ? undefined : kit;
+      const g = K ? kg : group;
       // Frame inside the reveal.
       const fd = -0.12;
       const ft = 0.06;
       const frameTint = SHUTTER_TINTS[Math.floor(r() * SHUTTER_TINTS.length)];
       const fmat: WorldMat = r() < 0.5 ? "wood" : "metal_painted";
       if (detail) {
-        fbox(B, f, fmat, o.u - o.w / 2 + ft / 2, o.y + o.h / 2, fd, ft, o.h, 0.08, frameTint, { group });
-        fbox(B, f, fmat, o.u + o.w / 2 - ft / 2, o.y + o.h / 2, fd, ft, o.h, 0.08, frameTint, { group });
-        fbox(B, f, fmat, o.u, top - ft / 2, fd, o.w, ft, 0.08, frameTint, { group });
-        if (w.kind === "win") fbox(B, f, fmat, o.u, o.y + o.h * 0.62, fd, o.w, 0.04, 0.05, frameTint, { group });
+        const fg = K ? kg : group;
+        fbox(B, f, fmat, o.u - o.w / 2 + ft / 2, o.y + o.h / 2, fd, ft, o.h, 0.08, frameTint, { group: fg });
+        fbox(B, f, fmat, o.u + o.w / 2 - ft / 2, o.y + o.h / 2, fd, ft, o.h, 0.08, frameTint, { group: fg });
+        fbox(B, f, fmat, o.u, top - ft / 2, fd, o.w, ft, 0.08, frameTint, { group: fg });
+        if (w.kind === "win") fbox(B, f, fmat, o.u, o.y + o.h * 0.62, fd, o.w, 0.04, 0.05, frameTint, { group: fg });
       }
       if (w.kind === "win" || w.kind === "balcony") {
-        if (w.kind === "win") fbox(B, f, "concrete", o.u, o.y - 0.04, 0.06, o.w + 0.22, 0.08, 0.2, trim, { group });
-        if (!o.arch) fbox(B, f, wallMat, o.u, top + 0.09, 0.03, o.w + 0.3, 0.18, 0.06, trim, { group });
+        if (w.kind === "win") fbox(B, f, "concrete", o.u, o.y - 0.04, 0.06, o.w + 0.22, 0.08, 0.2, trim, { group: g });
+        if (!o.arch) fbox(B, f, wallMat, o.u, top + 0.09, 0.03, o.w + 0.3, 0.18, 0.06, trim, { group: g });
+        if (K && w.kind === "win") K.at("win_sill", f, o.u, o.y, 0, o.w, 1, 1, trim);
+        K?.at("win_lintel", f, o.u, top, 0, o.w, 0.9, 1, trim);
         if (surround && !o.arch && full) windowSurround(B, f, o, trim, group, wallMat);
         // Shutters: open against the wall, closed, or one hanging off.
+        let shut = false;
         if (detail) {
           const k = r();
           const sw = o.w / 2;
           const sTint = new THREE.Color(frameTint).multiplyScalar(0.85 + r() * 0.2);
+          const ks = (piece: "shutters_open" | "shutters_closed" | "shutter_hanging") => K?.at(piece, f, o.u, o.y, 0, o.w / KIT_SIZE.window.w, o.h / KIT_SIZE.window.h, 1, sTint);
           if (k < 0.3) {
-            for (const sgn of [-1, 1]) fbox(B, f, "wood", o.u + sgn * (o.w / 2 + sw / 2 + 0.02), o.y + o.h / 2, 0.03, sw, o.h, 0.03, sTint, { group });
+            for (const sgn of [-1, 1]) fbox(B, f, "wood", o.u + sgn * (o.w / 2 + sw / 2 + 0.02), o.y + o.h / 2, 0.03, sw, o.h, 0.03, sTint, { group: g });
+            ks("shutters_open");
           } else if (k < 0.42) {
-            fbox(B, f, "wood", o.u, o.y + o.h / 2, -0.06, o.w - 0.02, o.h - 0.02, 0.03, sTint, { group });
+            fbox(B, f, "wood", o.u, o.y + o.h / 2, -0.06, o.w - 0.02, o.h - 0.02, 0.03, sTint, { group: g });
+            ks("shutters_closed");
+            shut = true;
           } else if (k < 0.48) {
-            fbox(B, f, "wood", o.u + o.w / 2 + sw / 2, o.y + o.h / 2 - 0.15, 0.06, sw, o.h, 0.03, sTint, { group, rotZ: 0.35 });
+            fbox(B, f, "wood", o.u + o.w / 2 + sw / 2, o.y + o.h / 2 - 0.15, 0.06, sw, o.h, 0.03, sTint, { group: g, rotZ: 0.35 });
+            ks("shutter_hanging");
           }
         }
+        if (K && detail && !shut) K.at("win_casement", f, o.u, o.y, 0, o.w / KIT_SIZE.window.w, o.h / KIT_SIZE.window.h, 1, frameTint);
         if (w.kind === "win" && w.floor === 0 && detail) {
-          for (let i = 1; i < 6; i++) fbox(B, f, "metal_dark", o.u - o.w / 2 + (i * o.w) / 6, o.y + o.h / 2, -0.02, 0.025, o.h, 0.025, 0x2e2e2c, { group });
+          for (let i = 1; i < 6; i++) fbox(B, f, "metal_dark", o.u - o.w / 2 + (i * o.w) / 6, o.y + o.h / 2, -0.02, 0.025, o.h, 0.025, 0x2e2e2c, { group: g });
+          K?.at("win_bars", f, o.u, o.y, 0, o.w / KIT_SIZE.window.w, o.h / KIT_SIZE.window.h, 1, 0x2e2e2c);
         }
       }
       if (w.kind === "door") {
@@ -256,19 +275,33 @@ export function building(B: MeshBuilder, props: ModelPlacer | null, s: BuildingS
         const ajar = glazed ? 0 : r();
         if (glazed) r();
         if (detail && !far) doorSurround(B, f, o, trim, r2() < 0.4 && fine, group, wallMat);
-        fbox(B, f, "metal_painted", o.u + (ajar < 0.5 ? 0 : 0.25), o.h / 2, -0.15, o.w - 0.04, o.h - 0.02, 0.05, frameTint, { group, yaw: ajar < 0.5 ? 0 : 0.9 });
-        fbox(B, f, "concrete", o.u, 0.07, 0.25, o.w + 0.5, 0.14, 0.5, trim, { group });
+        fbox(B, f, "metal_painted", o.u + (ajar < 0.5 ? 0 : 0.25), o.h / 2, -0.15, o.w - 0.04, o.h - 0.02, 0.05, frameTint, { group: g, yaw: ajar < 0.5 ? 0 : 0.9 });
+        fbox(B, f, "concrete", o.u, 0.07, 0.25, o.w + 0.5, 0.14, 0.5, trim, { group: g });
+        if (K) {
+          const inset = KIT_SIZE.hingeInset;
+          K.at("door_frame", f, o.u, 0, 0, o.w / KIT_SIZE.door.w, o.h / KIT_SIZE.door.h, 1, frameTint);
+          K.leaf("door_leaf_metal", f, o.u - o.w / 2 + inset, o.w - 2 * inset, o.h - 0.05, "left", ajar < 0.5 ? 0 : 0.9, frameTint);
+          K.at("door_step", f, o.u, 0, 0, (o.w + 0.5) / 1.5, 0.14 / 0.12, 1.25, trim);
+        }
       }
       if (w.kind === "balcony" && detail) {
         const bd = 1.0, bw = o.w + 1.0;
-        fbox(B, f, "concrete", o.u, o.y - 0.12, bd / 2, bw, 0.16, bd, trim, { group });
+        fbox(B, f, "concrete", o.u, o.y - 0.12, bd / 2, bw, 0.16, bd, trim, { group: g });
+        K?.at("balcony_slab", f, o.u, o.y - 0.04, 0, bw / 2, 1, bd, trim);
         const c0 = f.at(o.u - bw / 2 + 0.03, o.y - 0.04, 0.03), c1 = f.at(o.u - bw / 2 + 0.03, o.y - 0.04, bd - 0.03);
         const c2 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, bd - 0.03), c3 = f.at(o.u + bw / 2 - 0.03, o.y - 0.04, 0.03);
         c0.y = c1.y = c2.y = c3.y = gy + o.y - 0.04;
         const ironTint = r() < 0.6 ? 0x232321 : 0x3c4a4a;
-        railing(B, c0, c1, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, group);
-        railing(B, c1, c2, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, group);
-        railing(B, c2, c3, 1.0, ironTint, 0.14, group);
+        railing(B, c0, c1, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, g);
+        railing(B, c1, c2, 1.0, ironTint, group.startsWith("far") ? 0.8 : 0.14, g);
+        railing(B, c2, c3, 1.0, ironTint, 0.14, g);
+        if (K) {
+          const out = f.n.clone();
+          K.runBetween("balcony_rail", c0, c1, out.clone().cross(new THREE.Vector3(0, 1, 0)), ironTint);
+          K.runBetween("balcony_rail", c1, c2, out, ironTint);
+          K.runBetween("balcony_rail", c2, c3, out.clone().cross(new THREE.Vector3(0, -1, 0)), ironTint);
+          for (const c of [c1, c2]) K.place("balcony_post", new THREE.Matrix4().makeTranslation(c.x, c.y, c.z), ironTint);
+        }
         wallDecal(B, f, "leak", o.u, o.y - 0.9, bw * 0.8, 1.4, 0xffffff, 0.012, group);
         if (r() < 0.3) awning(B, f, o.u, gy + top + 0.45, bw, 1.0, 0.35, Math.floor(r() * 4), Math.floor(r() * 1e6), r() < damage, group);
       }

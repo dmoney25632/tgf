@@ -7,6 +7,7 @@ import { facades, spall } from "../architecture/Building";
 import { Frame, acUnit, blastOutline, cable, dish, downpipe, fbox, railing, rebar, rod, wallDecal, type Blast, type Tint } from "../architecture/kit";
 import { debrisScatter, rubblePile } from "../architecture/debris";
 import { grimeOf, holeRects } from "../architecture/grime";
+import { archKitOf, KIT_SIZE, type ArchKitLayer } from "../architecture/archkit";
 import { HOUSES, TOWER, WALL_T, houseOpenings, sideLength, type HouseDef, type HouseOpening, type Side } from "../maps/brennhollow";
 
 /** The builders a Brennhollow structure draws into (one merged mesh per layer and material). */
@@ -81,11 +82,16 @@ function addWall(B: MeshBuilder, f: Frame, u0: number, o: WallOpts, mat: WorldMa
 
 /** Stone quoins up a corner: alternating long and short blocks proud of the render. */
 function quoins(V: Village, f: Frame, u: number, dir: 1 | -1, top: number, tint: Tint) {
+  const K = archKitOf(V.B);
   for (let y = 0.5, i = 0; y + 0.3 < top; y += 0.32, i++) {
     const w = i % 2 ? 0.34 : 0.62;
-    fbox(V.stone, f, "plain", u + dir * w / 2, y + 0.15, 0.025, w, 0.29, 0.05, tint);
+    fbox(V.stone, f, "plain", u + dir * w / 2, y + 0.15, 0.025, w, 0.29, 0.05, tint, fb(K));
+    K?.at(i % 2 ? "quoin_short" : "quoin_long", f, u + dir * w / 2, y, 0, w / (i % 2 ? KIT_SIZE.quoinShort : KIT_SIZE.quoinLong), 1, 1, tint);
   }
 }
+
+/** Builder options for a box the kit replaces (its stand-in when the kit is off), or none. */
+const fb = (K: ArchKitLayer | null | undefined, group = "decor") => (K ? { group: K.fallback(group) } : {});
 
 // ---- Roofs -------------------------------------------------------------------------------
 
@@ -143,6 +149,7 @@ type RoofSpec = { x0: number; x1: number; z0: number; z1: number; eave: number; 
 
 /** Gable (or hip) roof over a footprint; returns ridge height. */
 function roof(V: Village, s: RoofSpec, r: () => number) {
+  const K = archKitOf(V.B);
   const over = s.over ?? 0.45;
   const alongX = s.axis === "x";
   const len = (alongX ? s.x1 - s.x0 : s.z1 - s.z0) + (s.hip ? 2 * over : 0.6);
@@ -175,7 +182,11 @@ function roof(V: Village, s: RoofSpec, r: () => number) {
     // Gutter and fascia along the eave.
     const g0 = origin.clone().addScaledVector(perp, 0.06).add(new THREE.Vector3(0, -0.08, 0));
     const g1 = g0.clone().addScaledVector(along, len);
-    rod(V.B, g0, g1, 0.06, 0x6a6a64, "decor", "metal_painted");
+    rod(V.B, g0, g1, 0.06, 0x6a6a64, K ? K.fallback() : "decor", "metal_painted");
+    if (K) {
+      const k0 = origin.clone().add(new THREE.Vector3(0, -0.07, 0));
+      K.runBetween("gutter", k0, k0.clone().addScaledVector(along, len), perp);
+    }
     // Eave edge of the slates (thickness line).
     const e = origin.clone().addScaledVector(along, len / 2).add(new THREE.Vector3(0, -0.02, 0));
     V.slate.box("plain", e.x, e.y, e.z, alongX ? len : 0.05, 0.05, alongX ? 0.05 : len, 0x8a8a8a);
@@ -195,7 +206,12 @@ function roof(V: Village, s: RoofSpec, r: () => number) {
   // Ridge cap: a row of angled tiles.
   const rl = s.hip ? len - 2 * hipRun : len;
   if (rl > 0.2) {
-    V.slate.box("plain", cx, ridge + 0.02, cz, alongX ? rl : 0.26, 0.12, alongX ? 0.26 : rl, 0x6a6a6a, { rotX: alongX ? Math.PI / 4 : 0, rotZ: alongX ? 0 : Math.PI / 4 });
+    V.slate.box("plain", cx, ridge + 0.02, cz, alongX ? rl : 0.26, 0.12, alongX ? 0.26 : rl, 0x6a6a6a, { rotX: alongX ? Math.PI / 4 : 0, rotZ: alongX ? 0 : Math.PI / 4, ...fb(K) });
+    if (K) {
+      const c = new THREE.Vector3(cx, ridge + 0.03, cz);
+      const side = alongX ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+      K.runBetween("ridge_clay", c.clone().addScaledVector(ax, -rl / 2), c.clone().addScaledVector(ax, rl / 2), side);
+    }
   }
   return { ridge, eaveY, len, half, rise };
 }
@@ -208,40 +224,60 @@ function dressOpening(V: Village, f: Frame, o: HouseOpening, uWall: number, h: H
   const stoneTrim = h.wall === "stone" ? 0xd8d0c0 : 0xe4dccb;
   const top = o.y + o.h;
   if (o.kind === "hole") return;
+  // Kit units replace the square-headed openings; arches (church, manor gate) stay procedural.
+  const K = o.arch || h.id === "church" ? null : archKitOf(V.B);
+  const sx = o.w / KIT_SIZE.window.w, sy = o.h / KIT_SIZE.window.h;
   // Stone surround: sill, lintel/keystone, jambs.
   if (o.kind === "win") {
-    fbox(V.stone, f, "plain", u, o.y - 0.06, 0.05, o.w + 0.26, 0.12, 0.16, stoneTrim);
-    if (!o.arch) fbox(V.stone, f, "plain", u, top + 0.1, 0.02, o.w + 0.3, 0.2, 0.06, stoneTrim);
+    fbox(V.stone, f, "plain", u, o.y - 0.06, 0.05, o.w + 0.26, 0.12, 0.16, stoneTrim, fb(K));
+    if (!o.arch) fbox(V.stone, f, "plain", u, top + 0.1, 0.02, o.w + 0.3, 0.2, 0.06, stoneTrim, fb(K));
     for (const s of [-1, 1]) fbox(V.stone, f, "plain", u + s * (o.w / 2 + 0.06), o.y + o.h / 2, 0.015, 0.12, o.h, 0.04, stoneTrim);
     if (o.arch) fbox(V.stone, f, "plain", u, top + o.w / 2 + 0.06, 0.02, 0.2, 0.28, 0.06, stoneTrim);
     // Frame, glazing bars, glass (some panes blown out).
     const fr = h.id === "church" ? 0x3a3430 : h.wall === "white" ? 0xe8e4dc : 0x6a5440;
     const d = -0.16;
-    fbox(B, f, "wood", u, o.y + 0.03, d, o.w, 0.06, 0.08, fr);
-    fbox(B, f, "wood", u, top - 0.03, d, o.w, 0.06, 0.08, fr);
-    for (const s of [-1, 0, 1]) fbox(B, f, "wood", u + (s * (o.w - 0.06)) / 2, o.y + o.h / 2, d, s ? 0.06 : 0.04, o.h, 0.08, fr);
-    fbox(B, f, "wood", u, o.y + o.h * 0.62, d, o.w, 0.04, 0.06, fr);
+    const fk = fb(K);
+    fbox(B, f, "wood", u, o.y + 0.03, d, o.w, 0.06, 0.08, fr, fk);
+    fbox(B, f, "wood", u, top - 0.03, d, o.w, 0.06, 0.08, fr, fk);
+    for (const s of [-1, 0, 1]) fbox(B, f, "wood", u + (s * (o.w - 0.06)) / 2, o.y + o.h / 2, d, s ? 0.06 : 0.04, o.h, 0.08, fr, fk);
+    fbox(B, f, "wood", u, o.y + o.h * 0.62, d, o.w, 0.04, 0.06, fr, fk);
     const broken = r() < h.damage * 0.55;
     if (!broken || !interior) {
       const glass = h.id === "church" ? (r() < 0.5 ? 0x3a4a5a : 0x5a4a38) : 0x2a3036;
-      fbox(B, f, "plain", u, o.y + o.h / 2 + (o.arch ? o.w * 0.2 : 0), d - 0.02, o.w - 0.04, o.h + (o.arch ? o.w * 0.4 : 0) - 0.04, 0.01, broken ? 0x0c0c0c : glass, { noAo: true });
+      fbox(B, f, "plain", u, o.y + o.h / 2 + (o.arch ? o.w * 0.2 : 0), d - 0.02, o.w - 0.04, o.h + (o.arch ? o.w * 0.4 : 0) - 0.04, 0.01, broken ? 0x0c0c0c : glass, { noAo: true, ...fk });
     }
-    // Shutters: folded back, closed, or hanging off a hinge.
+    if (K) {
+      K.at("win_sill", f, u, o.y, 0, sx, 1, 1, stoneTrim);
+      K.at(h.wall === "white" || h.floors > 2 ? "win_lintel_key" : "win_lintel", f, u, top, 0, sx, 1, 1, stoneTrim);
+    }
+    let shut = false;
+    // Shutters: folded back, closed, or hanging off a hinge. Houses you cannot enter keep the
+    // ground floor shut (reads as "no way in"); enterable ones have them open.
     if (h.id !== "church" && h.id !== "barn") {
       const k = r();
       const sw = o.w / 2 + 0.02;
       const st = new THREE.Color(h.shutter).lerp(new THREE.Color(0x8a8478), 0.3).multiplyScalar(0.8 + r() * 0.25);
       const leaf = (cu: number, dd: number, rotZ = 0, yy = o.y + o.h / 2) => {
-        fbox(V.timber, f, "plain", cu, yy, dd, sw, o.h - 0.02, 0.035, st, { rotZ });
-        for (const by of [0.2, 0.5, 0.8]) fbox(V.timber, f, "plain", cu, o.y + o.h * by - (rotZ ? 0.1 : 0), dd + 0.02, sw - 0.04, 0.05, 0.012, st.clone().multiplyScalar(0.8), { rotZ });
+        fbox(V.timber, f, "plain", cu, yy, dd, sw, o.h - 0.02, 0.035, st, { rotZ, ...fb(K) });
+        for (const by of [0.2, 0.5, 0.8]) fbox(V.timber, f, "plain", cu, o.y + o.h * by - (rotZ ? 0.1 : 0), dd + 0.02, sw - 0.04, 0.05, 0.012, st.clone().multiplyScalar(0.8), { rotZ, ...fb(K) });
       };
-      if (k < 0.55) for (const s of [-1, 1]) leaf(u + s * (o.w / 2 + sw / 2 + 0.1), 0.03);
-      else if (k < 0.72 && !interior) for (const s of [-1, 1]) leaf(u + (s * sw) / 2, -0.06);
-      else if (k < 0.8) {
+      let mode: "open" | "closed" | "hanging" | "none" = k < 0.55 ? "open" : k < 0.72 && !interior ? "closed" : k < 0.8 ? "hanging" : "none";
+      if (!interior && !h.ruin && o.y < 2 && mode !== "hanging") mode = "closed";
+      const louvre = seedOf(h.id) % 3 === 0;
+      if (mode === "open") for (const s of [-1, 1]) leaf(u + s * (o.w / 2 + sw / 2 + 0.1), 0.03);
+      else if (mode === "closed") for (const s of [-1, 1]) leaf(u + (s * sw) / 2, -0.06);
+      else if (mode === "hanging") {
         leaf(u - (o.w / 2 + sw / 2 + 0.1), 0.03);
         leaf(u + o.w / 2 + sw / 2 + 0.05, 0.06, 0.4, o.y + o.h / 2 - 0.2);
       }
+      shut = mode === "closed";
+      if (K && mode !== "none") {
+        const piece = mode === "open" ? (louvre ? "louvres_open" : "shutters_open") : mode === "closed" ? (louvre ? "louvres_closed" : "shutters_closed") : "shutter_hanging";
+        K.at(piece, f, u, o.y, 0, sx, sy, 1, st);
+      }
     }
+    // Casement behind (not when the shutters are shut: its sash would poke through them).
+    if (K && !shut) K.at(broken ? "win_casement_broken" : "win_casement", f, u, o.y, 0, sx, sy, 1, fr);
     // Window box with geraniums now and then (survivors of the shelling).
     if (o.y > 2 && r() < 0.15 && h.id !== "church") {
       fbox(V.timber, f, "plain", u, o.y - 0.02, 0.18, o.w, 0.18, 0.2, 0x6a4a30);
@@ -251,13 +287,24 @@ function dressOpening(V: Village, f: Frame, o: HouseOpening, uWall: number, h: H
     return;
   }
   // Doors and archways: stone frame, step, a leaf (open on enterable houses).
-  for (const s of [-1, 1]) fbox(V.stone, f, "plain", u + s * (o.w / 2 + 0.09), o.h / 2, 0.02, 0.18, o.h, 0.06, stoneTrim);
-  if (!o.arch) fbox(V.stone, f, "plain", u, o.h + 0.12, 0.03, o.w + 0.5, 0.24, 0.08, stoneTrim);
+  const KD = K && o.w <= 1.9 ? K : null;
+  for (const s of [-1, 1]) fbox(V.stone, f, "plain", u + s * (o.w / 2 + 0.09), o.h / 2, 0.02, 0.18, o.h, 0.06, stoneTrim, fb(KD));
+  if (!o.arch) fbox(V.stone, f, "plain", u, o.h + 0.12, 0.03, o.w + 0.5, 0.24, 0.08, stoneTrim, fb(KD));
   else fbox(V.stone, f, "plain", u, o.h + o.w / 2 + 0.1, 0.03, 0.26, 0.34, 0.08, stoneTrim);
-  fbox(V.stone, f, "plain", u, 0.05, 0.22, o.w + 0.4, 0.1, 0.42, 0xb8b0a2);
+  fbox(V.stone, f, "plain", u, 0.05, 0.22, o.w + 0.4, 0.1, 0.42, 0xb8b0a2, fb(K));
   const leafT = new THREE.Color(r() < 0.5 ? 0x6a4a30 : h.shutter).multiplyScalar(0.85);
+  const dsx = o.w / KIT_SIZE.door.w, dsy = o.h / KIT_SIZE.door.h;
+  // Enterable doors read from across the square: a pale dressed surround, a contrasting
+  // painted frame and a lantern; the step is kit on every door.
+  K?.at("door_step", f, u, 0, 0, (o.w + 0.4) / 1.5, 1, 1.05, 0xb8b0a2);
+  if (KD) {
+    KD.at("door_surround", f, u, 0, 0, dsx, dsy, 1, stoneTrim);
+    KD.at("door_frame", f, u, 0, 0, dsx, dsy, 1, interior ? 0xe8e0cc : 0x4a3a2c);
+    if (interior) KD.at("door_lamp", f, u + o.w / 2 + 0.42, Math.min(o.h, 2.3), 0, 1, 1, 1, 0x2a2a28);
+  }
   // Interactive door (world/interaction/doors) hangs here: frame only.
   if (o.leaf) return;
+  const inset = KIT_SIZE.hingeInset;
   if (interior || o.w > 2.4) {
     // Swung inwards against the reveal.
     const n = o.w > 2.4 ? 2 : 1;
@@ -265,11 +312,13 @@ function dressOpening(V: Village, f: Frame, o: HouseOpening, uWall: number, h: H
       const lw = o.w / n;
       const sgn = i ? 1 : -1;
       const hinge = u + sgn * (o.w / 2);
-      fbox(V.timber, f, "plain", hinge - sgn * 0.03, o.h / 2, -WALL_T - lw / 2 + 0.02, 0.05, o.h - 0.05, lw - 0.06, leafT, { yaw: 0 });
+      fbox(V.timber, f, "plain", hinge - sgn * 0.03, o.h / 2, -WALL_T - lw / 2 + 0.02, 0.05, o.h - 0.05, lw - 0.06, leafT, { yaw: 0, ...fb(K) });
+      K?.leaf(n > 1 ? "door_leaf_plank" : "door_leaf_panel", f, hinge - sgn * inset, lw - inset - 0.01, o.h - 0.05, i ? "right" : "left", Math.PI / 2 - 0.08, leafT);
     }
   } else {
-    fbox(V.timber, f, "plain", u, o.h / 2, -0.14, o.w - 0.04, o.h - 0.04, 0.06, leafT);
-    fbox(B, f, "metal_dark", u + o.w * 0.35, 1.05, -0.1, 0.04, 0.16, 0.04, 0x2a2a28);
+    fbox(V.timber, f, "plain", u, o.h / 2, -0.14, o.w - 0.04, o.h - 0.04, 0.06, leafT, fb(K));
+    fbox(B, f, "metal_dark", u + o.w * 0.35, 1.05, -0.1, 0.04, 0.16, 0.04, 0x2a2a28, fb(K));
+    K?.leaf(h.id === "barn" || o.w > 1.6 ? "door_leaf_plank" : "door_leaf_panel", f, u - o.w / 2 + inset, o.w - 2 * inset, o.h - 0.05, "left", 0, leafT);
   }
 }
 
@@ -289,6 +338,7 @@ export function house(V: Village, h: HouseDef) {
   const wm = wallMat(h);
   const WB = wm.B === "stone" ? V.stone : V.B;
   const interior = !!h.enter;
+  const K = archKitOf(V.B);
   const roofSpec = h.roof;
   const tan = roofSpec ? Math.tan(roofSpec.pitch) : 0;
   const span = roofSpec ? (roofSpec.axis === "x" ? D : W) : 0;
@@ -340,13 +390,25 @@ export function house(V: Village, h: HouseDef) {
     addWall(WB, f, u0, { L: len, T, crown: (u) => c.crown(u + u0), flat: c.flat, openings: okOps, blasts: sideBlasts }, wm.mat, wm.tint);
     for (const o of okOps) dressOpening(V, f, { ...o, u: o.u + u0 }, 0, h, r, interior);
     // Plinth band of dressed stone, plaster grime, string course, eaves cornice.
+    // Kit: moulded plinth, string courses and a real eaves cornice (1 m modules stretched to fit).
     if (h.wall !== "stone") {
-      fbox(V.stone, f, "plain", L / 2, 0.35, 0.03, L + 0.06, 0.7, 0.06, 0xb8b0a0);
+      fbox(V.stone, f, "plain", L / 2, 0.35, 0.03, L + 0.06, 0.7, 0.06, 0xb8b0a0, fb(K));
+      K?.run("plinth_course", f, -0.03, L + 0.03, 0, 0, 0xb8b0a0, 0.7 / 0.6);
       if (!h.ruin) {
-        for (let fl = 1; fl < h.floors; fl++) fbox(WB, f, wm.mat, L / 2, fl * h.fh + 0.05, 0.03, L + 0.06, 0.14, 0.06, new THREE.Color(wm.tint).multiplyScalar(1.04));
-        if (c.flat) fbox(WB, f, wm.mat, L / 2, H - 0.18, 0.06, L + 0.12, 0.3, 0.12, new THREE.Color(wm.tint).multiplyScalar(1.05));
+        const band = new THREE.Color(wm.tint).multiplyScalar(1.04);
+        for (let fl = 1; fl < h.floors; fl++) {
+          fbox(WB, f, wm.mat, L / 2, fl * h.fh + 0.05, 0.03, L + 0.06, 0.14, 0.06, band, fb(K));
+          K?.run("string_course", f, -0.03, L + 0.03, fl * h.fh - 0.02, 0, band, 0.14 / 0.15);
+        }
+        if (c.flat) {
+          fbox(WB, f, wm.mat, L / 2, H - 0.18, 0.06, L + 0.12, 0.3, 0.12, new THREE.Color(wm.tint).multiplyScalar(1.05), fb(K));
+          K?.run("cornice", f, -0.06, L + 0.06, H - 0.33, 0, new THREE.Color(wm.tint).multiplyScalar(1.05));
+        }
       }
-    } else fbox(V.stone, f, "plain", L / 2, 0.25, 0.04, L + 0.08, 0.5, 0.08, 0xa49a8a);
+    } else {
+      fbox(V.stone, f, "plain", L / 2, 0.25, 0.04, L + 0.08, 0.5, 0.08, 0xa49a8a, fb(K));
+      K?.run("plinth_course", f, -0.04, L + 0.04, 0, 0, 0xa49a8a, 0.5 / 0.6);
+    }
     if (h.wall !== "stone" && h.id !== "church") {
       quoins(V, f, 0, 1, c.crown(0) - 0.2, 0xd2c8b6);
       quoins(V, f, L, -1, c.crown(L) - 0.2, 0xd2c8b6);
@@ -386,7 +448,15 @@ export function house(V: Village, h: HouseDef) {
         d: 0.048,
       });
     }
-    if (!h.ruin && c.flat && r() < 0.6) downpipe(V.B, f, r() < 0.5 ? 0.3 : L - 0.3, H - 0.1);
+    if (!h.ruin && c.flat && r() < 0.6) {
+      const pu = r() < 0.5 ? 0.3 : L - 0.3;
+      downpipe(V.B, f, pu, H - 0.1, K ? K.fallback() : "decor");
+      if (K) {
+        K.at("downpipe_head", f, pu, H - 0.1, 0);
+        K.at("downpipe", f, pu, 0.45, 0, 1, H - 0.1 - 0.3 - 0.45);
+        K.at("downpipe_shoe", f, pu, 0, 0);
+      }
+    }
     if (!h.ruin && !interior && side !== 3 && r() < 0.25 && h.floors > 1) acUnit(V.B, f, 1.2 + r() * (L - 2.4), h.fh + 0.4, Math.floor(r() * 1e6));
     if (!h.ruin && r() < 0.18 && h.floors > 1) dish(V.B, ...(() => { const p = f.at(L * 0.8, H - 1.2, 0.35); return [p.x, p.y, p.z] as const; })(), f.rotY + Math.PI / 2, 0.4);
   }
@@ -436,14 +506,21 @@ function chimney(V: Village, x: number, z: number, ridge: number, kind: "stone" 
   const top = ridge + 0.9 + r() * 0.4;
   const y0 = ridge - 2.6;
   const w = 0.62, d = 0.5;
-  if (kind === "stone") V.stone.box("plain", x, (y0 + top) / 2, z, w, top - y0, d, 0xc8c0b2);
-  else V.B.box("brick", x, (y0 + top) / 2, z, w, top - y0, d, 0xc8a898);
-  V.stone.box("plain", x, top + 0.05, z, w + 0.14, 0.1, d + 0.14, 0xb8b0a4);
+  const K = archKitOf(V.B);
+  const g = fb(K);
+  if (kind === "stone") V.stone.box("plain", x, (y0 + top) / 2, z, w, top - y0, d, 0xc8c0b2, g);
+  else V.B.box("brick", x, (y0 + top) / 2, z, w, top - y0, d, 0xc8a898, g);
+  V.stone.box("plain", x, top + 0.05, z, w + 0.14, 0.1, d + 0.14, 0xb8b0a4, g);
   const pot = new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8);
-  for (const o of r() < 0.5 ? [-0.14, 0.14] : [0]) V.B.add(pot, new THREE.Matrix4().makeTranslation(x + o, top + 0.27, z), "plain", 0x9a5a3a, { uv: "keep" });
+  for (const o of r() < 0.5 ? [-0.14, 0.14] : [0]) V.B.add(pot, new THREE.Matrix4().makeTranslation(x + o, top + 0.27, z), "plain", 0x9a5a3a, { uv: "keep", ...g });
   pot.dispose();
   // Soot round the top.
-  V.B.box("plain", x, top - 0.25, z, w + 0.004, 0.5, d + 0.004, 0x2a2624, { noAo: true });
+  V.B.box("plain", x, top - 0.25, z, w + 0.004, 0.5, d + 0.004, 0x2a2624, { noAo: true, ...(kind === "stone" ? {} : g) });
+  if (K) {
+    // Stack (1 m module stretched), oversailing courses, flaunching and pots.
+    K.place(kind === "stone" ? "chimney_stack_stone" : "chimney_stack", new THREE.Matrix4().makeTranslation(x, y0, z).scale(new THREE.Vector3(1, top - y0, 1)), kind === "stone" ? 0xc8c0b2 : 0xffffff);
+    K.place("chimney_cap", new THREE.Matrix4().makeTranslation(x, top, z));
+  }
 }
 
 /** Old TV aerial (yagi) on a mast. */

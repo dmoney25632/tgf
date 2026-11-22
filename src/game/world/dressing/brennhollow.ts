@@ -12,6 +12,7 @@ import { HOUSES, LAMPS, MANOR_YARD, ORCHARD, PICKUP, POLES, SQUARE, STATUE, TANK
 import { villageMaterial } from "./brennhollowTextures";
 import { applyWeathering } from "../../render/Materials";
 import { attachGrime, finishGrime } from "../architecture/grime";
+import { attachArchKit, coverClass, finishArchKit } from "../architecture/archkit";
 import { churchInterior, churchTower, house, manorDetail, pickup, rnd, statue, tankHulk, type Village } from "./brennhollowHouses";
 import { band, clearOf, fbm2, fence, pallets, smoothstep, tyre, wireSpan, type Dressing, type WorldExtra } from "./common";
 
@@ -129,6 +130,9 @@ export const brennhollow: Dressing = (kit) => {
   const layerBuilders = { slate: new MeshBuilder(), stone: new MeshBuilder(), timber: new MeshBuilder(), setts: new MeshBuilder() };
   for (const lb of Object.values(layerBuilders)) lb.ground = height;
   const V: Village = { B, slate: layerBuilders.slate, stone: layerBuilders.stone, timber: layerBuilders.timber, props, detail, high };
+  // Modular architecture kit (instanced window / door units, mouldings, rainwater goods, roof
+  // edges, chimneys, cover copings). Not on Low: there the boxes below are the whole picture.
+  const K = attachArchKit(B, qn, layerBuilders.slate, layerBuilders.stone, layerBuilders.timber);
 
   // ---- Terrain splat ------------------------------------------------------------------
   const splat = (x: number, z: number, o: Splat) => {
@@ -295,13 +299,23 @@ export const brennhollow: Dressing = (kit) => {
   for (const w of [...tagged("lowwall"), ...tagged("yardwall")]) {
     const y = w.h;
     V.stone.box("plain", w.x, y / 2, w.z, w.w, y, w.d, 0xd8d0c4);
-    // Coping stones, slightly irregular.
+    // Coping stones, slightly irregular. With the kit: the shared cover language instead, a pale
+    // dressed capstone on vaultable tops, a bull-nosed coping with a steel nosing on mantle ledges.
     const alongX = w.w > w.d;
     const len = alongX ? w.w : w.d;
+    const cls = coverClass(y);
+    const cope = K && (cls === "low" || cls === "mantle") ? K : null;
     for (let a = -len / 2; a < len / 2 - 0.05; a += 0.55 + r() * 0.3) {
       const l = Math.min(0.6 + r() * 0.3, len / 2 - a);
       const cx = alongX ? w.x + a + l / 2 : w.x, cz = alongX ? w.z : w.z + a + l / 2;
-      V.stone.box("plain", cx, y + 0.07, cz, alongX ? l - 0.03 : w.w + 0.1, 0.14 + r() * 0.04, alongX ? w.d + 0.1 : l - 0.03, 0xc4bcae, { rotY: (r() - 0.5) * 0.05 });
+      V.stone.box("plain", cx, y + 0.07, cz, alongX ? l - 0.03 : w.w + 0.1, 0.14 + r() * 0.04, alongX ? w.d + 0.1 : l - 0.03, 0xc4bcae, { rotY: (r() - 0.5) * 0.05, ...(cope ? { group: cope.fallback() } : {}) });
+    }
+    if (cope) {
+      const ax = alongX ? new THREE.Vector3(len / 2, 0, 0) : new THREE.Vector3(0, 0, len / 2);
+      const c = new THREE.Vector3(w.x, y, w.z);
+      const depth = (alongX ? w.d : w.w) + 0.08;
+      const low = cls === "low";
+      cope.runBetween(low ? "coping_low" : "coping_mantle", c.clone().sub(ax), c.clone().add(ax), alongX ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(1, 0, 0), low ? 0xe4ddd0 : 0xc8c6c0, 1, depth / (low ? 0.5 : 0.6));
     }
     for (const f of facades(w.x, w.z, w.w, w.d, 0)) wallDecal(B, f, "baseDirt", (alongX ? w.w : w.d) / 2, 0.45, len, 0.9, 0xffffff, 0.02);
     for (let k = 0; k < len / 3; k++) ivy(w.x, w.z, w.w, w.d, y);
@@ -584,6 +598,7 @@ export const brennhollow: Dressing = (kit) => {
   extras.push(layer(layerBuilders.timber, timber, true));
   extras.push(layer(layerBuilders.setts, setts, false));
   extras.push(...finishGrime(B));
+  extras.push(...finishArchKit(B));
 
   return {
     terrain: { height, splat, inner: 52, outer: 53 },

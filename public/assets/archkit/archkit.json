@@ -1,0 +1,1929 @@
+{
+ "$comment": "Built by art/blender/archkit/build.py. Bounds in glTF axes (Y up, -Z out of the wall).",
+ "atlas": {
+  "cells": [
+   "stone",
+   "rubble_wall",
+   "render",
+   "concrete",
+   "timber_paint",
+   "timber_raw",
+   "iron",
+   "zinc",
+   "sheet_paint",
+   "brick",
+   "slate",
+   "clay",
+   "hessian",
+   "debris",
+   "dark",
+   "oak"
+  ],
+  "grid": 4,
+  "cellMetres": 1.25,
+  "tintMask": {
+   "stone": 1.0,
+   "rubble_wall": 1.0,
+   "render": 1.0,
+   "concrete": 1.0,
+   "timber_paint": 1.0,
+   "timber_raw": 0.0,
+   "iron": 0.0,
+   "zinc": 0.0,
+   "sheet_paint": 1.0,
+   "brick": 0.0,
+   "slate": 0.0,
+   "clay": 0.0,
+   "hessian": 0.0,
+   "debris": 0.0,
+   "dark": 0.0,
+   "oak": 0.0
+  }
+ },
+ "heights": {
+  "low": 1.0,
+  "mantle": 1.8
+ },
+ "pieces": {
+  "win_casement": {
+   "lod0": {
+    "tris": 1262,
+    "min": [
+     -0.5,
+     0.006,
+     0.059
+    ],
+    "max": [
+     0.5,
+     1.394,
+     0.2
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   },
+   "lod1": {
+    "tris": 254,
+    "min": [
+     -0.5,
+     0.006,
+     0.08
+    ],
+    "max": [
+     0.5,
+     1.394,
+     0.2
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   }
+  },
+  "win_casement_broken": {
+   "lod0": {
+    "tris": 1232,
+    "min": [
+     -0.5,
+     0.006,
+     -0.1301
+    ],
+    "max": [
+     0.5,
+     1.394,
+     0.2
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   },
+   "lod1": {
+    "tris": 256,
+    "min": [
+     -0.5,
+     0.006,
+     -0.135
+    ],
+    "max": [
+     0.5,
+     1.394,
+     0.2
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   }
+  },
+  "win_sill": {
+   "lod0": {
+    "tris": 248,
+    "min": [
+     -0.62,
+     -0.11,
+     -0.065
+    ],
+    "max": [
+     0.62,
+     0.006,
+     0.22
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 36,
+    "min": [
+     -0.62,
+     -0.11,
+     -0.065
+    ],
+    "max": [
+     0.62,
+     0.006,
+     0.22
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_lintel": {
+   "lod0": {
+    "tris": 56,
+    "min": [
+     -0.65,
+     -0.004,
+     -0.033
+    ],
+    "max": [
+     0.65,
+     0.2,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.65,
+     -0.004,
+     -0.03
+    ],
+    "max": [
+     0.65,
+     0.2,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_lintel_key": {
+   "lod0": {
+    "tris": 308,
+    "min": [
+     -0.7932,
+     -0.004,
+     -0.05
+    ],
+    "max": [
+     0.7932,
+     0.3,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 84,
+    "min": [
+     -0.7977,
+     -0.004,
+     -0.05
+    ],
+    "max": [
+     0.7977,
+     0.3,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_surround": {
+   "lod0": {
+    "tris": 560,
+    "min": [
+     -0.7,
+     -0.07,
+     -0.075
+    ],
+    "max": [
+     0.7,
+     1.404,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 72,
+    "min": [
+     -0.7,
+     0.0,
+     -0.075
+    ],
+    "max": [
+     0.7,
+     1.404,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "shutters_open": {
+   "lod0": {
+    "tris": 1976,
+    "min": [
+     -1.156,
+     0.01,
+     -0.079
+    ],
+    "max": [
+     1.156,
+     1.39,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 192,
+    "min": [
+     -1.117,
+     0.01,
+     -0.064
+    ],
+    "max": [
+     1.117,
+     1.39,
+     -0.012
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "louvres_open": {
+   "lod0": {
+    "tris": 2832,
+    "min": [
+     -1.156,
+     0.01,
+     -0.079
+    ],
+    "max": [
+     1.156,
+     1.39,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 360,
+    "min": [
+     -1.12,
+     0.01,
+     -0.0643
+    ],
+    "max": [
+     1.12,
+     1.39,
+     0.0053
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "shutters_closed": {
+   "lod0": {
+    "tris": 1000,
+    "min": [
+     -0.545,
+     0.008,
+     -0.015
+    ],
+    "max": [
+     0.545,
+     1.392,
+     0.07
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 84,
+    "min": [
+     -0.54,
+     0.008,
+     0.011
+    ],
+    "max": [
+     0.54,
+     1.392,
+     0.07
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "louvres_closed": {
+   "lod0": {
+    "tris": 2856,
+    "min": [
+     -0.545,
+     0.008,
+     -0.015
+    ],
+    "max": [
+     0.545,
+     1.392,
+     0.0718
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 420,
+    "min": [
+     -0.54,
+     0.008,
+     0.011
+    ],
+    "max": [
+     0.54,
+     1.392,
+     0.0873
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "shutter_hanging": {
+   "lod0": {
+    "tris": 1784,
+    "min": [
+     -1.117,
+     0.01,
+     -0.082
+    ],
+    "max": [
+     1.5883,
+     1.5803,
+     -0.012
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 192,
+    "min": [
+     -1.117,
+     0.01,
+     -0.082
+    ],
+    "max": [
+     1.5906,
+     1.5826,
+     -0.012
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_boarded": {
+   "lod0": {
+    "tris": 904,
+    "min": [
+     -0.6719,
+     0.005,
+     -0.051
+    ],
+    "max": [
+     0.651,
+     1.395,
+     0.205
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 72,
+    "min": [
+     -0.6724,
+     0.005,
+     -0.051
+    ],
+    "max": [
+     0.6512,
+     1.395,
+     0.205
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_bricked": {
+   "lod0": {
+    "tris": 132,
+    "min": [
+     -0.499,
+     0.002,
+     0.035
+    ],
+    "max": [
+     0.499,
+     1.398,
+     0.17
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.498,
+     0.002,
+     0.05
+    ],
+    "max": [
+     0.498,
+     1.398,
+     0.17
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "win_bars": {
+   "lod0": {
+    "tris": 256,
+    "min": [
+     -0.5,
+     0.0,
+     0.035
+    ],
+    "max": [
+     0.5,
+     1.4,
+     0.059
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 120,
+    "min": [
+     -0.5,
+     0.0,
+     0.035
+    ],
+    "max": [
+     0.5,
+     1.4,
+     0.059
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_frame": {
+   "lod0": {
+    "tris": 668,
+    "min": [
+     -0.62,
+     -0.06,
+     -0.04
+    ],
+    "max": [
+     0.62,
+     2.27,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 124,
+    "min": [
+     -0.62,
+     -0.06,
+     -0.04
+    ],
+    "max": [
+     0.62,
+     2.27,
+     0.3
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_surround": {
+   "lod0": {
+    "tris": 996,
+    "min": [
+     -0.89,
+     0.0,
+     -0.1975
+    ],
+    "max": [
+     0.89,
+     2.58,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 124,
+    "min": [
+     -0.89,
+     0.0,
+     -0.2
+    ],
+    "max": [
+     0.89,
+     2.58,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_leaf_panel": {
+   "lod0": {
+    "tris": 1800,
+    "min": [
+     -0.008,
+     0.0,
+     -0.0825
+    ],
+    "max": [
+     0.995,
+     2.15,
+     0.0825
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 316,
+    "min": [
+     0.01,
+     0.0,
+     -0.0825
+    ],
+    "max": [
+     0.995,
+     2.15,
+     0.0825
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_leaf_plank": {
+   "lod0": {
+    "tris": 1420,
+    "min": [
+     -0.008,
+     0.0,
+     -0.032
+    ],
+    "max": [
+     0.992,
+     2.15,
+     0.037
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 156,
+    "min": [
+     0.0,
+     0.0,
+     -0.026
+    ],
+    "max": [
+     0.992,
+     2.15,
+     0.037
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_leaf_metal": {
+   "lod0": {
+    "tris": 972,
+    "min": [
+     -0.008,
+     0.0,
+     -0.0675
+    ],
+    "max": [
+     0.995,
+     2.15,
+     0.0675
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 180,
+    "min": [
+     0.01,
+     0.0,
+     -0.0675
+    ],
+    "max": [
+     0.995,
+     2.15,
+     0.0675
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_step": {
+   "lod0": {
+    "tris": 140,
+    "min": [
+     -0.75,
+     0.0,
+     -0.4
+    ],
+    "max": [
+     0.75,
+     0.12,
+     0.04
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 16,
+    "min": [
+     -0.75,
+     0.0,
+     -0.4
+    ],
+    "max": [
+     0.75,
+     0.12,
+     0.04
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "door_lamp": {
+   "lod0": {
+    "tris": 672,
+    "min": [
+     -0.1,
+     -0.2525,
+     -0.4
+    ],
+    "max": [
+     0.1,
+     0.11,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass",
+     "kit_lamp"
+    ]
+   },
+   "lod1": {
+    "tris": 212,
+    "min": [
+     -0.1,
+     -0.2525,
+     -0.4
+    ],
+    "max": [
+     0.1,
+     0.1,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass",
+     "kit_lamp"
+    ]
+   }
+  },
+  "shopfront": {
+   "lod0": {
+    "tris": 2012,
+    "min": [
+     -1.5,
+     0.0,
+     -0.12
+    ],
+    "max": [
+     1.5,
+     3.1,
+     0.26
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   },
+   "lod1": {
+    "tris": 220,
+    "min": [
+     -1.5,
+     0.0,
+     -0.12
+    ],
+    "max": [
+     1.5,
+     3.1,
+     0.26
+    ],
+    "materials": [
+     "kit_atlas",
+     "kit_glass"
+    ]
+   }
+  },
+  "roller_box": {
+   "lod0": {
+    "tris": 264,
+    "min": [
+     -1.32,
+     0.0,
+     -0.31
+    ],
+    "max": [
+     1.32,
+     2.84,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 48,
+    "min": [
+     -1.32,
+     0.0,
+     -0.31
+    ],
+    "max": [
+     1.32,
+     2.84,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "roller_slats": {
+   "lod0": {
+    "tris": 408,
+    "min": [
+     -1.2,
+     0.004,
+     -0.05
+    ],
+    "max": [
+     1.2,
+     0.496,
+     -0.022
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 144,
+    "min": [
+     -1.2,
+     0.004,
+     -0.05
+    ],
+    "max": [
+     1.2,
+     0.496,
+     -0.022
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "roller_bottom": {
+   "lod0": {
+    "tris": 176,
+    "min": [
+     -1.2,
+     0.0,
+     -0.09
+    ],
+    "max": [
+     1.2,
+     0.1,
+     -0.015
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -1.2,
+     0.0,
+     -0.065
+    ],
+    "max": [
+     1.2,
+     0.06,
+     -0.015
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "cornice": {
+   "lod0": {
+    "tris": 452,
+    "min": [
+     -0.498,
+     0.0,
+     -0.19
+    ],
+    "max": [
+     0.498,
+     0.345,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 28,
+    "min": [
+     -0.498,
+     0.0,
+     -0.19
+    ],
+    "max": [
+     0.498,
+     0.345,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "string_course": {
+   "lod0": {
+    "tris": 156,
+    "min": [
+     -0.498,
+     0.0,
+     -0.065
+    ],
+    "max": [
+     0.498,
+     0.15,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 28,
+    "min": [
+     -0.498,
+     0.0,
+     -0.065
+    ],
+    "max": [
+     0.498,
+     0.15,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "plinth_course": {
+   "lod0": {
+    "tris": 132,
+    "min": [
+     -0.498,
+     0.0,
+     -0.055
+    ],
+    "max": [
+     0.498,
+     0.6,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 20,
+    "min": [
+     -0.498,
+     0.0,
+     -0.055
+    ],
+    "max": [
+     0.498,
+     0.6,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "quoin_long": {
+   "lod0": {
+    "tris": 152,
+    "min": [
+     -0.278,
+     0.002,
+     -0.06
+    ],
+    "max": [
+     0.278,
+     0.298,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.278,
+     0.002,
+     -0.05
+    ],
+    "max": [
+     0.278,
+     0.298,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "quoin_short": {
+   "lod0": {
+    "tris": 152,
+    "min": [
+     -0.148,
+     0.002,
+     -0.06
+    ],
+    "max": [
+     0.148,
+     0.298,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.148,
+     0.002,
+     -0.05
+    ],
+    "max": [
+     0.148,
+     0.298,
+     0.01
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "corbel": {
+   "lod0": {
+    "tris": 216,
+    "min": [
+     -0.065,
+     0.0,
+     -0.16
+    ],
+    "max": [
+     0.065,
+     0.3,
+     0.02
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 24,
+    "min": [
+     -0.065,
+     0.0,
+     -0.16
+    ],
+    "max": [
+     0.065,
+     0.3,
+     0.02
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "gutter": {
+   "lod0": {
+    "tris": 184,
+    "min": [
+     -0.5,
+     -0.0665,
+     -0.1352
+    ],
+    "max": [
+     0.5,
+     0.008,
+     0.008
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 64,
+    "min": [
+     -0.5,
+     -0.0594,
+     -0.1352
+    ],
+    "max": [
+     0.5,
+     0.008,
+     -0.005
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "downpipe": {
+   "lod0": {
+    "tris": 176,
+    "min": [
+     -0.06,
+     0.0,
+     -0.107
+    ],
+    "max": [
+     0.06,
+     1.0,
+     0.003
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 40,
+    "min": [
+     -0.0364,
+     0.0,
+     -0.107
+    ],
+    "max": [
+     0.0364,
+     1.0,
+     -0.023
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "downpipe_shoe": {
+   "lod0": {
+    "tris": 88,
+    "min": [
+     -0.0375,
+     0.0008,
+     -0.2186
+    ],
+    "max": [
+     0.0375,
+     0.5,
+     -0.0275
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 40,
+    "min": [
+     -0.0325,
+     0.0008,
+     -0.2186
+    ],
+    "max": [
+     0.0325,
+     0.5,
+     -0.0275
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "downpipe_head": {
+   "lod0": {
+    "tris": 260,
+    "min": [
+     -0.13,
+     -0.3,
+     -0.16
+    ],
+    "max": [
+     0.13,
+     0.02,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 44,
+    "min": [
+     -0.13,
+     -0.3,
+     -0.16
+    ],
+    "max": [
+     0.13,
+     0.02,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "fascia": {
+   "lod0": {
+    "tris": 108,
+    "min": [
+     -0.4985,
+     -0.2,
+     -0.025
+    ],
+    "max": [
+     0.4985,
+     0.0,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.4985,
+     -0.2,
+     -0.025
+    ],
+    "max": [
+     0.4985,
+     0.0,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "ridge_clay": {
+   "lod0": {
+    "tris": 256,
+    "min": [
+     -0.5,
+     -0.075,
+     -0.126
+    ],
+    "max": [
+     0.5,
+     0.096,
+     0.126
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 112,
+    "min": [
+     -0.5,
+     -0.075,
+     -0.126
+    ],
+    "max": [
+     0.5,
+     0.0898,
+     0.126
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "roof_slate": {
+   "lod0": {
+    "tris": 264,
+    "min": [
+     -0.498,
+     0.0005,
+     -0.0307
+    ],
+    "max": [
+     0.498,
+     1.0309,
+     -0.002
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 60,
+    "min": [
+     -0.5,
+     0.0004,
+     -0.0278
+    ],
+    "max": [
+     0.5,
+     1.0307,
+     -0.002
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "roof_clay": {
+   "lod0": {
+    "tris": 588,
+    "min": [
+     -0.5,
+     -0.0001,
+     -0.0874
+    ],
+    "max": [
+     0.5,
+     1.0436,
+     0.0119
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 300,
+    "min": [
+     -0.5,
+     0.0008,
+     -0.0701
+    ],
+    "max": [
+     0.5,
+     1.0426,
+     -0.0054
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "chimney_stack": {
+   "lod0": {
+    "tris": 44,
+    "min": [
+     -0.31,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.31,
+     1.0,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.31,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.31,
+     1.0,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "chimney_stack_stone": {
+   "lod0": {
+    "tris": 44,
+    "min": [
+     -0.33,
+     0.0,
+     -0.27
+    ],
+    "max": [
+     0.33,
+     1.0,
+     0.27
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 12,
+    "min": [
+     -0.33,
+     0.0,
+     -0.27
+    ],
+    "max": [
+     0.33,
+     1.0,
+     0.27
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "chimney_cap": {
+   "lod0": {
+    "tris": 552,
+    "min": [
+     -0.4,
+     0.0,
+     -0.34
+    ],
+    "max": [
+     0.4,
+     0.652,
+     0.34
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 160,
+    "min": [
+     -0.4,
+     0.0,
+     -0.34
+    ],
+    "max": [
+     0.4,
+     0.652,
+     0.34
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "balcony_slab": {
+   "lod0": {
+    "tris": 536,
+    "min": [
+     -1.02,
+     -0.5,
+     -1.04
+    ],
+    "max": [
+     1.02,
+     0.0,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 80,
+    "min": [
+     -1.02,
+     -0.5,
+     -1.04
+    ],
+    "max": [
+     1.02,
+     0.0,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "balcony_rail": {
+   "lod0": {
+    "tris": 704,
+    "min": [
+     -0.5,
+     0.05,
+     -0.0225
+    ],
+    "max": [
+     0.5,
+     1.01,
+     0.0225
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 148,
+    "min": [
+     -0.5,
+     0.05,
+     -0.0225
+    ],
+    "max": [
+     0.5,
+     1.01,
+     0.0225
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "balcony_post": {
+   "lod0": {
+    "tris": 72,
+    "min": [
+     -0.03,
+     0.0,
+     -0.03
+    ],
+    "max": [
+     0.03,
+     1.11,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 40,
+    "min": [
+     -0.03,
+     0.0,
+     -0.03
+    ],
+    "max": [
+     0.03,
+     1.11,
+     0.03
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "steps_3": {
+   "lod0": {
+    "tris": 808,
+    "min": [
+     -1.01,
+     0.0,
+     -0.94
+    ],
+    "max": [
+     1.01,
+     0.68,
+     0.04
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 96,
+    "min": [
+     -1.01,
+     0.0,
+     -0.94
+    ],
+    "max": [
+     1.01,
+     0.68,
+     0.04
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "step_block": {
+   "lod0": {
+    "tris": 136,
+    "min": [
+     -0.498,
+     0.0,
+     -0.35
+    ],
+    "max": [
+     0.498,
+     0.17,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 16,
+    "min": [
+     -0.498,
+     0.0,
+     -0.35
+    ],
+    "max": [
+     0.498,
+     0.17,
+     -0.0
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "coping_low": {
+   "lod0": {
+    "tris": 328,
+    "min": [
+     -0.497,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.497,
+     0.12,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 16,
+    "min": [
+     -0.497,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.497,
+     0.12,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "coping_mantle": {
+   "lod0": {
+    "tris": 300,
+    "min": [
+     -0.497,
+     0.0,
+     -0.302
+    ],
+    "max": [
+     0.497,
+     0.1,
+     0.302
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 36,
+    "min": [
+     -0.497,
+     0.0,
+     -0.302
+    ],
+    "max": [
+     0.497,
+     0.1,
+     0.302
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "lowwall": {
+   "lod0": {
+    "tris": 372,
+    "min": [
+     -0.498,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.498,
+     1.0,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 28,
+    "min": [
+     -0.498,
+     0.0,
+     -0.25
+    ],
+    "max": [
+     0.498,
+     1.0,
+     0.25
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "wall_mantle": {
+   "lod0": {
+    "tris": 344,
+    "min": [
+     -0.498,
+     0.0,
+     -0.302
+    ],
+    "max": [
+     0.498,
+     1.8,
+     0.302
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 48,
+    "min": [
+     -0.498,
+     0.0,
+     -0.302
+    ],
+    "max": [
+     0.498,
+     1.8,
+     0.302
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "sandbag_row": {
+   "lod0": {
+    "tris": 2520,
+    "min": [
+     -0.5122,
+     -0.01,
+     -0.3294
+    ],
+    "max": [
+     0.5161,
+     1.01,
+     0.3288
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 504,
+    "min": [
+     -0.497,
+     -0.01,
+     -0.2976
+    ],
+    "max": [
+     0.4971,
+     1.01,
+     0.2932
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "crate_cover": {
+   "lod0": {
+    "tris": 796,
+    "min": [
+     -0.5,
+     0.0,
+     -0.5
+    ],
+    "max": [
+     0.5,
+     1.0,
+     0.5
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 180,
+    "min": [
+     -0.5,
+     0.0,
+     -0.5
+    ],
+    "max": [
+     0.5,
+     1.0,
+     0.5
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "rubble_low": {
+   "lod0": {
+    "tris": 1796,
+    "min": [
+     -0.7322,
+     -0.3162,
+     -0.6594
+    ],
+    "max": [
+     0.8435,
+     0.8268,
+     0.6111
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 196,
+    "min": [
+     -0.7103,
+     -0.2652,
+     -0.4784
+    ],
+    "max": [
+     0.8287,
+     0.8293,
+     0.6028
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  },
+  "fence_timber": {
+   "lod0": {
+    "tris": 820,
+    "min": [
+     -0.5,
+     0.0,
+     -0.022
+    ],
+    "max": [
+     0.5,
+     1.05,
+     0.105
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   },
+   "lod1": {
+    "tris": 132,
+    "min": [
+     -0.5,
+     0.0,
+     -0.022
+    ],
+    "max": [
+     0.5,
+     1.05,
+     0.105
+    ],
+    "materials": [
+     "kit_atlas"
+    ]
+   }
+  }
+ }
+}
