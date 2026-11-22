@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { flashLight } from "../render/FlashLights";
 import { QUALITY, type QualityName } from "../config";
 import { ParticleSystem, SHAPE } from "./Particles";
 import { StreakSystem } from "./Streaks";
@@ -212,11 +213,8 @@ export class EffectsPool {
   private quality: QualityName = "high";
   private clock = 0;
 
-  readonly muzzleLight = new THREE.PointLight(0xffa850, 0, 8, 2);
-  private muzzleTimer = 0;
-  /** Big light for explosions. */
-  readonly blastLight = new THREE.PointLight(0xff9a40, 0, 28, 2);
-  private blastTimer = 0;
+  /** Blast light position (the light itself comes from the pooled render/FlashLights). */
+  private readonly blastPos = new THREE.Vector3();
 
   // Barrel smoke: heat builds with sustained fire, wisps rise once it stops.
   private barrelHeat = 0;
@@ -273,7 +271,7 @@ export class EffectsPool {
     this.tracerFx = new StreakSystem(MAX_TRACERS * 2, { tailFade: 1, core: 1.2 });
     this.shells = new ShellPool(scene, 40);
     this.decals = new DecalPool(scene, 192, maxDecals, lu);
-    scene.add(this.sparks.points, this.debris.points, this.smoke.points, this.fire.points, this.fireball.points, this.streaks.mesh, this.tracerFx.mesh, this.muzzleLight, this.blastLight);
+    scene.add(this.sparks.points, this.debris.points, this.smoke.points, this.fire.points, this.fireball.points, this.streaks.mesh, this.tracerFx.mesh);
     // The tracer mesh is always drawn: use it to learn where the rendering camera is.
     this.tracerFx.mesh.onBeforeRender = (_r, _s, camera) => {
       if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
@@ -351,9 +349,7 @@ export class EffectsPool {
    * size (1 = rifle).
    */
   muzzleFlash(at: THREE.Vector3, dir?: THREE.Vector3, strength = 1) {
-    this.muzzleLight.position.copy(at);
-    this.muzzleLight.intensity = (7 + Math.random() * 4) * Math.min(2, strength);
-    this.muzzleTimer = 0.045;
+    flashLight(at, 0xffa850, (7 + Math.random() * 4) * Math.min(2, strength), 50, 8);
     if (!dir) return;
     const s = Math.min(2, strength);
     // Brief incandescent puff just ahead of the muzzle.
@@ -447,10 +443,9 @@ export class EffectsPool {
    */
   explosion(at: THREE.Vector3, normal?: THREE.Vector3) {
     const n = normal ?? this.tmp2.set(0, 1, 0);
-    this.blastLight.position.copy(at).addScaledVector(n, 0.8);
-    this.blastLight.intensity = 90;
-    this.blastTimer = 0.32;
-    this.impactLight?.(this.blastLight.position, BLAST_LIGHT, 90, 0.32, 28);
+    this.blastPos.copy(at).addScaledVector(n, 0.8);
+    flashLight(this.blastPos, 0xff9a40, 90, 320, 28);
+    this.impactLight?.(this.blastPos, BLAST_LIGHT, 90, 0.32, 28);
 
     const b = this.blasts[this.nextBlast];
     this.nextBlast = (this.nextBlast + 1) % MAX_FLASHES;
@@ -656,15 +651,6 @@ export class EffectsPool {
   update(dt: number) {
     this.clock += dt;
     this.light.update(dt);
-    if (this.blastTimer > 0) {
-      this.blastTimer -= dt;
-      const k = Math.max(0, this.blastTimer / 0.32);
-      this.blastLight.intensity = k * k * 90 * (0.85 + Math.random() * 0.3);
-    } else this.blastLight.intensity = 0;
-    if (this.muzzleTimer > 0) {
-      this.muzzleTimer -= dt;
-      if (this.muzzleTimer <= 0) this.muzzleLight.intensity = 0;
-    }
 
     for (const b of this.blasts) {
       if (!b.active) continue;

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { trackBlob } from "../render/BlobShadows";
 import type { HitPart } from "../core/types";
 import type { EffectsPool } from "../effects/EffectsPool";
 import type { Sfx } from "../audio/Sfx";
@@ -123,6 +124,7 @@ export class AgentManager {
       look: { ...colors, skin: 0xb08a6a, kit: "standard", scale: 1 },
     };
     const agent = new Agent(spec, this.nextId++);
+    trackBlob(agent.model.root, { radius: 0.45 });
     agent.onDamage = (ag, amount, part, killed) => {
       this.events.onAgentDamaged(ag, amount, part, killed, "ai");
       if (killed) this.events.onSquadDowned(ag);
@@ -163,6 +165,7 @@ export class AgentManager {
       suppress: def.suppress, stagger: def.stagger,
     };
     const agent = new Agent(spec, this.nextId++);
+    trackBlob(agent.model.root, { radius: 0.45 });
     if (type === "armored") attachJuggernautArmor(agent.model);
     agent.onDamage = (ag, amount, part, killed) => {
       const src = ag.lastHitSource;

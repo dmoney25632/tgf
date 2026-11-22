@@ -17,7 +17,7 @@ import { Foliage } from "./Foliage";
 import { DRESSINGS, defaultDressing } from "./dressing/index";
 import { accelerateRaycast } from "./MeshRaycastGrid";
 import { MapLighting } from "./lighting/MapLighting";
-import { BlobShadows } from "../render/BlobShadows";
+import { setActiveBlobs, releaseActiveBlobs, BlobShadows } from "../render/BlobShadows";
 import { installFlashLights, uninstallFlashLights } from "../render/FlashLights";
 
 /**
@@ -339,6 +339,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   });
   blobs.setOpacity(quality.shadows ? 0.4 : 0.6);
   disposables.push(blobs);
+  setActiveBlobs(blobs);
+  disposables.push({ dispose: () => releaseActiveBlobs(blobs) });
   atmosphere.frameHooks.push((cam) => blobs.update(cam));
 
   let clutterDistance = worldDetail(qualityName(quality)).clutterDistance;

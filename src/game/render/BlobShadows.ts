@@ -164,3 +164,17 @@ function visible(o: THREE.Object3D) {
   }
   return (root as THREE.Scene).isScene === true;
 }
+
+/** The loaded map's blob pool (set by MapLoader), so gameplay code can ground characters without a map handle. */
+let active: BlobShadows | null = null;
+export function setActiveBlobs(b: BlobShadows | null) {
+  active = b;
+}
+/** Clears the active pool if it is still `b` (a newer map may have replaced it). */
+export function releaseActiveBlobs(b: BlobShadows) {
+  if (active === b) active = null;
+}
+/** Tracks `object` on the current map's blob pool; no-op (null) when none is loaded. */
+export function trackBlob(object: THREE.Object3D, opts?: BlobOptions): BlobHandle | null {
+  return active?.track(object, opts) ?? null;
+}

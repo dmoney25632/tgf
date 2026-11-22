@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { flashLight } from "../render/FlashLights";
 import { CAMERA, LOOK, QUALITY, SIM } from "../config";
 import { Input } from "./Input";
 import { damp } from "./Spring";
@@ -159,6 +160,10 @@ export class GameEngine {
     this.mobile = new MobileLayer(container, this.input, this.pipeline.canvas, { settings: () => this.settings, ads: () => this.weapons?.adsAmount ?? 0, assist: () => this.aimAssist.slow });
     this.effects = new EffectsPool(this.scene, preset.maxDecals, preset.maxParticles);
     this.effects.onShellLand = (at, kind, speed) => this.sfx.shellDrop(at, kind, speed);
+    // Sparks off metal light nearby surfaces (explosions already use the pooled flash lights).
+    this.effects.setImpactLightHook((at, c, intensity, duration, radius) => {
+      if (intensity < 50) flashLight(at, new THREE.Color(c[0], c[1], c[2]), intensity, duration * 1000, radius);
+    });
     this.player = new PlayerController(this.camera, this.map.collision);
     this.hud = new HUD(container);
     this.hud.onHurt = (amount) => this.input.rumble(Math.min(1, amount / 45), 0.35, 140);

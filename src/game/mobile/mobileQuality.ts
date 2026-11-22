@@ -41,6 +41,9 @@ export const MOBILE_OVERRIDES: Record<QualityName, Partial<QualityPreset>> = {
     shadowMapSize: 1024,
     shadowInterval: 2,
     shadowExtent: 26,
+    // Phones: no far cascade, and a sky-only light bake (phones bake ~3x slower).
+    shadowFarExtent: 0,
+    lightBake: "sky",
     postProcessing: true,
     bloom: true,
     ambientOcclusion: false,
@@ -66,6 +69,7 @@ export const MOBILE_OVERRIDES: Record<QualityName, Partial<QualityPreset>> = {
     shadowMapSize: 1024,
     shadowInterval: 2,
     shadowExtent: 34,
+    shadowFarExtent: 0,
     postProcessing: true,
     bloom: true,
     ambientOcclusion: true,
