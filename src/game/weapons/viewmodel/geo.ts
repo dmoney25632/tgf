@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { RenderKind, Surf } from "./materials";
+import type { ArmPlacement, HandPose } from "./hands";
 
 /** Detail textures tile every 1/UV_SCALE metres (box-projected UVs). */
 const UV_SCALE = 7;
@@ -186,6 +187,12 @@ export class GeoBuilder {
   armsOnly = false;
   /** Bounds of the non-arm (gun) surfaces per target, in the target's space. */
   readonly gunBounds = new Map<THREE.Object3D, THREE.Box3>();
+  /** Set while buildArm runs: every surface it adds (watch steel and lume too) is arm. */
+  armMode = false;
+  /** Build gun parts even in armsOnly mode, left out of gunBounds (add-ons kept over a real model, e.g. a suppressor). */
+  keep = false;
+  /** Every arm built (see hands.ts buildArm), so it can be rebuilt onto a real model. */
+  readonly arms: { target: THREE.Object3D; p: ArmPlacement; pose: HandPose }[] = [];
 
   constructor(private readonly materials: Record<RenderKind, THREE.Material>) {}
 
@@ -200,6 +207,11 @@ export class GeoBuilder {
     return this;
   }
 
+  /** The object parts currently go into. */
+  get target() {
+    return this.cur.obj;
+  }
+
   /** Add raw geometry (consumed) with an optional placement. */
   add(s: Surf, geo: THREE.BufferGeometry, m?: THREE.Matrix4) {
     const g = geo.index ? geo.toNonIndexed() : geo;
@@ -211,7 +223,7 @@ export class GeoBuilder {
       g.applyMatrix4(m);
       if (m.determinant() < 0) flipWinding(g);
     }
-    const arm = this.isArm(s);
+    const arm = this.armMode || this.isArm(s) || this.keep;
     if (!arm && s.render !== "glow") {
       g.computeBoundingBox();
       const box = this.gunBounds.get(this.cur.obj) ?? new THREE.Box3();

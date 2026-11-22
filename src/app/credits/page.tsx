@@ -52,10 +52,55 @@ const ATTRIBUTED = [
     licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
     notes: "Obtained via the FirstWave project (github.com/moyzyy/FirstWave). Modified: textures re-encoded at 1024 px, effect meshes removed; re-oriented and scaled at runtime to fit the in-game hands.",
   },
+  {
+    title: "M24 Bounty Hunter Sniper Rifle",
+    use: "First-person M24 sniper rifle in Iron Horizon",
+    author: "Naudaff3D",
+    authorUrl: "https://sketchfab.com/3d-models/m24-bounty-hunter-sniper-rifle-d40e74e2259549f5b025807163f1028c",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the HYPERLUNATIC project (github.com/317gw/HYPERLUNATIC). Modified: textures re-encoded at 1024 px; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "Dragunov SVD",
+    use: "First-person SVD marksman rifle in Iron Horizon",
+    author: "Vintar",
+    authorUrl: "https://sketchfab.com/3d-models/dragunov-svd-e3520e52a0d547b6b7c7ff2726161702",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the StalkerCV project (github.com/ZHe-testName/StalkerCV). Modified: textures re-encoded as 512 px JPG; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "Remington870 Shotgun",
+    use: "First-person Remington 870 shotgun in Iron Horizon",
+    author: "Trip (Triptonic)",
+    authorUrl: "https://sketchfab.com/3d-models/remington870-shotgun-a4852997660a43839c30e36dfca5a3e7",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the RevenantOps project (github.com/Noureddine-Hci/RevenantOps). Modified: textures re-encoded at 1024 px; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "M249 Machine Gun",
+    use: "First-person M249 light machine gun in Iron Horizon",
+    author: "Kendrick Russell (Buce)",
+    authorUrl: "https://sketchfab.com/3d-models/m249-machine-gun-bf0105376a2d4c37926f3ce95316460d",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the scp-continued-path project (github.com/Yni-Viar/scp-continued-path), whose copy has merged meshes. Modified: textures re-encoded at 1024 px; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
+  {
+    title: "357 Python Revolver (Rigged)",
+    use: "First-person revolver in Iron Horizon",
+    author: "Erai (Khosro3D)",
+    authorUrl: "https://sketchfab.com/3d-models/357-python-revolver-rigged-3b81c991e9c84236a5c03895f9ca0aa3",
+    license: "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    notes: "Obtained via the Rock-sugar project (github.com/Haruluya/Rock-sugar). Modified: textures re-encoded at 1024 px, speedloader and loose cases removed, rig baked to a static pose; re-oriented and scaled at runtime to fit the in-game hands.",
+  },
 ];
 
 const CC0 = [
-  { name: "Poly Haven", what: "textures, HDRI sky and props", url: "https://polyhaven.com/license" },
+  { name: "Poly Haven", what: "textures, HDRI sky, props and the Service Pistol (M9) model", url: "https://polyhaven.com/license" },
   { name: "ambientCG", what: "fabric texture", url: "https://docs.ambientcg.com/license/" },
 ];
 

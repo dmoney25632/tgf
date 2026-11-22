@@ -125,6 +125,17 @@ function foldTube(len: number, radius: (z: number, a: number) => number, around 
 
 /** Build a gloved hand + sleeve into the builder's current target. */
 export function buildArm(b: GeoBuilder, mats: ViewmodelMaterials, p: ArmPlacement, pose: HandPose) {
+  b.arms.push({ target: b.target, p, pose });
+  const was = b.armMode;
+  b.armMode = true;
+  try {
+    buildArmParts(b, mats, p, pose);
+  } finally {
+    b.armMode = was;
+  }
+}
+
+function buildArmParts(b: GeoBuilder, mats: ViewmodelMaterials, p: ArmPlacement, pose: HandPose) {
   const mirror = p.left ? -1 : 1;
   const mx = (a: V3) => v(a[0] * mirror, a[1], a[2]);
 

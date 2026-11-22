@@ -1,0 +1,10 @@
+Model Information:
+* title:	Service Pistol
+* source:	https://polyhaven.com/a/service_pistol
+* author:	Mateusz Sadek (Poly Haven)
+
+Model License:
+* license type:	CC0 1.0 Universal (public domain), https://polyhaven.com/license
+* requirements:	None. Credited for provenance only.
+
+Changes: 1K glTF; the "b" variant meshes, the loaded magazine and the loose cartridge were removed.
