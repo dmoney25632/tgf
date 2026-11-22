@@ -12,6 +12,7 @@ import { bakeDetail, qualityName, worldDetail } from "./quality";
 import { ModelPlacer } from "./Props";
 import { disposeProxy, shadowProxies, solidCaster, type ShadowSource } from "./ShadowProxy";
 import { createStyleKit, drawBox, surfaceOf } from "./BoxStyles";
+import { attachArchKit, finishArchKit } from "./architecture/archkit";
 import { buildTerrain } from "./Terrain";
 import { Foliage } from "./Foliage";
 import { DRESSINGS, defaultDressing } from "./dressing/index";
@@ -212,6 +213,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   const props = new ModelPlacer(builder);
   const kit = createStyleKit(builder, props);
   disposables.push(kit.sandbag);
+  // Modular architecture kit (not on Low): box styles draw cover with it; dressings share the layer.
+  attachArchKit(builder, qualityName(quality));
   const emissiveMats = new Map<number, THREE.MeshStandardMaterial>();
   const unit = new THREE.BoxGeometry(1, 1, 1);
   disposables.push(unit);
@@ -242,7 +245,8 @@ export function loadMap(scene: THREE.Scene, def: MapDef, quality: QualityPreset 
   const dressing = (def.dressing && DRESSINGS[def.dressing]) || defaultDressing;
   const plan = dressing({ def, builder, props, style: kit, quality, materials: wm, windTime: atmosphere.windTime, addLamp: (p, c, i, d) => { atmosphere.addLamp(p, c, i, d); } });
   builder.ground = plan.terrain.height;
-  for (const x of plan.extras ?? []) {
+  // Dressings that attached the kit finished it themselves; otherwise it is finished here.
+  for (const x of [...(plan.extras ?? []), ...finishArchKit(builder)]) {
     root.add(x.object);
     disposables.push(x);
     if (x.update) atmosphere.frameHooks.push((cam) => x.update!(cam));

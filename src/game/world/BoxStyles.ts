@@ -5,6 +5,7 @@ import type { MapBox } from "./MapLoader";
 import { makeSandbagGeometry, type MeshBuilder } from "./MeshBuilder";
 import type { ModelPlacer } from "./Props";
 import { rng } from "./Foliage";
+import { archKitOf, coverClass, type ArchKitLayer } from "./architecture/archkit";
 
 /** Telephone pole top height (m) — wires hang from just below. */
 export const POLE_HEIGHT = 8.6;
@@ -86,10 +87,14 @@ export function drawBox(kit: StyleKit, b: MapBox) {
   const group = b.decor ? "decor" : "solid";
   const r = rng(seedOf(b));
   const style = b.style ?? "plain";
+  // Modular kit (MapLoader attaches one above Low): cover gets the shared cover language.
+  // Replaced visuals move to the kit's hidden fallback group; colliders never change.
+  const K = archKitOf(B);
 
   switch (style) {
     case "plain":
       B.boxFeet(mat, b.x, y, b.z, b.w, b.h, b.d, b.color, { group, rot90: b.rot90 });
+      if (K) copeWall(K, b, mat);
       return;
 
     case "hidden":
@@ -97,15 +102,22 @@ export function drawBox(kit: StyleKit, b: MapBox) {
       return;
 
     case "crate": {
-      B.boxFeet(mat, b.x, y, b.z, b.w, b.h, b.d, vary(b.color, r), { group, rot90: r() > 0.5, uvOffset: [r() * 3, r() * 3] });
+      const kc = K && crateFits(b) ? K : null;
+      const cg = kc ? kc.fallback(group) : group;
+      if (kc) {
+        proxy(kit, b, surface);
+        kc.place("crate_cover", new THREE.Matrix4().makeTranslation(b.x, y, b.z).scale(new THREE.Vector3(b.w, b.h, b.d)), new THREE.Color(b.color).multiply(KIT_WOOD));
+      }
+      B.boxFeet(mat, b.x, y, b.z, b.w, b.h, b.d, vary(b.color, r), { group: cg, rot90: r() > 0.5, uvOffset: [r() * 3, r() * 3] });
       // Edge battens + a mid band, a couple of cm proud.
       const t = 0.07, o = 0.025;
       const tint = vary(b.color, r, 0.05).multiplyScalar(0.8);
       const cy = y + b.h / 2;
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.box("wood", b.x + sx * (b.w / 2 - t / 2 + o), cy, b.z + sz * (b.d / 2 - t / 2 + o), t, b.h + 0.01, t, tint);
+      const bg = kc ? kc.fallback() : undefined;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.box("wood", b.x + sx * (b.w / 2 - t / 2 + o), cy, b.z + sz * (b.d / 2 - t / 2 + o), t, b.h + 0.01, t, tint, { group: bg });
       for (const yy of [y + t / 2, y + b.h - t / 2, y + b.h / 2]) {
-        for (const sz of [-1, 1]) B.box("wood", b.x, yy, b.z + sz * (b.d / 2 + o - 0.01), b.w + 2 * o, t, 0.03, tint, { rot90: true });
-        for (const sx of [-1, 1]) B.box("wood", b.x + sx * (b.w / 2 + o - 0.01), yy, b.z, 0.03, t, b.d + 2 * o, tint, { rot90: true });
+        for (const sz of [-1, 1]) B.box("wood", b.x, yy, b.z + sz * (b.d / 2 + o - 0.01), b.w + 2 * o, t, 0.03, tint, { rot90: true, group: bg });
+        for (const sx of [-1, 1]) B.box("wood", b.x + sx * (b.w / 2 + o - 0.01), yy, b.z, 0.03, t, b.d + 2 * o, tint, { rot90: true, group: bg });
       }
       return;
     }
@@ -138,6 +150,18 @@ export function drawBox(kit: StyleKit, b: MapBox) {
       const depth = alongX ? b.d : b.w;
       const bagL = 0.62, bagH = 0.17, bagW = 0.38;
       const rows = Math.max(1, Math.round(b.h / (bagH * 0.92)));
+      // Kit sandbag rows (1 m modules, 0.6 m deep, 1.0 m tall) stretched to the wall.
+      const ks = K && b.h >= 0.7 && b.h <= 1.35 && depth >= 0.35 && depth <= 1.4 ? K : null;
+      if (ks) {
+        const n = Math.max(1, Math.round(len));
+        const yaw = alongX ? 0 : Math.PI / 2;
+        for (let i = 0; i < n; i++) {
+          const a = -len / 2 + (i + 0.5) * (len / n);
+          const mm = new THREE.Matrix4().makeTranslation(alongX ? b.x + a : b.x, y, alongX ? b.z : b.z + a).multiply(new THREE.Matrix4().makeRotationY(yaw)).scale(new THREE.Vector3(len / n, b.h, depth / 0.6));
+          ks.place("sandbag_row", mm, kitTint(b.color, 0.3));
+        }
+      }
+      const sg = ks ? ks.fallback() : undefined;
       const cols = Math.max(1, Math.round(depth / bagW));
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
@@ -160,7 +184,7 @@ export function drawBox(kit: StyleKit, b: MapBox) {
               q,
               new THREE.Vector3((len / n) * 1.04, (b.h / rows) * 1.18, (depth / cols) * 1.06),
             );
-            B.add(kit.sandbag, m, "sandbag", vary(tint.getHex(), r, 0.1), { uv: "keep", uvScale: [1.6, 0.5], uvOffset: [r() * 4, r() * 4] });
+            B.add(kit.sandbag, m, "sandbag", vary(tint.getHex(), r, 0.1), { uv: "keep", uvScale: [1.6, 0.5], uvOffset: [r() * 4, r() * 4], group: sg });
           }
         }
       }
@@ -371,6 +395,52 @@ export function drawBox(kit: StyleKit, b: MapBox) {
 }
 
 /** Wooden telephone pole (base at y) with a cross-arm and insulators. */
+/** Kit crates are painted timber (tintable): the box colour times a warm tan, the old crates' wood tone. */
+const KIT_WOOD = new THREE.Color(0xc8a87a);
+
+/** Kit pieces carry their own baked colour: a light pull toward the box colour, not a full multiply. */
+function kitTint(hex: number, amount: number) {
+  return new THREE.Color(0xffffff).lerp(new THREE.Color(hex), amount);
+}
+
+/** Crates the 1 m kit crate can stand in for without visibly stretching its battens. */
+function crateFits(b: MapBox) {
+  const dims = [b.w, b.h, b.d];
+  return Math.min(...dims) >= 0.55 && Math.max(...dims) <= 2.0 && Math.max(...dims) / Math.min(...dims) <= 2.2;
+}
+
+/** Masonry that is not cover: stair treads (a coping on some steps and not others reads as a bug). */
+const NO_COPE = new Set(["stair", "step", "steps", "plinth", "ramp"]);
+
+const MASONRY = new Set<WorldMat>(["concrete", "concrete_dirty", "concrete_broken", "brick", "plaster", "plaster_damaged"]);
+
+/**
+ * Wall-shaped masonry cover at a gameplay height gets the shared cover language on top:
+ * a pale capstone on vaultable walls, a steel-nosed coping on mantle ledges. Set into the top
+ * of the box so its top surface matches the collider.
+ */
+function copeWall(K: ArchKitLayer, b: MapBox, mat: WorldMat) {
+  if ((b.y ?? 0) > 0.05 || !MASONRY.has(mat) || (b.tag && NO_COPE.has(b.tag))) return;
+  const cls = coverClass(b.h);
+  if (cls !== "low" && cls !== "mantle") return;
+  const alongX = b.w >= b.d;
+  const len = alongX ? b.w : b.d;
+  const depth = alongX ? b.d : b.w;
+  if (len < 1.2 || depth > 0.9 || depth < 0.15) return;
+  const low = cls === "low";
+  const ch = low ? 0.12 : 0.1;
+  const n = Math.max(1, Math.round(len));
+  const yaw = alongX ? 0 : Math.PI / 2;
+  for (let i = 0; i < n; i++) {
+    const a = -len / 2 + (i + 0.5) * (len / n);
+    const m = new THREE.Matrix4()
+      .makeTranslation(alongX ? b.x + a : b.x, b.h - ch + 0.005, alongX ? b.z : b.z + a)
+      .multiply(new THREE.Matrix4().makeRotationY(yaw))
+      .scale(new THREE.Vector3(len / n, 1, (depth + 0.06) / (low ? 0.5 : 0.6)));
+    K.place(low ? "coping_low" : "coping_mantle", m, low ? 0xe4ddd0 : 0xc8c6c0);
+  }
+}
+
 export function drawPole(B: MeshBuilder, x: number, y: number, z: number, rotY: number, r: () => number) {
   const lean = (r() - 0.5) * 0.012;
   const geo = new THREE.CylinderGeometry(0.11, 0.15, POLE_HEIGHT + 0.6, 10);

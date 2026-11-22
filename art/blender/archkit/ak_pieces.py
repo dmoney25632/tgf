@@ -794,21 +794,22 @@ def sandbag_row(k):
 
 
 def crate_cover(k):
-    """1 m wooden crate (vault height): planked faces, corner and edge battens."""
+    """1 m wooden crate (vault height): planked faces, corner and edge battens. Painted timber, so
+    the game tints it per map (olive, tan, faded green)."""
     s = 1.0
-    k.box("core", (s - 0.04, s - 0.04, s - 0.04), (0, 0, s / 2), "timber_raw", 0.004)
+    k.box("core", (s - 0.04, s - 0.04, s - 0.04), (0, 0, s / 2), "timber_paint", 0.004)
     b = 0.07
     for x in (-1, 1):
         for y in (-1, 1):
-            k.box(f"post{x}{y}", (b, b, s), (x * (s / 2 - b / 2), y * (s / 2 - b / 2), s / 2), "timber_raw", 0.008)
+            k.box(f"post{x}{y}", (b, b, s), (x * (s / 2 - b / 2), y * (s / 2 - b / 2), s / 2), "timber_paint", 0.008)
     for z in (b / 2, s - b / 2):
         for y in (-1, 1):
-            k.box(f"rx{z}{y}", (s - 2 * b, b, b), (0, y * (s / 2 - b / 2), z), "timber_raw", 0.008)
+            k.box(f"rx{z}{y}", (s - 2 * b, b, b), (0, y * (s / 2 - b / 2), z), "timber_paint", 0.008)
         for x in (-1, 1):
-            k.box(f"ry{z}{x}", (b, s - 2 * b, b), (x * (s / 2 - b / 2), 0, z), "timber_raw", 0.008)
+            k.box(f"ry{z}{x}", (b, s - 2 * b, b), (x * (s / 2 - b / 2), 0, z), "timber_paint", 0.008)
     for y in (-1, 1):
         length = math.hypot(s - 2 * b, s - 2 * b)
-        k.box(f"diag{y}", (length, 0.025, b * 0.9), (0, y * (s / 2 - 0.0125), s / 2), "timber_raw", 0.006, rot=(45, "Y"))
+        k.box(f"diag{y}", (length, 0.025, b * 0.9), (0, y * (s / 2 - 0.0125), s / 2), "timber_paint", 0.006, rot=(45, "Y"))
         if k.fine:
             for i in range(1, 4):
                 k.box(f"gap{y}{i}", (s - 0.06, 0.006, 0.006), (0, y * (s / 2 - 0.018), i * s / 4), "dark", 0)

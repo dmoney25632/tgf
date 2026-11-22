@@ -523,6 +523,16 @@ export const archKitConfig = { enabled: true };
  */
 export function attachArchKit(B: MeshBuilder, quality: QualityName, ...adopt: MeshBuilder[]) {
   if (quality === "low" || !archKitConfig.enabled) return null;
+  // MapLoader attaches one for every map (box styles use it); dressings that attach again share it.
+  const existing = layers.get(B);
+  if (existing) {
+    for (const b of adopt) {
+      if (layers.has(b)) continue;
+      layers.set(b, existing);
+      existing.adopt(b);
+    }
+    return existing;
+  }
   const l = new ArchKitLayer(quality);
   layers.set(B, l);
   l.adopt(B);

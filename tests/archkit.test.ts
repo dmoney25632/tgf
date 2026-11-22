@@ -265,3 +265,41 @@ test("archkit: the building() maps attach the kit within budget, Low untouched",
     assert.equal(low.fallbackDraws, 0);
   }
 });
+
+test("archkit: box styles draw cover with the kit on every map (sandbags, crates, copings), Low untouched", async () => {
+  const { drawBox } = await import("../src/game/world/BoxStyles");
+  const { attachArchKit, finishArchKit } = await import("../src/game/world/architecture/archkit");
+  const m = meta();
+  const draw = (entry: (typeof MAPS)[number], q: "low" | "medium") => {
+    const builder = new MeshBuilder();
+    const props = { place: () => {} } as unknown as DressingKit["props"];
+    const style = createStyleKit(builder, props);
+    attachArchKit(builder, q);
+    for (const b of entry.def.boxes) if (!b.emissive) drawBox(style, b);
+    const extras = finishArchKit(builder);
+    const K = extras[0]?.object.userData.archkit as ArchKitLayer | undefined;
+    for (const x of extras) x.dispose();
+    return { builder, K };
+  };
+  let total = 0;
+  for (const entry of MAPS) {
+    const boxes = JSON.stringify(entry.def.boxes);
+    const { builder, K } = draw(entry, "medium");
+    assert.equal(JSON.stringify(entry.def.boxes), boxes, `${entry.id}: map boxes untouched`);
+    const pieces = new Map<string, number>();
+    let lod1 = 0;
+    for (const p of K?.placements ?? []) {
+      pieces.set(p.piece, (pieces.get(p.piece) ?? 0) + 1);
+      lod1 += m.pieces[p.piece].lod1.tris;
+    }
+    total += K?.placements.length ?? 0;
+    assert.ok(lod1 < 150_000, `${entry.id}: cover kit LOD1 ${lod1}`);
+    // Every kit crate keeps a raycast face (bullets still hit it).
+    if (pieces.get("crate_cover")) assert.ok(builder.triangles("proxy:wood") > 0, `${entry.id}: crate proxies`);
+    console.log(`# ${entry.id}: ${[...pieces].map(([p, c]) => `${p} ${c}`).join(", ") || "no cover pieces"} (${lod1} tris LOD1)`);
+    const low = draw(entry, "low");
+    assert.equal(low.K, undefined, `${entry.id}: Low draws boxes only`);
+    assert.equal(low.builder.triangles(FALLBACK), 0);
+  }
+  assert.ok(total > 100, `kit cover across maps: ${total}`);
+});
