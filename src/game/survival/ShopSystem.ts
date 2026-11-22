@@ -3,7 +3,9 @@ import { ECONOMY, PERKS, PLAYER, type PerkId } from "./config";
 import type { PlayerLoadout } from "./PlayerLoadout";
 import type { PlayerState } from "./PlayerState";
 import type { WeaponSystem } from "../weapons/WeaponSystem";
+import type { WeaponDef } from "../weapons/weapons";
 import type { GrenadeSystem } from "../weapons/GrenadeSystem";
+import { maxTier, nextUpgradePrice, totalTiers, trackAvailable, upgradeEffect, UPGRADE_ORDER, UPGRADE_TRACKS, type UpgradeTrackId } from "../weapons/upgrades";
 
 export class Wallet {
   money: number = ECONOMY.startMoney;
@@ -23,7 +25,7 @@ export class Wallet {
   }
 }
 
-export type ShopCategory = "primary" | "secondary" | "equipment" | "perk" | "squad";
+export type ShopCategory = "primary" | "secondary" | "upgrade" | "equipment" | "perk" | "squad";
 export type ShopItem = {
   id: string;
   category: ShopCategory;
@@ -35,6 +37,10 @@ export type ShopItem = {
   /** Weapon stats 0..1 for the loadout screen. */
   stats?: { damage: number; rate: number; range: number; control: number; mobility: number };
   kind?: string;
+  /** Upgrade tiers bought for this gun (weapon items). */
+  upgrades?: number;
+  /** Upgrade items: which gun, current tier of max, and the stat change. */
+  upgrade?: { slot: "primary" | "secondary"; weapon: string; track: UpgradeTrackId; tier: number; max: number; effect: string };
 };
 export type ShopView = { money: number; items: ShopItem[] };
 
@@ -51,8 +57,7 @@ export type ShopDeps = {
   onLoadoutChanged(): void;
 };
 
-function weaponStats(id: WeaponId) {
-  const d = WEAPONS[id];
+function weaponStats(d: WeaponDef) {
   const dps = (d.damage * d.pellets * d.rpm) / 60;
   return {
     damage: Math.min(1, (d.damage * d.pellets) / 160),
@@ -72,12 +77,35 @@ export class ShopSystem {
     const { wallet, loadout, weapons, grenades, state } = this.deps;
     const items: ShopItem[] = [];
     const weaponItem = (id: WeaponId, category: "primary" | "secondary"): ShopItem => {
-      const d = WEAPONS[id];
+      const d = loadout.def(id);
       const equipped = (category === "primary" ? loadout.primary : loadout.secondary) === id;
-      return { id: `weapon:${id}`, category, name: d.name, kind: d.kind, desc: `${d.calibre} · ${d.rpm} RPM · ${d.magSize} rds · ${d.pellets > 1 ? `${d.pellets}×${d.damage}` : d.damage} dmg`, price: d.price, status: equipped ? "equipped" : "available", stats: weaponStats(id) };
+      const dmg = Math.round(d.damage * 10) / 10;
+      return {
+        id: `weapon:${id}`, category, name: d.name, kind: d.kind,
+        desc: `${d.calibre} · ${d.rpm} RPM · ${d.magSize} rds · ${d.pellets > 1 ? `${d.pellets}×${dmg}` : dmg} dmg`,
+        price: d.price, status: equipped ? "equipped" : "available", stats: weaponStats(d),
+        upgrades: totalTiers(loadout.upgrades.get(id)) || undefined,
+      };
     };
     PRIMARY_IDS.forEach((id) => items.push(weaponItem(id, "primary")));
     SECONDARY_IDS.forEach((id) => items.push(weaponItem(id, "secondary")));
+
+    // Upgrades for the two equipped guns.
+    for (const slot of ["primary", "secondary"] as const) {
+      const wid = slot === "primary" ? loadout.primary : loadout.secondary;
+      const base = WEAPONS[wid];
+      const levels = loadout.upgrades.get(wid);
+      for (const track of UPGRADE_ORDER) {
+        if (!trackAvailable(base, track)) continue;
+        const t = UPGRADE_TRACKS[track];
+        const price = nextUpgradePrice(base, levels, track);
+        items.push({
+          id: `upgrade:${wid}:${track}`, category: "upgrade", name: t.name, desc: t.blurb,
+          price: price ?? 0, status: price === null ? "maxed" : "available",
+          upgrade: { slot, weapon: base.name, track, tier: levels?.[track] ?? 0, max: maxTier(track), effect: upgradeEffect(base, levels, track) },
+        });
+      }
+    }
 
     const ammoFull = weapons.slots.every((s) => s.def.slot === "melee" || s.reserve >= Math.round(s.def.reserveAmmo * weapons.mods.reserve) && s.ammo === s.def.magSize);
     items.push({ id: "ammo", category: "equipment", name: "Ammo Resupply", desc: "Refill magazines and reserves for both weapons", price: this.ammoPrice, status: ammoFull ? "maxed" : "available" });
@@ -118,6 +146,20 @@ export class ShopSystem {
         slot.reserve = Math.round(slot.def.reserveAmmo * weapons.mods.reserve);
       }
       this.deps.onLoadoutChanged();
+    } else if (id.startsWith("upgrade:")) {
+      const [, wid, track] = id.split(":") as [string, WeaponId, UpgradeTrackId];
+      const slot = weapons.slots.find((s) => s.def.id === wid);
+      const before = slot?.def;
+      loadout.upgrade(wid, track);
+      loadout.apply(weapons);
+      if (slot && before) {
+        // Bigger mags and pouches come filled.
+        if (slot.def.magSize > before.magSize) slot.ammo = slot.def.magSize;
+        const gain = Math.round((slot.def.reserveAmmo - before.reserveAmmo) * weapons.mods.reserve);
+        if (gain > 0) slot.reserve += gain;
+      }
+      this.deps.onLoadoutChanged();
+      return { ok: true, message: `${item.upgrade?.weapon} · ${item.name} tier ${(item.upgrade?.tier ?? 0) + 1} installed` };
     } else if (id === "ammo") weapons.refillAmmo(1);
     else if (id === "armor") state.addArmor(ECONOMY.armorPlate);
     else if (id === "grenade") grenades.count = Math.min(grenades.maxCarry, grenades.count + 1);

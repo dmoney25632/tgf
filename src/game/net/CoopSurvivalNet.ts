@@ -9,7 +9,8 @@ import { PlayerState } from "../survival/PlayerState";
 import { Wallet } from "../survival/ShopSystem";
 import type { WavePhase } from "../survival/WaveManager";
 import type { TeamRow } from "../ui/SurvivalHUD";
-import { GRENADE, MELEE, WEAPONS } from "../weapons/weapons";
+import { GRENADE, MELEE, WEAPONS, type WeaponDef, type WeaponId } from "../weapons/weapons";
+import { maxTier, UPGRADE_TRACKS, upgradeWeapon, type UpgradeLevels, type UpgradeTrackId } from "../weapons/upgrades";
 import { RemoteAvatar, RemoteEnemy } from "./avatars";
 import { fromBase64, toBase64 } from "./codec";
 import { HitValidator, type Vec } from "./hitValidation";
@@ -70,6 +71,10 @@ type Peer = {
   claims: HitClaimWire[];
   explosions: [number, number, number][];
   buys: [string, number][];
+  /** Armory upgrades this player bought, per gun (host validates hits against the upgraded stats). */
+  upgrades: Map<string, UpgradeLevels>;
+  /** Upgraded defs, rebuilt when `upgrades` changes. */
+  upgradedDefs: Map<string, WeaponDef>;
   /** Missions: holding interact at the objective; gunship hit claims. */
   interact: boolean;
   heliHits: [number, number, number, number][];
@@ -179,7 +184,7 @@ export class CoopSurvivalNet implements MissionNet {
         lastHeard: performance.now(), connected: true, heard: false, pendingShots: 0, shotsTotal: 0, shotTimer: 0,
         vitals: blankVitals(entry.slot), wasDowned: false,
         state: new PlayerState(), wallet: new Wallet(), combatant: null, pos: new THREE.Vector3(), speed: 0,
-        claims: [], explosions: [], buys: [], interact: false, heliHits: [], lastRewardShot: -1, lastExplosion: -1e9,
+        claims: [], explosions: [], buys: [], upgrades: new Map(), upgradedDefs: new Map(), interact: false, heliHits: [], lastRewardShot: -1, lastExplosion: -1e9,
       });
     }
   }
@@ -581,7 +586,7 @@ export class CoopSurvivalNet implements MissionNet {
       const agent = this.agentById.get(id);
       const part = PARTS[partIdx] ?? "body";
       const melee = srcIdx === 1;
-      const weapon = melee ? null : WEAPONS[WEAPON_IDS[wIdx]] ?? null;
+      const weapon = melee ? null : this.peerWeapon(p, WEAPON_IDS[wIdx]);
       if (!melee && !weapon) continue;
       const pts: Vec[] = [];
       if (agent) {
@@ -635,6 +640,14 @@ export class CoopSurvivalNet implements MissionNet {
     p.explosions.length = 0;
   }
 
+  /** The claimed gun with that player's armory upgrades. */
+  private peerWeapon(p: Peer, id: WeaponId | undefined): WeaponDef | null {
+    if (!id || !(id in WEAPONS)) return null;
+    let d = p.upgradedDefs.get(id);
+    if (!d) p.upgradedDefs.set(id, (d = upgradeWeapon(WEAPONS[id], p.upgrades.get(id))));
+    return d;
+  }
+
   private applyBuys(p: Peer) {
     if (!p.buys.length) return;
     for (const [id, rawPrice] of p.buys) {
@@ -644,6 +657,14 @@ export class CoopSurvivalNet implements MissionNet {
       p.wallet.spent += pay;
       if (id === "armor") p.state.addArmor(ECONOMY.armorPlate);
       else if (id === "perk:secondwind") p.state.selfRevives++;
+      else if (id.startsWith("upgrade:")) {
+        const [, wid, track] = id.split(":");
+        if (!(wid in WEAPONS) || !(track in UPGRADE_TRACKS)) continue;
+        const lv = p.upgrades.get(wid) ?? {};
+        const k = track as UpgradeTrackId;
+        p.upgrades.set(wid, { ...lv, [k]: Math.min(maxTier(k), (lv[k] ?? 0) + 1) });
+        p.upgradedDefs.delete(wid);
+      }
       else if (id === "perk:ironhide") {
         const hp = PERKS.ironhide.maxHealth ?? 0;
         p.state.maxHealth += hp;

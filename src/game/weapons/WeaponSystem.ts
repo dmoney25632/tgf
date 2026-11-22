@@ -176,12 +176,20 @@ export class WeaponSystem {
 
   /**
    * Replace the carried weapons (the knife is always carried as the last
-   * slot). Keeps ammo and fire mode for weapons you already had.
+   * slot). Keeps ammo and fire mode for weapons you already had; a new def
+   * for a carried gun (armory upgrade) replaces the old one in place.
    */
   setLoadout(defs: WeaponDef[]) {
     const all = defs.some((d) => d.slot === "melee") ? defs : [...defs, WEAPONS.knife];
     const old = new Map(this.slots.map((s) => [s.def.id, s]));
-    this.slots = all.map((def) => old.get(def.id) ?? { def, ammo: def.magSize, reserve: Math.round(def.reserveAmmo * this.mods.reserve), mode: def.modes[0] });
+    this.slots = all.map((def) => {
+      const s = old.get(def.id);
+      if (!s) return { def, ammo: def.magSize, reserve: Math.round(def.reserveAmmo * this.mods.reserve), mode: def.modes[0] };
+      s.def = def;
+      s.ammo = Math.min(s.ammo, def.magSize);
+      if (!def.modes.includes(s.mode)) s.mode = def.modes[0];
+      return s;
+    });
     this.current = Math.min(this.current, this.slots.length - 1);
     this.cancelReload();
     this.swapDuration = 0;

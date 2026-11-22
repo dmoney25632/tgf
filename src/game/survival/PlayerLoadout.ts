@@ -1,10 +1,11 @@
-import { WEAPONS, type WeaponId } from "../weapons/weapons";
+import { WEAPONS, type WeaponDef, type WeaponId } from "../weapons/weapons";
+import { maxTier, upgradeWeapon, type UpgradeLevels, type UpgradeTrackId } from "../weapons/upgrades";
 import type { WeaponModifiers, WeaponSystem } from "../weapons/WeaponSystem";
 import { OPERATORS, PERKS, type OperatorDef, type OperatorId, type PerkId } from "./config";
 
 /**
  * The player's build for a survival run: operator, primary + secondary,
- * and purchased perks. Folds operator + perk modifiers into the weapon
+ * purchased perks and armory gun upgrades. Folds operator + perk modifiers into the weapon
  * system and exposes derived stats (max health, speed).
  */
 export class PlayerLoadout {
@@ -12,6 +13,11 @@ export class PlayerLoadout {
   primary: WeaponId;
   secondary: WeaponId;
   readonly perks = new Set<PerkId>();
+  /**
+   * Upgrade tiers bought per gun. Kept for the whole run even after you
+   * switch guns, so buying a gun back restores its upgrades.
+   */
+  readonly upgrades = new Map<WeaponId, UpgradeLevels>();
 
   constructor(operator: OperatorId, primary?: WeaponId, secondary?: WeaponId) {
     this.operator = OPERATORS[operator];
@@ -39,9 +45,27 @@ export class PlayerLoadout {
     return m;
   }
 
+  tier(id: WeaponId, track: UpgradeTrackId) {
+    return this.upgrades.get(id)?.[track] ?? 0;
+  }
+
+  /** Buy one tier. Returns false when already maxed. */
+  upgrade(id: WeaponId, track: UpgradeTrackId) {
+    const lv = this.upgrades.get(id) ?? {};
+    const t = lv[track] ?? 0;
+    if (t >= maxTier(track)) return false;
+    this.upgrades.set(id, { ...lv, [track]: t + 1 });
+    return true;
+  }
+
+  /** The gun's stats with its bought upgrades. */
+  def(id: WeaponId): WeaponDef {
+    return upgradeWeapon(WEAPONS[id], this.upgrades.get(id));
+  }
+
   /** Push weapons + modifiers into the live weapon system. */
   apply(weapons: WeaponSystem) {
     Object.assign(weapons.mods, this.modifiers());
-    weapons.setLoadout([WEAPONS[this.primary], WEAPONS[this.secondary]]);
+    weapons.setLoadout([this.def(this.primary), this.def(this.secondary)]);
   }
 }
