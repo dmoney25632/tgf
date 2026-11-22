@@ -38,7 +38,7 @@ try {
   mkdirSync(OUT, { recursive: true });
   const report = join(work, "report.json");
   const r = spawnSync(BLENDER, ["-b", "--factory-startup", "-noaudio", "-P", join(ROOT, "art/blender/tpguns/build_tp.py"), "--",
-    "--src", join(work, "src"), "--out", join(OUT, "model.gltf"), "--previews", join(ROOT, "art/previews"), "--report", report], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    "--src", join(work, "src"), "--out", join(OUT, "model.gltf"), "--previews", join(ROOT, "art/previews"), "--report", report, "--node", process.execPath], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   const log = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   for (const l of log.split("\n")) if (l.startsWith("[tpguns]")) console.log(l);
   if (r.status !== 0 || !existsSync(report)) {

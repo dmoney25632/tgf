@@ -27,7 +27,9 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
+import tempfile
 import time
 
 import bmesh
@@ -44,6 +46,7 @@ def args():
     p.add_argument("--only", default="")
     p.add_argument("--atlas", type=int, default=2048)
     p.add_argument("--report", default="")
+    p.add_argument("--node", default="node")
     return p.parse_args(argv)
 
 
@@ -207,6 +210,116 @@ def decimated_copy(low, name, ratio):
     m.use_collapse_triangulate = True
     select([o])
     bpy.ops.object.modifier_apply(modifier=m.name)
+    return o
+
+
+def _uv_islands(me):
+    """Per-face atlas island id (faces joined across edges whose UVs match at both ends)."""
+    uv = me.uv_layers.active.data
+    par = list(range(len(me.polygons)))
+
+    def find(i):
+        while par[i] != i:
+            par[i] = par[par[i]]
+            i = par[i]
+        return i
+
+    edges = {}
+    for p in me.polygons:
+        n = p.loop_total
+        for j in range(n):
+            l0, l1 = p.loop_start + j, p.loop_start + (j + 1) % n
+            v0, v1 = me.loops[l0].vertex_index, me.loops[l1].vertex_index
+            u0, u1 = tuple(uv[l0].uv), tuple(uv[l1].uv)
+            k = (min(v0, v1), max(v0, v1))
+            side = {v0: u0, v1: u1}
+            if k in edges:
+                q, other = edges[k]
+                if all((side[v][0] - other[v][0]) ** 2 + (side[v][1] - other[v][1]) ** 2 < 1e-12 for v in k):
+                    par[find(p.index)] = find(q)
+            else:
+                edges[k] = (p.index, side)
+    return [find(i) for i in range(len(me.polygons))]
+
+
+def simplified_copy(low, name, target, node):
+    """LOD1 through meshoptimizer (simplify.mjs) instead of Blender's COLLAPSE.
+
+    Collapse stalls on some sources (hk416, p90, g36, scarl, m1014 stopped at
+    ~1.5-2.3k, and what it did collapse tore the receivers apart): edges shared
+    by 3+ faces (fins, overlapping panels), cracks a little too wide for
+    make_low's weld and the many atlas seams leave it few valid collapses.
+
+    Here a copy is welded at 1 mm (cracks stop being borders) and simplified
+    on positions alone, so seams don't pin anything; meshoptimizer never moves
+    a vertex, so every LOD1 corner is a low-poly vertex. Each kept triangle is
+    then textured from ONE atlas island: one that holds all three corners when
+    there is one (their exact UVs), else the island of the low-poly face
+    nearest its centre, with corners outside that island placed by that
+    face's own UV mapping, extended. A triangle never interpolates between
+    two islands, so there are no smeared texels across the atlas."""
+    from mathutils.bvhtree import BVHTree
+    from mathutils.geometry import barycentric_transform
+
+    src = low.data.copy()
+    bm = bmesh.new()
+    bm.from_mesh(src)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)
+    bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
+    bm.to_mesh(src)
+    bm.free()
+    island = _uv_islands(src)
+    uv = src.uv_layers.active.data
+    vuv = [dict() for _ in src.vertices]  # vertex -> {island: uv}
+    for p in src.polygons:
+        for li in p.loop_indices:
+            vuv[src.loops[li].vertex_index].setdefault(island[p.index], tuple(uv[li].uv))
+    io = os.path.join(tempfile.gettempdir(), f"tpguns_{os.getpid()}_{name}.json")
+    with open(io, "w") as f:
+        json.dump({"pos": [c for v in src.vertices for c in v.co], "idx": [v for p in src.polygons for v in p.vertices], "target": int(target)}, f)
+    try:
+        subprocess.run([node, os.path.join(os.path.dirname(os.path.abspath(__file__)), "simplify.mjs"), io], check=True)
+        with open(io) as f:
+            res = json.load(f)
+    finally:
+        os.remove(io)
+    bvh = BVHTree.FromPolygons([v.co for v in src.vertices], [tuple(p.vertices) for p in src.polygons])
+    tris, tuvs, seen = [], [], set()
+    for t in range(0, len(res["idx"]), 3):
+        c = res["idx"][t:t + 3]
+        k = min((c[0], c[1], c[2]), (c[1], c[2], c[0]), (c[2], c[0], c[1]))  # same winding = duplicate
+        if len(set(c)) < 3 or k in seen:
+            continue
+        seen.add(k)
+        co = [src.vertices[i].co for i in c]
+        near = bvh.find_nearest((co[0] + co[1] + co[2]) / 3)[2]
+        common = set(vuv[c[0]]) & set(vuv[c[1]]) & set(vuv[c[2]])
+        isl = island[near] if not common or island[near] in common else min(common)
+        fp = src.polygons[near]
+        fco = [src.vertices[v].co for v in fp.vertices]
+        fuv = [Vector((*uv[li].uv, 0.0)) for li in fp.loop_indices]
+        out = []
+        for i, p in zip(c, co):
+            if isl in vuv[i]:
+                out.append(vuv[i][isl])
+            else:
+                q = barycentric_transform(p, *fco, *fuv)
+                out.append((q.x, q.y))
+        tris.append(c)
+        tuvs.append(out)
+    used = sorted({i for c in tris for i in c})
+    remap = {v: n for n, v in enumerate(used)}
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([src.vertices[v].co.copy() for v in used], [], [[remap[i] for i in c] for c in tris])
+    lay = me.uv_layers.new(name="atlas")
+    for li, u in enumerate(u for tu in tuvs for u in tu):
+        lay.data[li].uv = u
+    bpy.data.meshes.remove(src)
+    o = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(o)
+    select([o])
+    bpy.ops.object.shade_smooth_by_angle(angle=math.radians(40), keep_sharp_edges=True)
+    log(f"{name}: meshopt {tri_count(low)} -> {tri_count(o)} tris (target {int(target)}, error {res['error']:.4f})")
     return o
 
 
@@ -424,6 +537,9 @@ def contact_sheet(guns, info, path, cell=(640, 300)):
 
 # ---- Main ----------------------------------------------------------------------------
 
+LOD1_RATIO = 0.36
+
+
 def body_budget(length):
     return int(max(2400, min(3400, 2400 + 1100 * (length - 0.6))))
 
@@ -457,7 +573,15 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(a.out))
     mat = bake_atlas(pairs, a.atlas, out_dir)
     for kind, objs in guns.items():
-        lod = decimated_copy(objs[0], f"{kind}_lod1", 0.36)
+        # LOD1 ~36% of the body. Blender's collapse is kept where it gets there
+        # (its output is what those guns shipped with); where it stalls well
+        # short, meshoptimizer takes over (see simplified_copy).
+        target = round(LOD1_RATIO * tri_count(objs[0]))
+        lod = decimated_copy(objs[0], f"{kind}_lod1", LOD1_RATIO)
+        if tri_count(lod) > target * 1.15:
+            log(f"{kind}_lod1: collapse stalled at {tri_count(lod)} tris")
+            bpy.data.objects.remove(lod)
+            lod = simplified_copy(objs[0], f"{kind}_lod1", target, a.node)
         report[kind]["lod1Tris"] = tri_count(lod)
         objs.append(lod)
     for objs in guns.values():
